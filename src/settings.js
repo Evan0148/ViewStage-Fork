@@ -404,10 +404,12 @@ document.addEventListener('DOMContentLoaded', async () => {
                 }
                 
                 for (let i = 1; i <= 15; i++) {
-                    const picker = document.getElementById(`colorPicker${i}`);
-                    if (picker) {
+                    const colorBtn = document.querySelector(`.color-edit-item[data-index="${i - 1}"] .color-edit-btn`);
+                    if (colorBtn) {
                         const color = savedColors[i - 1] || defaultColors[i - 1];
-                        picker.value = colorToHex(color);
+                        const hexColor = colorToHex(color);
+                        colorBtn.style.backgroundColor = hexColor;
+                        colorBtn.dataset.color = hexColor;
                     }
                 }
                 
@@ -802,24 +804,92 @@ document.addEventListener('DOMContentLoaded', async () => {
         });
     }
     
-    // 画笔颜色选择器事件
-    for (let i = 1; i <= 15; i++) {
-        const picker = document.getElementById(`colorPicker${i}`);
-        if (picker) {
-            picker.addEventListener('change', async () => {
-                const colors = [];
-                for (let j = 1; j <= 15; j++) {
-                    const p = document.getElementById(`colorPicker${j}`);
-                    const hexColor = p ? p.value : '#000000';
-                    const rgb = hexToRgb(hexColor);
-                    colors.push(rgb || { r: 0, g: 0, b: 0 });
+    // 自定义颜色选择器
+    const colorPickerPopup = document.getElementById('colorPickerPopup');
+    const colorPickerSV = document.getElementById('colorPickerSV');
+    const colorPickerSVCursor = document.getElementById('colorPickerSVCursor');
+    const colorPickerHue = document.getElementById('colorPickerHue');
+    const colorPickerHueCursor = document.getElementById('colorPickerHueCursor');
+    const colorPickerPresets = document.getElementById('colorPickerPresets');
+    const colorPickerPreview = document.getElementById('colorPickerPreview');
+    const colorPickerInput = document.getElementById('colorPickerInput');
+    const colorPickerConfirm = document.getElementById('colorPickerConfirm');
+    const colorPickerCancel = document.getElementById('colorPickerCancel');
+    
+    let currentColorIndex = 0;
+    let currentHue = 0;
+    let currentSaturation = 100;
+    let currentValue = 100;
+    let colorPickerOverlay = null;
+    
+    const presetColors = [
+        '#e74c3c', '#e91e63', '#9b59b6', '#673ab7',
+        '#3498db', '#00bcd4', '#1abc9c', '#2ecc71',
+        '#8bc34a', '#f39c12', '#ff5722', '#795548',
+        '#34495e', '#000000', '#ffffff'
+    ];
+    
+    function initColorPickerPresets() {
+        if (!colorPickerPresets) return;
+        colorPickerPresets.innerHTML = '';
+        presetColors.forEach(color => {
+            const preset = document.createElement('div');
+            preset.className = 'color-picker-preset';
+            preset.style.backgroundColor = color;
+            preset.addEventListener('click', () => {
+                const rgb = hexToRgb(color);
+                if (rgb) {
+                    const hsv = rgbToHsv(rgb.r, rgb.g, rgb.b);
+                    currentHue = hsv.h;
+                    currentSaturation = hsv.s;
+                    currentValue = hsv.v;
+                    updateColorPickerUI();
                 }
-                await saveSettings({ penColors: colors });
             });
-        }
+            colorPickerPresets.appendChild(preset);
+        });
     }
     
-    // 十六进制颜色转RGB
+    function hsvToRgb(h, s, v) {
+        s /= 100;
+        v /= 100;
+        const c = v * s;
+        const x = c * (1 - Math.abs((h / 60) % 2 - 1));
+        const m = v - c;
+        let r = 0, g = 0, b = 0;
+        if (h < 60) { r = c; g = x; b = 0; }
+        else if (h < 120) { r = x; g = c; b = 0; }
+        else if (h < 180) { r = 0; g = c; b = x; }
+        else if (h < 240) { r = 0; g = x; b = c; }
+        else if (h < 300) { r = x; g = 0; b = c; }
+        else { r = c; g = 0; b = x; }
+        return {
+            r: Math.round((r + m) * 255),
+            g: Math.round((g + m) * 255),
+            b: Math.round((b + m) * 255)
+        };
+    }
+    
+    function rgbToHsv(r, g, b) {
+        r /= 255; g /= 255; b /= 255;
+        const max = Math.max(r, g, b), min = Math.min(r, g, b);
+        let h = 0, s = max === 0 ? 0 : (max - min) / max, v = max;
+        if (max !== min) {
+            const d = max - min;
+            if (max === r) h = ((g - b) / d + (g < b ? 6 : 0)) * 60;
+            else if (max === g) h = ((b - r) / d + 2) * 60;
+            else h = ((r - g) / d + 4) * 60;
+        }
+        return { h, s: s * 100, v: v * 100 };
+    }
+    
+    function rgbToHex(r, g, b) {
+        return '#' + [r, g, b].map(x => {
+            const hex = x.toString(16);
+            return hex.length === 1 ? '0' + hex : hex;
+        }).join('');
+    }
+    
     function hexToRgb(hex) {
         const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
         return result ? {
@@ -829,13 +899,173 @@ document.addEventListener('DOMContentLoaded', async () => {
         } : null;
     }
     
-    // RGB转十六进制颜色
-    function rgbToHex(r, g, b) {
-        return '#' + [r, g, b].map(x => {
-            const hex = x.toString(16);
-            return hex.length === 1 ? '0' + hex : hex;
-        }).join('');
+    function getCurrentHexColor() {
+        const rgb = hsvToRgb(currentHue, currentSaturation, currentValue);
+        return rgbToHex(rgb.r, rgb.g, rgb.b);
     }
+    
+    function updateColorPickerUI() {
+        const rgb = hsvToRgb(currentHue, currentSaturation, currentValue);
+        const hex = rgbToHex(rgb.r, rgb.g, rgb.b);
+        
+        if (colorPickerSVCursor) {
+            const x = (currentSaturation / 100) * 240;
+            const y = (1 - currentValue / 100) * 180;
+            colorPickerSVCursor.style.left = x + 'px';
+            colorPickerSVCursor.style.top = y + 'px';
+        }
+        
+        if (colorPickerHueCursor) {
+            const hueX = (currentHue / 360) * 240;
+            colorPickerHueCursor.style.left = hueX + 'px';
+        }
+        
+        if (colorPickerSV) {
+            const hueRgb = hsvToRgb(currentHue, 100, 100);
+            const hueHex = rgbToHex(hueRgb.r, hueRgb.g, hueRgb.b);
+            colorPickerSV.style.backgroundColor = hueHex;
+        }
+        
+        if (colorPickerPreview) {
+            colorPickerPreview.style.backgroundColor = hex;
+        }
+        
+        if (colorPickerInput) {
+            colorPickerInput.value = hex;
+        }
+    }
+    
+    function openColorPicker(index) {
+        currentColorIndex = index;
+        const colorBtn = document.querySelector(`.color-edit-item[data-index="${index}"] .color-edit-btn`);
+        if (colorBtn) {
+            const hex = colorBtn.dataset.color || '#3498db';
+            const rgb = hexToRgb(hex);
+            if (rgb) {
+                const hsv = rgbToHsv(rgb.r, rgb.g, rgb.b);
+                currentHue = hsv.h;
+                currentSaturation = hsv.s;
+                currentValue = hsv.v;
+            }
+        }
+        
+        updateColorPickerUI();
+        initColorPickerPresets();
+        
+        if (colorPickerPopup) {
+            colorPickerPopup.classList.add('active');
+        }
+        
+        if (!colorPickerOverlay) {
+            colorPickerOverlay = document.createElement('div');
+            colorPickerOverlay.className = 'color-picker-overlay';
+            colorPickerOverlay.addEventListener('click', closeColorPicker);
+            document.body.appendChild(colorPickerOverlay);
+        }
+        colorPickerOverlay.style.display = 'block';
+    }
+    
+    function closeColorPicker() {
+        if (colorPickerPopup) {
+            colorPickerPopup.classList.remove('active');
+        }
+        if (colorPickerOverlay) {
+            colorPickerOverlay.style.display = 'none';
+        }
+    }
+    
+    function handleSVDrag(e) {
+        if (!colorPickerSV) return;
+        const rect = colorPickerSV.getBoundingClientRect();
+        const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+        const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+        let x = Math.max(0, Math.min(clientX - rect.left, rect.width));
+        let y = Math.max(0, Math.min(clientY - rect.top, rect.height));
+        currentSaturation = (x / rect.width) * 100;
+        currentValue = (1 - y / rect.height) * 100;
+        updateColorPickerUI();
+    }
+    
+    function handleHueDrag(e) {
+        if (!colorPickerHue) return;
+        const rect = colorPickerHue.getBoundingClientRect();
+        const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+        let x = Math.max(0, Math.min(clientX - rect.left, rect.width));
+        currentHue = (x / rect.width) * 360;
+        updateColorPickerUI();
+    }
+    
+    if (colorPickerSV) {
+        let svDragging = false;
+        colorPickerSV.addEventListener('mousedown', (e) => { svDragging = true; handleSVDrag(e); });
+        colorPickerSV.addEventListener('touchstart', (e) => { svDragging = true; handleSVDrag(e); }, { passive: true });
+        document.addEventListener('mousemove', (e) => { if (svDragging) handleSVDrag(e); });
+        document.addEventListener('touchmove', (e) => { if (svDragging) handleSVDrag(e); }, { passive: true });
+        document.addEventListener('mouseup', () => { svDragging = false; });
+        document.addEventListener('touchend', () => { svDragging = false; });
+    }
+    
+    if (colorPickerHue) {
+        let hueDragging = false;
+        colorPickerHue.addEventListener('mousedown', (e) => { hueDragging = true; handleHueDrag(e); });
+        colorPickerHue.addEventListener('touchstart', (e) => { hueDragging = true; handleHueDrag(e); }, { passive: true });
+        document.addEventListener('mousemove', (e) => { if (hueDragging) handleHueDrag(e); });
+        document.addEventListener('touchmove', (e) => { if (hueDragging) handleHueDrag(e); }, { passive: true });
+        document.addEventListener('mouseup', () => { hueDragging = false; });
+        document.addEventListener('touchend', () => { hueDragging = false; });
+    }
+    
+    if (colorPickerInput) {
+        colorPickerInput.addEventListener('input', () => {
+            const hex = colorPickerInput.value;
+            if (/^#[0-9A-Fa-f]{6}$/.test(hex)) {
+                const rgb = hexToRgb(hex);
+                if (rgb) {
+                    const hsv = rgbToHsv(rgb.r, rgb.g, rgb.b);
+                    currentHue = hsv.h;
+                    currentSaturation = hsv.s;
+                    currentValue = hsv.v;
+                    updateColorPickerUI();
+                }
+            }
+        });
+    }
+    
+    if (colorPickerConfirm) {
+        colorPickerConfirm.addEventListener('click', async () => {
+            const hex = getCurrentHexColor();
+            const colorBtn = document.querySelector(`.color-edit-item[data-index="${currentColorIndex}"] .color-edit-btn`);
+            if (colorBtn) {
+                colorBtn.style.backgroundColor = hex;
+                colorBtn.dataset.color = hex;
+            }
+            
+            const colors = [];
+            for (let i = 0; i < 15; i++) {
+                const btn = document.querySelector(`.color-edit-item[data-index="${i}"] .color-edit-btn`);
+                const hexColor = btn ? btn.dataset.color : '#000000';
+                const rgb = hexToRgb(hexColor);
+                colors.push(rgb || { r: 0, g: 0, b: 0 });
+            }
+            await saveSettings({ penColors: colors });
+            
+            closeColorPicker();
+        });
+    }
+    
+    if (colorPickerCancel) {
+        colorPickerCancel.addEventListener('click', closeColorPicker);
+    }
+    
+    document.querySelectorAll('.color-edit-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            const item = btn.closest('.color-edit-item');
+            if (item) {
+                const index = parseInt(item.dataset.index);
+                openColorPicker(index);
+            }
+        });
+    });
     
     // 镜像开关
     const mirrorToggle = document.getElementById('mirrorToggle');
