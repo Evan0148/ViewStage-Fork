@@ -18,6 +18,7 @@ on:
 env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
+  ORT_USE_CUDA: 0
 
 jobs:
   build-windows:
@@ -53,11 +54,34 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-rust-target-
 
+      - name: Cache ONNX Runtime binaries
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/ort-sys
+            ~/AppData/Local/ort-sys
+          key: ${{ runner.os }}-ort-sys-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-ort-sys-
+
       - name: Install Tauri CLI
         run: cargo install tauri-cli --locked
 
       - name: Verify Tauri CLI installation
         run: cargo tauri --version
+
+      - name: Pre-download ONNX Runtime
+        uses: nick-fields/retry@v3
+        with:
+          timeout_minutes: 15
+          max_attempts: 3
+          retry_wait_seconds: 10
+          command: |
+            Write-Host "Attempting to download ONNX Runtime binaries (attempt $env:GITHUB_ATTEMPT)..."
+            cargo build --manifest-path src-tauri/Cargo.toml --lib
+          shell: pwsh
+        env:
+          ORT_DOWNLOAD_TIMEOUT: "600"
 
       - name: Build Tauri application
         run: cargo tauri build
@@ -65,6 +89,7 @@ jobs:
         env:
           TAURI_PRIVATE_KEY: ${{ secrets.TAURI_PRIVATE_KEY }}
           TAURI_KEY_PASSWORD: ${{ secrets.TAURI_KEY_PASSWORD }}
+          ORT_DOWNLOAD_TIMEOUT: "600"
 
       - name: List build artifacts
         run: |
