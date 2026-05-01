@@ -357,6 +357,7 @@ let state = {
     cameraStream: null,            // MediaStream 对象
     isCameraOpen: false,           // 摄像头是否开启
     isCameraReady: false,          // 摄像头视频是否就绪（有有效尺寸）
+    cameraAvailable: true,         // 摄像头是否可用
     isMirrored: false,             // 是否镜像 (前置摄像头)
     cameraAnimationId: null,       // requestAnimationFrame ID
     cameraRotation: 0,             // 摄像头旋转角度
@@ -365,6 +366,7 @@ let state = {
     cameraWidth: 1280,             // 摄像头宽度
     cameraHeight: 720,             // 摄像头高度
     wasCameraOpenBeforeMinimize: false, // 最小化前摄像头是否开启
+    showDocScanButton: true,       // 文档扫描按钮是否显示（设置）
     
     // 图像管理
     currentImage: null,            // 当前显示的图像 Image 对象
@@ -723,7 +725,7 @@ async function loadCameraSetting() {
             
             // 加载文档扫描按钮显示设置
             if (settings.showDocScanButton !== undefined) {
-                dom.btnDocScan.style.display = settings.showDocScanButton ? '' : 'none';
+                state.showDocScanButton = settings.showDocScanButton;
                 console.log('已加载文档扫描按钮显示设置:', settings.showDocScanButton);
             }
             
@@ -864,7 +866,8 @@ function listenForPdfFileOpen() {
         }
         
         if (settings.showDocScanButton !== undefined) {
-            dom.btnDocScan.style.display = settings.showDocScanButton ? '' : 'none';
+            state.showDocScanButton = settings.showDocScanButton;
+            updatePhotoButtonState();
             console.log('文档扫描按钮显示已更改:', settings.showDocScanButton);
         }
         
@@ -3699,6 +3702,17 @@ let lastPhotoButtonState = null;
 
 function updatePhotoButtonState() {
     const btnPhoto = dom.btnPhoto;
+    const btnDocScan = dom.btnDocScan;
+    
+    if (!state.cameraAvailable) {
+        if (btnPhoto) btnPhoto.style.display = 'none';
+        if (btnDocScan) btnDocScan.style.display = 'none';
+        return;
+    }
+    
+    if (btnPhoto) btnPhoto.style.display = '';
+    if (btnDocScan) btnDocScan.style.display = state.showDocScanButton ? '' : 'none';
+    
     if (!btnPhoto) return;
     
     let newState;
@@ -4810,6 +4824,7 @@ async function setCameraState(open, options = {}) {
             }
             
             state.isCameraOpen = true;
+            state.cameraAvailable = true;
             
             // 切换到摄像头源ID
             await switchToSource('cam');
@@ -4911,6 +4926,7 @@ async function initWithoutCamera(message) {
     try {
         state.isCameraOpen = false;
         state.isCameraReady = false;
+        state.cameraAvailable = false;
         state.cameraStream = null;
         
         if (dom.cameraVideo) {

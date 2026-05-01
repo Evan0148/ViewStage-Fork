@@ -86,6 +86,27 @@ document.addEventListener('DOMContentLoaded', async () => {
         });
     }
     
+    // ==================== 文档扫描设置禁用 ====================
+    function disableDocScanSettings() {
+        const docScanSettingItems = [
+            document.querySelector('#showDocScanButtonToggle')?.closest('.setting-item'),
+            document.querySelector('#scanQualitySelect')?.closest('.setting-item'),
+            document.querySelector('#scanModeSelect')?.closest('.setting-item'),
+            document.querySelector('#enhanceModeSelect')?.closest('.setting-item'),
+        ];
+        
+        docScanSettingItems.forEach(item => {
+            if (item) {
+                item.classList.add('disabled');
+            }
+        });
+        
+        const modelCards = document.querySelectorAll('.model-card');
+        modelCards.forEach(card => {
+            card.classList.add('disabled');
+        });
+    }
+    
     // ==================== 设置加载 ====================
     /**
      * 从后端加载设置并更新UI
@@ -175,6 +196,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                             cameraSelected.textContent = window.i18n?.t('settings.noCameraPermission') || '无摄像头权限';
                             cameraResolutionSelected.textContent = '-';
                             disableCameraSettings();
+                            disableDocScanSettings();
                             if (requestCameraPermissionItem && btnRequestCameraPermission) {
                                 requestCameraPermissionItem.style.display = 'flex';
                                 btnRequestCameraPermission.textContent = window.i18n?.t('settings.requestCameraPermission') || '获取摄像头权限';
@@ -184,6 +206,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                             cameraSelected.textContent = window.i18n?.t('settings.noCameraDetected') || '未检测到摄像头';
                             cameraResolutionSelected.textContent = '-';
                             disableCameraSettings();
+                            disableDocScanSettings();
                             if (requestCameraPermissionItem && btnRequestCameraPermission) {
                                 requestCameraPermissionItem.style.display = 'none';
                             }

@@ -1253,6 +1253,16 @@ input:checked + .toggle-slider:before {
     border-color: rgba(255, 255, 255, 0.12);
 }
 
+.model-card.disabled {
+    opacity: 0.5;
+    pointer-events: none;
+}
+
+.model-card.disabled .model-name,
+.model-card.disabled .model-description {
+    color: #666;
+}
+
 .model-header {
     display: flex;
     justify-content: space-between;
