@@ -43,9 +43,6 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
-    "resources": [
-      "weights/*"
-    ],
     "fileAssociations": [
       {
         "ext": ["pdf"],

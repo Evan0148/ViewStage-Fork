@@ -2190,7 +2190,6 @@ async fn remove_file_type_icons() -> Result<(), String> {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DocumentScanRequest {
     pub image_data: String,
-    pub east_model_path: Option<String>,
     pub grayscale: Option<bool>,
 }
 
@@ -2549,7 +2548,7 @@ fn detect_text_dbnet(app: tauri::AppHandle, request: DBNetDetectionRequest) -> R
     }
 }
 
-/// 文档扫描 - 自动选择最佳模型（优先DexiNed边界检测，其次DBNet，最后EAST）
+/// 文档扫描 - 自动选择最佳模型（优先DexiNed边界检测，其次DBNet文本检测）
 #[tauri::command]
 async fn scan_document(app: tauri::AppHandle, request: DocumentScanRequest) -> Result<DocumentScanResult, String> {
     let img = decode_base64_image(&request.image_data)?;
@@ -2981,7 +2980,7 @@ fn get_dbnet_model_info(app: tauri::AppHandle) -> Result<ModelInfo, String> {
     Ok(ModelInfo {
         name: "DBNet ResNet-18".to_string(),
         size_mb,
-        description: "文本检测模型，用于文档扫描功能。相比EAST模型，体积更小（54MB vs 92MB），速度更快，精度更高。支持中英文文本检测。".to_string(),
+        description: "文本检测模型，用于文档扫描功能。体积小（54MB），速度快，精度高。支持中英文文本检测。".to_string(),
         download_url: "https://modelscope.cn/models/iic/cv_resnet18_ocr-detection-db-line-level_damo/resolve/master/db_resnet18_public_line_640x640.onnx".to_string(),
         exists,
     })

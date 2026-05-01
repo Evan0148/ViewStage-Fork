@@ -1,6 +1,6 @@
 /**
  * 文档扫描模块（主页面嵌入面板）
- * 使用 EAST 文本检测自动裁剪文档
+ * 自动检测文档区域并裁剪
  */
 
 if (document.readyState === 'loading') {
