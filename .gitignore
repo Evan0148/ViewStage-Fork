@@ -34,5 +34,8 @@ DexiNed/
 cache/
 model/
 
+# Example files
+example/
+
 # Trae config
 .trae/

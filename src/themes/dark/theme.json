@@ -29,6 +29,12 @@
     "addFile": "file-earmark",
     "word": "file-earmark-word-fill",
     "pdf": "pdf",
-    "scan": "scan"
+    "scan": "scan",
+    "app-settings": "gear",
+    "doc-scan": "file-earmark",
+    "canvas": "shapes",
+    "source": "video",
+    "theme-icon": "color",
+    "about": "info"
   }
 }
