@@ -1,7 +1,6 @@
 //! ViewStage - 图像处理 Rust 后端
 //! 
 //! 功能模块：
-//! - 缩略图生成 (generate_thumbnail, generate_thumbnails_batch): 并行批量生成
 //! - 图像旋转 (rotate_image): 90/180/270度旋转
 //! - 图片保存 (save_image, save_images_batch): 保存到指定目录
 //! - 笔画压缩 (compact_strokes): 将笔画渲染到图片
@@ -14,15 +13,14 @@
 //! - 使用 image 库进行图像处理
 
 use tauri::{Manager, Emitter};
-use image::{DynamicImage, ImageBuffer, Rgba, RgbaImage, GrayImage, Luma, GenericImageView};
-use imageproc::filter::gaussian_blur_f32;
+use image::{DynamicImage, ImageBuffer, Rgba, RgbaImage, Luma, GenericImageView};
 use base64::{Engine as _, engine::general_purpose};
 
 mod image_processing;
 
 use image_processing::{
     decode_base64_image, extract_base64,
-    generate_thumbnail, generate_thumbnails_batch, rotate_image,
+    rotate_image,
 };
 
 #[cfg(target_os = "windows")]
@@ -43,24 +41,6 @@ use std::sync::{Arc, Mutex};
 static DEXINED_CACHE: once_cell::sync::Lazy<Mutex<Option<Arc<Mutex<ort::session::Session>>>>> = 
     once_cell::sync::Lazy::new(|| Mutex::new(None));
 static DEXINED_MODEL_PATH: once_cell::sync::Lazy<Mutex<Option<PathBuf>>> = 
-    once_cell::sync::Lazy::new(|| Mutex::new(None));
-
-/// 全局 UVDoc 模型缓存
-static UVDOC_CACHE: once_cell::sync::Lazy<Mutex<Option<Arc<Mutex<ort::session::Session>>>>> = 
-    once_cell::sync::Lazy::new(|| Mutex::new(None));
-static UVDOC_MODEL_PATH: once_cell::sync::Lazy<Mutex<Option<PathBuf>>> = 
-    once_cell::sync::Lazy::new(|| Mutex::new(None));
-
-/// 全局 GCNet 模型缓存
-static GCNET_CACHE: once_cell::sync::Lazy<Mutex<Option<Arc<Mutex<ort::session::Session>>>>> = 
-    once_cell::sync::Lazy::new(|| Mutex::new(None));
-static GCNET_MODEL_PATH: once_cell::sync::Lazy<Mutex<Option<PathBuf>>> = 
-    once_cell::sync::Lazy::new(|| Mutex::new(None));
-
-/// 全局 NAFDPM 模型缓存
-static NAFDPM_CACHE: once_cell::sync::Lazy<Mutex<Option<Arc<Mutex<ort::session::Session>>>>> = 
-    once_cell::sync::Lazy::new(|| Mutex::new(None));
-static NAFDPM_MODEL_PATH: once_cell::sync::Lazy<Mutex<Option<PathBuf>>> = 
     once_cell::sync::Lazy::new(|| Mutex::new(None));
 
 /// 全局 DBNet (ONNX Runtime) 模型缓存
@@ -111,126 +91,6 @@ fn get_or_load_dexined_model(model_path: &std::path::Path) -> Result<Arc<Mutex<o
     Ok(session)
 }
 
-/// 获取或加载 UVDoc 模型
-fn get_or_load_uvdoc_model(model_path: &std::path::Path) -> Result<Arc<Mutex<ort::session::Session>>, String> {
-    {
-        let cached_path = UVDOC_MODEL_PATH.lock().unwrap();
-        if let Some(ref path) = *cached_path {
-            if path == model_path {
-                let cached_session = UVDOC_CACHE.lock().unwrap();
-                if let Some(ref session) = *cached_session {
-                    log::info!("使用缓存的 UVDoc 模型");
-                    return Ok(session.clone());
-                }
-            }
-        }
-    }
-    
-    log::info!("加载 UVDoc 模型: {:?}", model_path);
-    
-    use ort::session::Session;
-    
-    let session = Session::builder()
-        .map_err(|e| format!("创建 Session builder 失败: {}", e))?
-        .commit_from_file(model_path)
-        .map_err(|e| format!("加载 UVDoc ONNX 模型失败: {}", e))?;
-    
-    log::info!("UVDoc 模型加载成功");
-    
-    let session = Arc::new(Mutex::new(session));
-    
-    {
-        let mut cached_session = UVDOC_CACHE.lock().unwrap();
-        *cached_session = Some(session.clone());
-    }
-    {
-        let mut cached_path = UVDOC_MODEL_PATH.lock().unwrap();
-        *cached_path = Some(model_path.to_path_buf());
-    }
-    
-    Ok(session)
-}
-
-/// 获取或加载 GCNet 模型
-fn get_or_load_gcnet_model(model_path: &std::path::Path) -> Result<Arc<Mutex<ort::session::Session>>, String> {
-    {
-        let cached_path = GCNET_MODEL_PATH.lock().unwrap();
-        if let Some(ref path) = *cached_path {
-            if path == model_path {
-                let cached_session = GCNET_CACHE.lock().unwrap();
-                if let Some(ref session) = *cached_session {
-                    log::info!("使用缓存的 GCNet 模型");
-                    return Ok(session.clone());
-                }
-            }
-        }
-    }
-    
-    log::info!("加载 GCNet 模型: {:?}", model_path);
-    
-    use ort::session::Session;
-    
-    let session = Session::builder()
-        .map_err(|e| format!("创建 Session builder 失败: {}", e))?
-        .commit_from_file(model_path)
-        .map_err(|e| format!("加载 GCNet ONNX 模型失败: {}", e))?;
-    
-    log::info!("GCNet 模型加载成功");
-    
-    let session = Arc::new(Mutex::new(session));
-    
-    {
-        let mut cached_session = GCNET_CACHE.lock().unwrap();
-        *cached_session = Some(session.clone());
-    }
-    {
-        let mut cached_path = GCNET_MODEL_PATH.lock().unwrap();
-        *cached_path = Some(model_path.to_path_buf());
-    }
-    
-    Ok(session)
-}
-
-/// 获取或加载 NAFDPM 模型
-fn get_or_load_nafdpm_model(model_path: &std::path::Path) -> Result<Arc<Mutex<ort::session::Session>>, String> {
-    {
-        let cached_path = NAFDPM_MODEL_PATH.lock().unwrap();
-        if let Some(ref path) = *cached_path {
-            if path == model_path {
-                let cached_session = NAFDPM_CACHE.lock().unwrap();
-                if let Some(ref session) = *cached_session {
-                    log::info!("使用缓存的 NAFDPM 模型");
-                    return Ok(session.clone());
-                }
-            }
-        }
-    }
-    
-    log::info!("加载 NAFDPM 模型: {:?}", model_path);
-    
-    use ort::session::Session;
-    
-    let session = Session::builder()
-        .map_err(|e| format!("创建 Session builder 失败: {}", e))?
-        .commit_from_file(model_path)
-        .map_err(|e| format!("加载 NAFDPM ONNX 模型失败: {}", e))?;
-    
-    log::info!("NAFDPM 模型加载成功");
-    
-    let session = Arc::new(Mutex::new(session));
-    
-    {
-        let mut cached_session = NAFDPM_CACHE.lock().unwrap();
-        *cached_session = Some(session.clone());
-    }
-    {
-        let mut cached_path = NAFDPM_MODEL_PATH.lock().unwrap();
-        *cached_path = Some(model_path.to_path_buf());
-    }
-    
-    Ok(session)
-}
-
 /// 获取或加载 DBNet (ONNX Runtime) 模型
 fn get_or_load_dbnet_ort_model(model_path: &std::path::Path) -> Result<Arc<Mutex<ort::session::Session>>, String> {
     {
@@ -269,56 +129,6 @@ fn get_or_load_dbnet_ort_model(model_path: &std::path::Path) -> Result<Arc<Mutex
     }
     
     Ok(session)
-}
-
-/// 清空所有模型缓存
-#[tauri::command]
-fn clear_model_cache() -> Result<(), String> {
-    log::info!("清空所有模型缓存");
-    
-    {
-        let mut cache = DEXINED_CACHE.lock().unwrap();
-        *cache = None;
-    }
-    {
-        let mut path = DEXINED_MODEL_PATH.lock().unwrap();
-        *path = None;
-    }
-    {
-        let mut cache = UVDOC_CACHE.lock().unwrap();
-        *cache = None;
-    }
-    {
-        let mut path = UVDOC_MODEL_PATH.lock().unwrap();
-        *path = None;
-    }
-    {
-        let mut cache = GCNET_CACHE.lock().unwrap();
-        *cache = None;
-    }
-    {
-        let mut path = GCNET_MODEL_PATH.lock().unwrap();
-        *path = None;
-    }
-    {
-        let mut cache = NAFDPM_CACHE.lock().unwrap();
-        *cache = None;
-    }
-    {
-        let mut path = NAFDPM_MODEL_PATH.lock().unwrap();
-        *path = None;
-    }
-    {
-        let mut cache = DBNET_ORT_CACHE.lock().unwrap();
-        *cache = None;
-    }
-    {
-        let mut path = DBNET_ORT_MODEL_PATH.lock().unwrap();
-        *path = None;
-    }
-    
-    log::info!("模型缓存已清空");
-    Ok(())
 }
 
 // ==================== 数据结构 ====================
@@ -915,12 +725,6 @@ async fn open_settings_window(app: tauri::AppHandle) -> Result<(), String> {
 }
 
 #[tauri::command]
-async fn rotate_main_image(app: tauri::AppHandle, direction: String) -> Result<(), String> {
-    let _ = app.emit("rotate-image", direction.clone());
-    Ok(())
-}
-
-#[tauri::command]
 async fn set_mirror_state(enabled: bool, app: tauri::AppHandle) -> Result<(), String> {
     MIRROR_STATE.store(enabled, Ordering::SeqCst);
     let _ = app.emit("mirror-changed", enabled);
@@ -930,12 +734,6 @@ async fn set_mirror_state(enabled: bool, app: tauri::AppHandle) -> Result<(), St
 #[tauri::command]
 async fn get_mirror_state() -> Result<bool, String> {
     Ok(MIRROR_STATE.load(Ordering::SeqCst))
-}
-
-#[tauri::command]
-async fn switch_camera(app: tauri::AppHandle) -> Result<(), String> {
-    let _ = app.emit("switch-camera", ());
-    Ok(())
 }
 
 #[tauri::command]
@@ -2338,21 +2136,6 @@ pub struct DocumentScanResult {
     pub text_bbox: Option<(i32, i32, i32, i32)>,
 }
 
-/// DexiNed 边缘检测请求
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct DexiNedDetectionRequest {
-    pub image_data: String,
-    pub model_path: Option<String>,
-}
-
-/// DexiNed 边缘检测结果
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct DexiNedDetectionResult {
-    pub edge_image: String,
-    pub success: bool,
-    pub error: Option<String>,
-}
-
 /// 检查 DexiNed 模型是否存在
 #[tauri::command]
 fn check_dexined_model(app: tauri::AppHandle) -> Result<bool, String> {
@@ -2391,115 +2174,6 @@ fn delete_dexined_model(app: tauri::AppHandle) -> Result<(), String> {
     Ok(())
 }
 
-/// DexiNed 边缘检测命令 (ONNX)
-#[tauri::command]
-fn detect_edges_dexined(app: tauri::AppHandle, request: DexiNedDetectionRequest) -> Result<DexiNedDetectionResult, String> {
-    use ort::session::Session;
-    use ort::value::Tensor;
-    
-    let img = decode_base64_image(&request.image_data)?;
-    
-    let model_path = match request.model_path {
-        Some(path) => path,
-        None => {
-            let models_dir = get_models_dir(&app)?;
-            models_dir.join("dexined_mbv4.onnx")
-                .to_string_lossy().to_string()
-        }
-    };
-    
-    log::info!("加载 DexiNed ONNX 模型: {}", model_path);
-    
-    let mut session = Session::builder()
-        .map_err(|e| format!("创建 Session builder 失败: {}", e))?
-        .with_execution_providers(&[ort::ep::DirectMLExecutionProvider::default().into()])
-        .map_err(|e| format!("设置 DirectML 执行提供器失败: {}", e))?
-        .commit_from_file(&model_path)
-        .map_err(|e| format!("加载 DexiNed ONNX 模型失败: {}", e))?;
-    
-    log::info!("DexiNed ONNX 模型加载成功（DirectML GPU 加速）");
-    
-    let (orig_width, orig_height) = (img.width(), img.height());
-    
-    let rgba = img.to_rgba8();
-    
-    let mut input_data = Vec::with_capacity((orig_width * orig_height * 3) as usize);
-    for pixel in rgba.pixels() {
-        input_data.push(pixel[0] as f32 / 255.0);
-        input_data.push(pixel[1] as f32 / 255.0);
-        input_data.push(pixel[2] as f32 / 255.0);
-    }
-    
-    let input_shape = [1usize, 3usize, orig_height as usize, orig_width as usize];
-    let input_tensor = Tensor::from_array((input_shape, input_data.into_boxed_slice()))
-        .map_err(|e| format!("创建输入tensor失败: {}", e))?;
-    
-    log::info!("DexiNed 开始推理");
-    
-    let outputs = session.run(ort::inputs![input_tensor])
-        .map_err(|e| format!("DexiNed 推理失败: {}", e))?;
-    
-    let (output_shape, output_data) = outputs[0].try_extract_tensor::<f32>()
-        .map_err(|e| format!("获取输出失败: {}", e))?;
-    
-    let output_dims: Vec<usize> = output_shape.iter().map(|d| *d as usize).collect();
-    log::info!("DexiNed 输出维度: {:?}", output_dims);
-    
-    let (out_height, out_width) = if output_dims.len() == 4 {
-        (output_dims[2], output_dims[3])
-    } else if output_dims.len() == 3 {
-        (output_dims[1], output_dims[2])
-    } else {
-        return Err(format!("不支持的输出维度: {:?}", output_dims));
-    };
-    
-    let mut edge_image: ImageBuffer<Luma<u8>, Vec<u8>> = ImageBuffer::new(out_width as u32, out_height as u32);
-    
-    let min_val = output_data.iter().cloned().fold(f32::INFINITY, f32::min);
-    let max_val = output_data.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
-    let range = max_val - min_val;
-    
-    for y in 0..out_height {
-        for x in 0..out_width {
-            let idx = y * out_width + x;
-            let val = output_data[idx];
-            let normalized = if range > 0.0 { (val - min_val) / range } else { 0.0 };
-            let pixel_val = (normalized * 255.0).clamp(0.0, 255.0) as u8;
-            edge_image.put_pixel(x as u32, y as u32, Luma([pixel_val]));
-        }
-    }
-    
-    let final_edge = image::imageops::resize(
-        &edge_image,
-        orig_width,
-        orig_height,
-        image::imageops::FilterType::Triangle
-    );
-    
-    let mut buffer = Vec::new();
-    DynamicImage::ImageLuma8(final_edge)
-        .write_to(&mut std::io::Cursor::new(&mut buffer), image::ImageFormat::Png)
-        .map_err(|e| format!("编码边缘图像失败: {}", e))?;
-    
-    let result_image = format!("data:image/png;base64,{}", general_purpose::STANDARD.encode(&buffer));
-    
-    log::info!("DexiNed 边缘检测完成");
-    
-    Ok(DexiNedDetectionResult {
-        edge_image: result_image,
-        success: true,
-        error: None,
-    })
-}
-
-/// 文档边界检测结果
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct DocumentBoundaryResult {
-    pub corners: Option<Vec<(f32, f32)>>,
-    pub success: bool,
-    pub error: Option<String>,
-}
-
 /// 使用 DexiNed 边缘检测 + 纯 Rust 检测文档边界
 fn detect_document_boundary_rust(edge_image: &ImageBuffer<Luma<u8>, Vec<u8>>) -> Option<Vec<(f32, f32)>> {
     let (_width, _height) = edge_image.dimensions();
@@ -2526,163 +2200,6 @@ fn perspective_transform_rust(img: &DynamicImage, _corners: &[(f32, f32)]) -> Op
 #[cfg(not(target_os = "windows"))]
 fn perspective_transform_rust(_img: &DynamicImage, _corners: &[(f32, f32)]) -> Option<DynamicImage> {
     None
-}
-
-/// 使用 DexiNed 检测文档边界
-#[tauri::command]
-fn detect_document_boundary_dexined(app: tauri::AppHandle, request: DexiNedDetectionRequest) -> Result<DocumentBoundaryResult, String> {
-    use ort::session::Session;
-    use ort::value::Tensor;
-    
-    let img = decode_base64_image(&request.image_data)?;
-    
-    let model_path = match request.model_path {
-        Some(path) => path,
-        None => {
-            let models_dir = get_models_dir(&app)?;
-            models_dir.join("dexined_mbv4.onnx")
-                .to_string_lossy().to_string()
-        }
-    };
-    
-    if !std::path::Path::new(&model_path).exists() {
-        return Ok(DocumentBoundaryResult {
-            corners: None,
-            success: false,
-            error: Some("DexiNed 模型不存在".to_string()),
-        });
-    }
-    
-    let (orig_width, orig_height) = (img.width(), img.height());
-    
-    let mut session = Session::builder()
-        .map_err(|e| format!("创建 Session builder 失败: {}", e))?
-        .with_execution_providers(&[ort::ep::DirectMLExecutionProvider::default().into()])
-        .map_err(|e| format!("设置 DirectML 执行提供器失败: {}", e))?
-        .commit_from_file(&model_path)
-        .map_err(|e| format!("加载 DexiNed ONNX 模型失败: {}", e))?;
-    
-    let rgba = img.to_rgba8();
-    
-    let mut input_data = Vec::with_capacity((orig_width * orig_height * 3) as usize);
-    for pixel in rgba.pixels() {
-        input_data.push(pixel[0] as f32 / 255.0);
-        input_data.push(pixel[1] as f32 / 255.0);
-        input_data.push(pixel[2] as f32 / 255.0);
-    }
-    
-    let input_shape = [1usize, 3usize, orig_height as usize, orig_width as usize];
-    let input_tensor = Tensor::from_array((input_shape, input_data.into_boxed_slice()))
-        .map_err(|e| format!("创建输入tensor失败: {}", e))?;
-    
-    let outputs = session.run(ort::inputs![input_tensor])
-        .map_err(|e| format!("DexiNed 推理失败: {}", e))?;
-    
-    let (output_shape, output_data) = outputs[0].try_extract_tensor::<f32>()
-        .map_err(|e| format!("获取输出失败: {}", e))?;
-    
-    let output_dims: Vec<usize> = output_shape.iter().map(|d| *d as usize).collect();
-    
-    let (out_height, out_width) = if output_dims.len() == 4 {
-        (output_dims[2], output_dims[3])
-    } else if output_dims.len() == 3 {
-        (output_dims[1], output_dims[2])
-    } else {
-        return Err(format!("不支持的输出维度: {:?}", output_dims));
-    };
-    
-    let mut edge_image: ImageBuffer<Luma<u8>, Vec<u8>> = ImageBuffer::new(out_width as u32, out_height as u32);
-    
-    let min_val = output_data.iter().cloned().fold(f32::INFINITY, f32::min);
-    let max_val = output_data.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
-    let range = max_val - min_val;
-    
-    for y in 0..out_height {
-        for x in 0..out_width {
-            let idx = y * out_width + x;
-            let val = output_data[idx];
-            let normalized = if range > 0.0 { (val - min_val) / range } else { 0.0 };
-            let pixel_val = (normalized * 255.0).clamp(0.0, 255.0) as u8;
-            edge_image.put_pixel(x as u32, y as u32, Luma([pixel_val]));
-        }
-    }
-    
-    let final_edge = image::imageops::resize(
-        &edge_image,
-        orig_width,
-        orig_height,
-        image::imageops::FilterType::Triangle
-    );
-    
-    let corners = detect_document_boundary_rust(&final_edge);
-    
-    match corners {
-        Some(c) => {
-            let corners_vec: Vec<(f32, f32)> = c.iter().map(|p| (p.0, p.1)).collect();
-            Ok(DocumentBoundaryResult {
-                corners: Some(corners_vec),
-                success: true,
-                error: None,
-            })
-        }
-        None => Ok(DocumentBoundaryResult {
-            corners: None,
-            success: false,
-            error: Some("未能检测到文档边界".to_string()),
-        })
-    }
-}
-
-/// DBNet 文本检测请求
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct DBNetDetectionRequest {
-    pub image_data: String,
-    pub model_path: Option<String>,
-    pub binary_threshold: f32,
-}
-
-/// DBNet 文本检测结果
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct DBNetDetectionResult {
-    pub bbox: Option<(i32, i32, i32, i32)>,
-    pub success: bool,
-    pub error: Option<String>,
-}
-
-/// 获取 DBNet 模型默认路径
-#[tauri::command]
-fn get_dbnet_model_path(app: tauri::AppHandle) -> Result<String, String> {
-    let models_dir = get_models_dir(&app)?;
-    let model_path = models_dir.join("text_detection_db_TD500_resnet18.onnx");
-    Ok(model_path.to_string_lossy().to_string())
-}
-
-/// DBNet 文本检测命令
-#[tauri::command]
-fn detect_text_dbnet(app: tauri::AppHandle, request: DBNetDetectionRequest) -> Result<DBNetDetectionResult, String> {
-    let img = decode_base64_image(&request.image_data)?;
-    
-    let model_path = match request.model_path {
-        Some(path) => path,
-        None => {
-            let models_dir = get_models_dir(&app)?;
-            models_dir.join("text_detection_db_TD500_resnet18.onnx")
-                .to_string_lossy().to_string()
-        }
-    };
-    
-    match detect_text_regions_dbnet_ort(&img, &model_path, request.binary_threshold) {
-        Ok(bbox) => Ok(DBNetDetectionResult {
-            bbox,
-            success: true,
-            error: None,
-        }),
-        Err(e) => Ok(DBNetDetectionResult {
-            bbox: None,
-            success: false,
-            error: Some(e),
-        }),
-    }
 }
 
 /// 文档扫描 - 自动选择最佳模型（优先DexiNed边界检测，其次DBNet文本检测）
@@ -3091,14 +2608,6 @@ pub struct ModelInfo {
     pub exists: bool,
 }
 
-/// 检查 DBNet 模型是否存在
-#[tauri::command]
-fn check_dbnet_model_exists(app: tauri::AppHandle) -> Result<bool, String> {
-    let models_dir = get_models_dir(&app)?;
-    let model_path = models_dir.join("text_detection_db_TD500_resnet18.onnx");
-    Ok(model_path.exists())
-}
-
 /// 获取 DBNet 模型信息
 #[tauri::command]
 fn get_dbnet_model_info(app: tauri::AppHandle) -> Result<ModelInfo, String> {
@@ -3199,14 +2708,6 @@ fn delete_dbnet_model(app: tauri::AppHandle) -> Result<(), String> {
 
 // ==================== UVDoc 文档矫正模型管理 ====================
 
-/// 检查 UVDoc 模型是否存在
-#[tauri::command]
-fn check_uvdoc_model_exists(app: tauri::AppHandle) -> Result<bool, String> {
-    let models_dir = get_models_dir(&app)?;
-    let model_path = models_dir.join("uvdoc.onnx");
-    Ok(model_path.exists())
-}
-
 /// 获取 UVDoc 模型信息
 #[tauri::command]
 fn get_uvdoc_model_info(app: tauri::AppHandle) -> Result<ModelInfo, String> {
@@ -3306,645 +2807,6 @@ fn delete_uvdoc_model(app: tauri::AppHandle) -> Result<(), String> {
 }
 
 // ==================== 文档增强模型管理 ====================
-
-/// 检查文档增强模型是否存在
-#[tauri::command]
-fn check_enhance_model_exists(app: tauri::AppHandle) -> Result<bool, String> {
-    let models_dir = get_models_dir(&app)?;
-    let gcnet_path = models_dir.join("gcnet.onnx");
-    let nafdpm_path = models_dir.join("nafdpm.onnx");
-    Ok(gcnet_path.exists() && nafdpm_path.exists())
-}
-
-/// 获取文档增强模型信息
-#[tauri::command]
-fn get_enhance_model_info(app: tauri::AppHandle) -> Result<ModelInfo, String> {
-    let models_dir = get_models_dir(&app)?;
-    let gcnet_path = models_dir.join("gcnet.onnx");
-    let nafdpm_path = models_dir.join("nafdpm.onnx");
-    
-    let exists = gcnet_path.exists() && nafdpm_path.exists();
-    let mut total_size = 0.0;
-    
-    if gcnet_path.exists() {
-        if let Ok(metadata) = std::fs::metadata(&gcnet_path) {
-            total_size += metadata.len() as f64 / 1024.0 / 1024.0;
-        }
-    }
-    if nafdpm_path.exists() {
-        if let Ok(metadata) = std::fs::metadata(&nafdpm_path) {
-            total_size += metadata.len() as f64 / 1024.0 / 1024.0;
-        }
-    }
-    
-    Ok(ModelInfo {
-        name: "文档增强模型包".to_string(),
-        size_mb: if total_size > 0.0 { total_size } else { 50.0 },
-        description: "包含去阴影(GCNet)和去模糊(NAFDPM)模型，用于文档图像增强。".to_string(),
-        download_url: "".to_string(),
-        exists,
-    })
-}
-
-/// 下载文档增强模型（带进度）
-#[tauri::command]
-async fn download_enhance_model(app: tauri::AppHandle, window: tauri::Window) -> Result<(), String> {
-    let models_dir = get_models_dir(&app)?;
-    
-    let models = vec![
-        ("gcnet.onnx", "https://modelscope.cn/models/RapidAI/RapidUnDistort/resolve/master/models/gcnet.onnx"),
-        ("nafdpm.onnx", "https://modelscope.cn/models/RapidAI/RapidUnDistort/resolve/master/models/nafdpm.onnx"),
-    ];
-    
-    let client = reqwest::Client::builder()
-        .redirect(reqwest::redirect::Policy::limited(10))
-        .build()
-        .map_err(|e| format!("创建HTTP客户端失败: {}", e))?;
-    
-    let total_models = models.len();
-    let mut completed = 0;
-    
-    for (filename, url) in models {
-        let model_path = models_dir.join(filename);
-        
-        if model_path.exists() {
-            completed += 1;
-            continue;
-        }
-        
-        let response = client
-            .get(url)
-            .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
-            .send()
-            .await
-            .map_err(|e| format!("下载 {} 失败: {}", filename, e))?;
-        
-        if !response.status().is_success() {
-            return Err(format!("下载 {} 失败，HTTP状态码: {}", filename, response.status()));
-        }
-        
-        let total_size = response.content_length().unwrap_or(0);
-        let mut downloaded = 0u64;
-        let mut stream = response.bytes_stream();
-        use futures::StreamExt;
-        
-        let mut file = std::fs::File::create(&model_path)
-            .map_err(|e| format!("创建文件 {} 失败: {}", filename, e))?;
-        
-        use std::io::Write;
-        
-        while let Some(chunk) = stream.next().await {
-            let chunk = chunk.map_err(|e| format!("读取数据失败: {}", e))?;
-            file.write_all(&chunk).map_err(|e| format!("写入文件失败: {}", e))?;
-            downloaded += chunk.len() as u64;
-            
-            if total_size > 0 {
-                let file_progress = downloaded as f64 / total_size as f64;
-                let overall_progress = ((completed as f64 + file_progress) / total_models as f64 * 100.0) as u32;
-                let _ = window.emit("enhance-download-progress", overall_progress);
-            }
-        }
-        
-        completed += 1;
-        let overall_progress = (completed as f64 / total_models as f64 * 100.0) as u32;
-        let _ = window.emit("enhance-download-progress", overall_progress);
-    }
-    
-    let _ = window.emit("enhance-download-complete", ());
-    
-    Ok(())
-}
-
-/// 删除文档增强模型
-#[tauri::command]
-fn delete_enhance_model(app: tauri::AppHandle) -> Result<(), String> {
-    let models_dir = get_models_dir(&app)?;
-    
-    let models = vec!["gcnet.onnx", "nafdpm.onnx", "drnet.onnx", "unetcnn.onnx"];
-    
-    for model_name in models {
-        let model_path = models_dir.join(model_name);
-        if model_path.exists() {
-            std::fs::remove_file(&model_path)
-                .map_err(|e| format!("删除模型文件失败: {}", e))?;
-        }
-    }
-    
-    Ok(())
-}
-
-// ==================== UVDoc 文档扭曲矫正推理 ====================
-
-/// 使用 UVDoc 模型矫正扭曲文档
-fn unwarp_document_uvdoc(
-    img: &DynamicImage,
-    model_path: &str,
-) -> Result<DynamicImage, String> {
-    use ort::value::Tensor;
-    
-    let session = get_or_load_uvdoc_model(std::path::Path::new(model_path))?;
-    let mut session = session.lock().unwrap();
-    
-    let (orig_width, orig_height) = (img.width(), img.height());
-    
-    let target_size = 288usize;
-    let resized = img.resize_exact(target_size as u32, target_size as u32, image::imageops::FilterType::Triangle);
-    
-    let rgba = resized.to_rgba8();
-    let mut input_data = vec![0.0f32; target_size * target_size * 3];
-    
-    for (y, row) in rgba.rows().enumerate() {
-        for (x, pixel) in row.enumerate() {
-            let r = pixel[0] as f32 / 255.0;
-            let g = pixel[1] as f32 / 255.0;
-            let b = pixel[2] as f32 / 255.0;
-            
-            let base_idx = (y * target_size + x) * 3;
-            input_data[base_idx] = r;
-            input_data[base_idx + 1] = g;
-            input_data[base_idx + 2] = b;
-        }
-    }
-    
-    let input_shape = [1usize, 3usize, target_size, target_size];
-    let input_tensor = Tensor::from_array((input_shape, input_data.into_boxed_slice()))
-        .map_err(|e| format!("创建输入tensor失败: {}", e))?;
-    
-    log::info!("UVDoc 开始推理");
-    
-    let outputs = session.run(ort::inputs![input_tensor])
-        .map_err(|e| format!("UVDoc 推理失败: {}", e))?;
-    
-    let (grid_shape, grid_data) = outputs[0].try_extract_tensor::<f32>()
-        .map_err(|e| format!("获取输出失败: {}", e))?;
-    
-    let grid_dims: Vec<usize> = grid_shape.iter().map(|d| *d as usize).collect();
-    log::info!("UVDoc 输出维度: {:?}", grid_dims);
-    
-    let grid_height = grid_dims[2];
-    let grid_width = grid_dims[3];
-    
-    let mut result = image::RgbaImage::new(orig_width, orig_height);
-    
-    let scale_x = orig_width as f32 / (grid_width - 1) as f32;
-    let scale_y = orig_height as f32 / (grid_height - 1) as f32;
-    
-    let orig_rgba = img.to_rgba8();
-    
-    for y in 0..orig_height {
-        for x in 0..orig_width {
-            let src_x_f = x as f32 / scale_x;
-            let src_y_f = y as f32 / scale_y;
-            
-            let src_x = src_x_f.min((grid_width - 1) as f32).max(0.0) as usize;
-            let src_y = src_y_f.min((grid_height - 1) as f32).max(0.0) as usize;
-            
-            let grid_idx = src_y * grid_width + src_x;
-            
-            let coord_x = grid_data[grid_idx * 2] * orig_width as f32;
-            let coord_y = grid_data[grid_idx * 2 + 1] * orig_height as f32;
-            
-            let sample_x = coord_x.clamp(0.0, (orig_width - 1) as f32) as u32;
-            let sample_y = coord_y.clamp(0.0, (orig_height - 1) as f32) as u32;
-            
-            let pixel = orig_rgba.get_pixel(sample_x, sample_y);
-            result.put_pixel(x, y, *pixel);
-        }
-    }
-    
-    log::info!("UVDoc 矫正完成");
-    
-    Ok(DynamicImage::ImageRgba8(result))
-}
-
-/// 文档扭曲矫正命令
-#[tauri::command]
-fn unwarp_document(app: tauri::AppHandle, request: DocumentScanRequest) -> Result<DocumentScanResult, String> {
-    let img = decode_base64_image(&request.image_data)?;
-    
-    log::info!("开始文档扭曲矫正，图像尺寸: {}x{}", img.width(), img.height());
-    
-    let models_dir = get_models_dir(&app)?;
-    
-    let uvdoc_model_path = models_dir.join("uvdoc.onnx");
-    
-    if !uvdoc_model_path.exists() {
-        return Err("UVDoc 模型未安装，请在设置中下载".to_string());
-    }
-    
-    let result_img = unwarp_document_uvdoc(&img, uvdoc_model_path.to_string_lossy().to_string().as_str())?;
-    
-    let mut buffer = Vec::new();
-    result_img
-        .write_to(&mut std::io::Cursor::new(&mut buffer), image::ImageFormat::Png)
-        .map_err(|e| format!("Failed to encode image: {}", e))?;
-    
-    let result_image = format!("data:image/png;base64,{}", general_purpose::STANDARD.encode(&buffer));
-    
-    Ok(DocumentScanResult {
-        enhanced_image: result_image,
-        confidence: 1.0,
-        text_bbox: None,
-    })
-}
-
-// ==================== 文档增强推理 ====================
-
-/// 使用 GCNet 模型去除阴影
-fn remove_shadow_gcnet(
-    img: &DynamicImage,
-    model_path: &str,
-) -> Result<DynamicImage, String> {
-    use ort::value::Tensor;
-    
-    let session = get_or_load_gcnet_model(std::path::Path::new(model_path))?;
-    let mut session = session.lock().unwrap();
-    
-    let (orig_width, orig_height) = (img.width(), img.height());
-    
-    let target_size = 640usize;
-    let scale_x = orig_width as f32 / target_size as f32;
-    let scale_y = orig_height as f32 / target_size as f32;
-    
-    let resized = img.resize_exact(target_size as u32, target_size as u32, image::imageops::FilterType::Triangle);
-    
-    let rgba = resized.to_rgba8();
-    let mut input_data = vec![0.0f32; target_size * target_size * 3];
-    
-    for (y, row) in rgba.rows().enumerate() {
-        for (x, pixel) in row.enumerate() {
-            let base_idx = (y * target_size + x) * 3;
-            input_data[base_idx] = pixel[0] as f32 / 255.0;
-            input_data[base_idx + 1] = pixel[1] as f32 / 255.0;
-            input_data[base_idx + 2] = pixel[2] as f32 / 255.0;
-        }
-    }
-    
-    let input_shape = [1usize, 3usize, target_size, target_size];
-    let input_tensor = Tensor::from_array((input_shape, input_data.into_boxed_slice()))
-        .map_err(|e| format!("创建输入tensor失败: {}", e))?;
-    
-    log::info!("GCNet 开始推理");
-    
-    let outputs = session.run(ort::inputs![input_tensor])
-        .map_err(|e| format!("GCNet 推理失败: {}", e))?;
-    
-    let (output_shape, output_data) = outputs[0].try_extract_tensor::<f32>()
-        .map_err(|e| format!("获取输出失败: {}", e))?;
-    
-    let out_dims: Vec<usize> = output_shape.iter().map(|d| *d as usize).collect();
-    log::info!("GCNet 输出维度: {:?}", out_dims);
-    
-    let out_height = out_dims[2];
-    let out_width = out_dims[3];
-    
-    let mut result = image::RgbaImage::new(orig_width, orig_height);
-    let orig_rgba = img.to_rgba8();
-    
-    for y in 0..orig_height {
-        for x in 0..orig_width {
-            let src_x = (x as f32 / scale_x) as usize;
-            let src_y = (y as f32 / scale_y) as usize;
-            
-            let src_x = src_x.min(out_width - 1);
-            let src_y = src_y.min(out_height - 1);
-            
-            let idx = src_y * out_width + src_x;
-            
-            let r = (output_data[idx * 3] * 255.0).clamp(0.0, 255.0) as u8;
-            let g = (output_data[idx * 3 + 1] * 255.0).clamp(0.0, 255.0) as u8;
-            let b = (output_data[idx * 3 + 2] * 255.0).clamp(0.0, 255.0) as u8;
-            
-            let orig_pixel = orig_rgba.get_pixel(x, y);
-            result.put_pixel(x, y, image::Rgba([r, g, b, orig_pixel[3]]));
-        }
-    }
-    
-    log::info!("GCNet 去阴影完成");
-    
-    Ok(DynamicImage::ImageRgba8(result))
-}
-
-/// 使用 NAFDPM 模型去除模糊
-fn remove_blur_nafdpm(
-    img: &DynamicImage,
-    model_path: &str,
-) -> Result<DynamicImage, String> {
-    use ort::value::Tensor;
-    
-    let session = get_or_load_nafdpm_model(std::path::Path::new(model_path))?;
-    let mut session = session.lock().unwrap();
-    
-    let (orig_width, orig_height) = (img.width(), img.height());
-    
-    let target_size = 256usize;
-    let scale_x = orig_width as f32 / target_size as f32;
-    let scale_y = orig_height as f32 / target_size as f32;
-    
-    let resized = img.resize_exact(target_size as u32, target_size as u32, image::imageops::FilterType::Triangle);
-    
-    let rgba = resized.to_rgba8();
-    let mut input_data = vec![0.0f32; target_size * target_size * 3];
-    
-    for (y, row) in rgba.rows().enumerate() {
-        for (x, pixel) in row.enumerate() {
-            let base_idx = (y * target_size + x) * 3;
-            input_data[base_idx] = pixel[0] as f32 / 255.0;
-            input_data[base_idx + 1] = pixel[1] as f32 / 255.0;
-            input_data[base_idx + 2] = pixel[2] as f32 / 255.0;
-        }
-    }
-    
-    let input_shape = [1usize, 3usize, target_size, target_size];
-    let input_tensor = Tensor::from_array((input_shape, input_data.into_boxed_slice()))
-        .map_err(|e| format!("创建输入tensor失败: {}", e))?;
-    
-    log::info!("NAFDPM 开始推理");
-    
-    let outputs = session.run(ort::inputs![input_tensor])
-        .map_err(|e| format!("NAFDPM 推理失败: {}", e))?;
-    
-    let (output_shape, output_data) = outputs[0].try_extract_tensor::<f32>()
-        .map_err(|e| format!("获取输出失败: {}", e))?;
-    
-    let out_dims: Vec<usize> = output_shape.iter().map(|d| *d as usize).collect();
-    log::info!("NAFDPM 输出维度: {:?}", out_dims);
-    
-    let out_height = out_dims[2];
-    let out_width = out_dims[3];
-    
-    let mut result = image::RgbaImage::new(orig_width, orig_height);
-    let orig_rgba = img.to_rgba8();
-    
-    for y in 0..orig_height {
-        for x in 0..orig_width {
-            let src_x = (x as f32 / scale_x) as usize;
-            let src_y = (y as f32 / scale_y) as usize;
-            
-            let src_x = src_x.min(out_width - 1);
-            let src_y = src_y.min(out_height - 1);
-            
-            let idx = src_y * out_width + src_x;
-            
-            let r = (output_data[idx * 3] * 255.0).clamp(0.0, 255.0) as u8;
-            let g = (output_data[idx * 3 + 1] * 255.0).clamp(0.0, 255.0) as u8;
-            let b = (output_data[idx * 3 + 2] * 255.0).clamp(0.0, 255.0) as u8;
-            
-            let orig_pixel = orig_rgba.get_pixel(x, y);
-            result.put_pixel(x, y, image::Rgba([r, g, b, orig_pixel[3]]));
-        }
-    }
-    
-    log::info!("NAFDPM 去模糊完成");
-    
-    Ok(DynamicImage::ImageRgba8(result))
-}
-
-/// 文档增强命令（去阴影+去模糊）
-#[tauri::command]
-fn enhance_document(app: tauri::AppHandle, request: DocumentScanRequest, enable_unshadow: bool, enable_unblur: bool) -> Result<DocumentScanResult, String> {
-    let mut img = decode_base64_image(&request.image_data)?;
-    
-    log::info!("开始文档增强，图像尺寸: {}x{}", img.width(), img.height());
-    
-    let models_dir = get_models_dir(&app)?;
-    
-    if enable_unshadow {
-        let gcnet_path = models_dir.join("gcnet.onnx");
-        if gcnet_path.exists() {
-            match remove_shadow_gcnet(&img, gcnet_path.to_string_lossy().to_string().as_str()) {
-                Ok(enhanced) => {
-                    img = enhanced;
-                    log::info!("去阴影完成");
-                }
-                Err(e) => {
-                    log::warn!("去阴影失败: {}", e);
-                }
-            }
-        } else {
-            log::warn!("GCNet 模型未安装，跳过去阴影");
-        }
-    }
-    
-    if enable_unblur {
-        let nafdpm_path = models_dir.join("nafdpm.onnx");
-        if nafdpm_path.exists() {
-            match remove_blur_nafdpm(&img, nafdpm_path.to_string_lossy().to_string().as_str()) {
-                Ok(enhanced) => {
-                    img = enhanced;
-                    log::info!("去模糊完成");
-                }
-                Err(e) => {
-                    log::warn!("去模糊失败: {}", e);
-                }
-            }
-        } else {
-            log::warn!("NAFDPM 模型未安装，跳过去模糊");
-        }
-    }
-    
-    let mut buffer = Vec::new();
-    img.write_to(&mut std::io::Cursor::new(&mut buffer), image::ImageFormat::Png)
-        .map_err(|e| format!("Failed to encode image: {}", e))?;
-    
-    let result_image = format!("data:image/png;base64,{}", general_purpose::STANDARD.encode(&buffer));
-    
-    Ok(DocumentScanResult {
-        enhanced_image: result_image,
-        confidence: 1.0,
-        text_bbox: None,
-    })
-}
-
-// ==================== 高级文档增强算法 ====================
-// 使用 imageproc 库实现
-
-/// 光照归一化 - 去除不均匀光照和阴影（保留彩色）
-/// 使用 imageproc 的 gaussian_blur_f32
-fn normalize_illumination(img: &DynamicImage, sigma: f32) -> DynamicImage {
-    let rgba = img.to_rgba8();
-    let (width, height) = rgba.dimensions();
-    
-    let mut r_channel: GrayImage = ImageBuffer::new(width, height);
-    let mut g_channel: GrayImage = ImageBuffer::new(width, height);
-    let mut b_channel: GrayImage = ImageBuffer::new(width, height);
-    
-    for y in 0..height {
-        for x in 0..width {
-            let pixel = rgba.get_pixel(x, y);
-            r_channel.put_pixel(x, y, Luma([pixel[0]]));
-            g_channel.put_pixel(x, y, Luma([pixel[1]]));
-            b_channel.put_pixel(x, y, Luma([pixel[2]]));
-        }
-    }
-    
-    let r_blurred = gaussian_blur_f32(&r_channel, sigma);
-    let g_blurred = gaussian_blur_f32(&g_channel, sigma);
-    let b_blurred = gaussian_blur_f32(&b_channel, sigma);
-    
-    let mut result = ImageBuffer::new(width, height);
-    
-    let mean_bg = 128.0f32;
-    
-    for y in 0..height {
-        for x in 0..width {
-            let pixel = rgba.get_pixel(x, y);
-            let r_orig = pixel[0] as f32;
-            let g_orig = pixel[1] as f32;
-            let b_orig = pixel[2] as f32;
-            let a = pixel[3];
-            
-            let r_bg = r_blurred.get_pixel(x, y)[0] as f32;
-            let g_bg = g_blurred.get_pixel(x, y)[0] as f32;
-            let b_bg = b_blurred.get_pixel(x, y)[0] as f32;
-            
-            let r_bg = r_bg.max(16.0);
-            let g_bg = g_bg.max(16.0);
-            let b_bg = b_bg.max(16.0);
-            
-            let r = (r_orig * mean_bg / r_bg).clamp(0.0, 255.0) as u8;
-            let g = (g_orig * mean_bg / g_bg).clamp(0.0, 255.0) as u8;
-            let b = (b_orig * mean_bg / b_bg).clamp(0.0, 255.0) as u8;
-            
-            result.put_pixel(x, y, Rgba([r, g, b, a]));
-        }
-    }
-    
-    DynamicImage::ImageRgba8(result)
-}
-
-/// 自适应二值化 - 自己实现，支持偏移参数
-/// 类似 OpenCV 的 ADAPTIVE_THRESH_MEAN_C
-/// block_size: 块大小（必须是奇数）
-/// c: 从局部均值中减去的偏移值
-fn adaptive_binarize_custom(img: &DynamicImage, block_size: u32, c: i32) -> DynamicImage {
-    let gray = img.to_luma8();
-    let (width, height) = gray.dimensions();
-    
-    let block_size = block_size.clamp(3, 99) | 1;
-    let half = block_size / 2;
-    
-    let integral_width = width as usize + 1;
-    let integral_height = height as usize + 1;
-    let mut integral = vec![0u64; integral_width * integral_height];
-    
-    for y in 0..height {
-        let mut row_sum = 0u64;
-        for x in 0..width {
-            row_sum += gray.get_pixel(x, y)[0] as u64;
-            let idx = ((y + 1) as usize) * integral_width + ((x + 1) as usize);
-            integral[idx] = integral[idx - integral_width] + row_sum;
-        }
-    }
-    
-    let mut result = ImageBuffer::new(width, height);
-    
-    for y in 0..height {
-        for x in 0..width {
-            let x1 = (x as i32 - half as i32).max(0) as u32;
-            let y1 = (y as i32 - half as i32).max(0) as u32;
-            let x2 = (x + half).min(width - 1);
-            let y2 = (y + half).min(height - 1);
-            
-            let count = ((x2 - x1 + 1) * (y2 - y1 + 1)) as u64;
-            
-            let idx1 = (y1 as usize) * integral_width + (x1 as usize);
-            let idx2 = (y1 as usize) * integral_width + ((x2 + 1) as usize);
-            let idx3 = ((y2 + 1) as usize) * integral_width + (x1 as usize);
-            let idx4 = ((y2 + 1) as usize) * integral_width + ((x2 + 1) as usize);
-            
-            let sum = integral[idx4] - integral[idx2] - integral[idx3] + integral[idx1];
-            let mean = sum as f64 / count as f64;
-            
-            let pixel_val = f64::from(gray.get_pixel(x, y)[0]);
-            let threshold = mean - f64::from(c);
-            
-            let value = if pixel_val > threshold { 255 } else { 0 };
-            result.put_pixel(x, y, Luma([value]));
-        }
-    }
-    
-    DynamicImage::ImageLuma8(result)
-}
-
-/// 形态学闭运算 - 填补断裂
-fn morphological_close(img: &GrayImage, kernel_size: u32) -> GrayImage {
-    let dilated = dilate_gray(img, kernel_size);
-    erode_gray(&dilated, kernel_size)
-}
-
-fn dilate_gray(img: &GrayImage, kernel_size: u32) -> GrayImage {
-    let (width, height) = img.dimensions();
-    let half = (kernel_size / 2) as i32;
-    
-    ImageBuffer::from_fn(width, height, |x, y| {
-        let mut max_val = 0u8;
-        for dy in -half..=half {
-            for dx in -half..=half {
-                let px = (x as i32 + dx).max(0).min(width as i32 - 1) as u32;
-                let py = (y as i32 + dy).max(0).min(height as i32 - 1) as u32;
-                let val = img.get_pixel(px, py)[0];
-                if val > max_val { max_val = val; }
-            }
-        }
-        Luma([max_val])
-    })
-}
-
-fn erode_gray(img: &GrayImage, kernel_size: u32) -> GrayImage {
-    let (width, height) = img.dimensions();
-    let half = (kernel_size / 2) as i32;
-    
-    ImageBuffer::from_fn(width, height, |x, y| {
-        let mut min_val = 255u8;
-        for dy in -half..=half {
-            for dx in -half..=half {
-                let px = (x as i32 + dx).max(0).min(width as i32 - 1) as u32;
-                let py = (y as i32 + dy).max(0).min(height as i32 - 1) as u32;
-                let val = img.get_pixel(px, py)[0];
-                if val < min_val { min_val = val; }
-            }
-        }
-        Luma([min_val])
-    })
-}
-
-/// 文档增强主函数
-fn enhance_document_advanced_internal(img: &DynamicImage, binarize: bool) -> DynamicImage {
-    let normalized = normalize_illumination(img, 25.0);
-    
-    if binarize {
-        let binary = adaptive_binarize_custom(&normalized, 51, 15);
-        let gray = binary.to_luma8();
-        let refined = morphological_close(&gray, 3);
-        DynamicImage::ImageLuma8(refined)
-    } else {
-        normalized
-    }
-}
-
-/// 文档增强选项
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
-pub struct DocumentEnhanceOptions {
-    pub binarize: bool,
-}
-
-/// 高级文档增强命令
-#[tauri::command]
-fn enhance_document_advanced(image_data: String, options: DocumentEnhanceOptions) -> Result<String, String> {
-    let img = decode_base64_image(&image_data)?;
-    
-    let enhanced = enhance_document_advanced_internal(&img, options.binarize);
-    
-    let mut buffer = Vec::new();
-    enhanced
-        .write_to(&mut std::io::Cursor::new(&mut buffer), image::ImageFormat::Png)
-        .map_err(|e| format!("Failed to encode image: {}", e))?;
-    
-    let result = format!("data:image/png;base64,{}", general_purpose::STANDARD.encode(&buffer));
-    
-    Ok(result)
-}
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -4071,17 +2933,13 @@ pub fn run() {
             get_config_dir, 
             get_cds_dir,
             get_theme_dir,
-            generate_thumbnail, 
             rotate_image,
             save_image,
             compact_strokes,
-            generate_thumbnails_batch,
             open_settings_window,
             open_doc_scan_window,
-            rotate_main_image,
             set_mirror_state,
             get_mirror_state,
-            switch_camera,
             get_app_version,
             check_update,
             download_update,
@@ -4101,29 +2959,15 @@ pub fn run() {
             set_file_type_icons,
             remove_file_type_icons,
             scan_document,
-            enhance_document_advanced,
-            detect_text_dbnet,
-            get_dbnet_model_path,
-            check_dbnet_model_exists,
             get_dbnet_model_info,
             download_dbnet_model,
             delete_dbnet_model,
-            check_uvdoc_model_exists,
             get_uvdoc_model_info,
             download_uvdoc_model,
             delete_uvdoc_model,
-            check_enhance_model_exists,
-            get_enhance_model_info,
-            download_enhance_model,
-            delete_enhance_model,
-            unwarp_document,
-            enhance_document,
             check_dexined_model,
-            detect_edges_dexined,
             import_dexined_model,
-            delete_dexined_model,
-            detect_document_boundary_dexined,
-            clear_model_cache
+            delete_dexined_model
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

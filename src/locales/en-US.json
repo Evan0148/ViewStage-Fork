@@ -53,6 +53,7 @@
   },
   "docScan": {
     "title": "Document Scan Enhancement",
+    "hint": "Auto-detect document area and crop",
     "autoDetect": "Auto-detect document boundary",
     "enhance": "Enhance document",
     "denoise": "Denoise",

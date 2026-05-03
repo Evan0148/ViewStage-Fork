@@ -53,6 +53,7 @@
   },
   "docScan": {
     "title": "文档扫描增强",
+    "hint": "自动检测文档区域并裁剪",
     "autoDetect": "自动检测文档边界",
     "enhance": "增强文档",
     "denoise": "去噪处理",
