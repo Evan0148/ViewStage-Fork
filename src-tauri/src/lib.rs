@@ -1,7 +1,6 @@
 //! ViewStage - 图像处理 Rust 后端
 //! 
 //! 功能模块：
-//! - 图像增强 (enhance_image): 对比度、亮度、饱和度调整
 //! - 缩略图生成 (generate_thumbnail, generate_thumbnails_batch): 并行批量生成
 //! - 图像旋转 (rotate_image): 90/180/270度旋转
 //! - 图片保存 (save_image, save_images_batch): 保存到指定目录
@@ -23,8 +22,7 @@ mod image_processing;
 
 use image_processing::{
     decode_base64_image, extract_base64,
-    enhance_image, generate_thumbnail, generate_thumbnails_batch, rotate_image,
-    apply_enhance_filter,
+    generate_thumbnail, generate_thumbnails_batch, rotate_image,
 };
 
 #[cfg(target_os = "windows")]
@@ -675,35 +673,6 @@ fn save_image(image_data: String, prefix: Option<String>) -> Result<ImageSaveRes
     })
 }
 
-#[tauri::command]
-fn save_image_with_enhance(image_data: String, prefix: Option<String>, contrast: f32, brightness: f32, saturation: f32, sharpen: f32) -> Result<ImageSaveResult, String> {
-    let base_dir = get_cds_dir()?;
-    let prefix_str = sanitize_prefix(&prefix.unwrap_or_else(|| "photo".to_string()));
-    
-    let img = decode_base64_image(&image_data)?;
-    
-    let enhanced = apply_enhance_filter(&img, contrast, brightness, saturation, sharpen);
-    
-    let mut buffer = Vec::new();
-    enhanced
-        .write_to(&mut std::io::Cursor::new(&mut buffer), image::ImageFormat::Png)
-        .map_err(|e| format!("Failed to encode enhanced image: {}", e))?;
-    
-    let (file_path, _file_name) = get_save_path(&base_dir, &prefix_str, "png")?;
-    
-    std::fs::write(&file_path, &buffer)
-        .map_err(|e| format!("Failed to write enhanced image file: {}", e))?;
-    
-    let enhanced_data = format!("data:image/png;base64,{}", general_purpose::STANDARD.encode(&buffer));
-    
-    Ok(ImageSaveResult {
-        path: file_path.to_string_lossy().to_string(),
-        success: true,
-        error: None,
-        enhanced_data: Some(enhanced_data),
-    })
-}
-
 // ==================== 笔画压缩 ====================
 // 将笔画渲染到图片，用于撤销功能
 
@@ -912,7 +881,6 @@ fn compact_strokes(request: CompactStrokesRequest) -> Result<String, String> {
 use std::sync::atomic::{AtomicBool, Ordering};
 
 static MIRROR_STATE: AtomicBool = AtomicBool::new(false);
-static ENHANCE_STATE: AtomicBool = AtomicBool::new(false);
 static OOBE_ACTIVE: AtomicBool = AtomicBool::new(false);
 
 // ==================== 设置窗口 ====================
@@ -962,18 +930,6 @@ async fn set_mirror_state(enabled: bool, app: tauri::AppHandle) -> Result<(), St
 #[tauri::command]
 async fn get_mirror_state() -> Result<bool, String> {
     Ok(MIRROR_STATE.load(Ordering::SeqCst))
-}
-
-#[tauri::command]
-async fn set_enhance_state(enabled: bool, app: tauri::AppHandle) -> Result<(), String> {
-    ENHANCE_STATE.store(enabled, Ordering::SeqCst);
-    let _ = app.emit("enhance-changed", enabled);
-    Ok(())
-}
-
-#[tauri::command]
-async fn get_enhance_state() -> Result<bool, String> {
-    Ok(ENHANCE_STATE.load(Ordering::SeqCst))
 }
 
 #[tauri::command]
@@ -4115,11 +4071,9 @@ pub fn run() {
             get_config_dir, 
             get_cds_dir,
             get_theme_dir,
-            enhance_image, 
             generate_thumbnail, 
             rotate_image,
             save_image,
-            save_image_with_enhance,
             compact_strokes,
             generate_thumbnails_batch,
             open_settings_window,
@@ -4127,8 +4081,6 @@ pub fn run() {
             rotate_main_image,
             set_mirror_state,
             get_mirror_state,
-            set_enhance_state,
-            get_enhance_state,
             switch_camera,
             get_app_version,
             check_update,
