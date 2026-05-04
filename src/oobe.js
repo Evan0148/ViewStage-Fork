@@ -5,6 +5,10 @@ const invoke = window.__TAURI__?.core?.invoke;
         await window.i18n.init();
         updateOOBEPageTexts();
     }
+    
+    if (window.ThemeManager) {
+        await window.ThemeManager.init();
+    }
 })();
 
 function updateOOBEPageTexts() {
@@ -313,7 +317,23 @@ function setupCustomSelects() {
                     updateOOBEPageTexts();
                 }
                 
-                if (select.id === 'cameraSelect' || select.id === 'cameraResolutionSelect') {
+                if (select.id === 'themeSelect' && window.ThemeManager) {
+                    const themeName = option.dataset.value;
+                    await window.ThemeManager.setTheme(themeName);
+                }
+                
+                if (select.id === 'cameraSelect') {
+                    try {
+                        const deviceId = option.dataset.value;
+                        await initCameraResolutionSelect(deviceId);
+                        stopCameraPreview();
+                        initCameraPreview();
+                    } catch (error) {
+                        console.error('切换摄像头失败:', error);
+                    }
+                }
+                
+                if (select.id === 'cameraResolutionSelect') {
                     stopCameraPreview();
                     initCameraPreview();
                 }
@@ -462,12 +482,9 @@ async function initCameraSelect() {
     const cameraSelected = document.getElementById('cameraSelected');
     const cameraResolutionSelected = document.getElementById('cameraResolutionSelected');
 
-    let stream = null;
-    let track = null;
-    
     try {
-        stream = await navigator.mediaDevices.getUserMedia({ video: true });
-        track = stream.getVideoTracks()[0];
+        const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+        stream.getTracks().forEach(t => t.stop());
         
         const devices = await navigator.mediaDevices.enumerateDevices();
         const videoDevices = devices.filter(device => device.kind === 'videoinput');
@@ -493,7 +510,11 @@ async function initCameraSelect() {
         const cameraText = window.i18n?.t('camera.camera') || '摄像头';
         cameraSelected.textContent = videoDevices[0].label || `${cameraText} 1`;
         
-        await initCameraResolutionSelect(track);
+        try {
+            await initCameraResolutionSelect(videoDevices[0].deviceId);
+        } catch (e) {
+            console.error('初始化分辨率选择失败:', e);
+        }
         
         setupCustomSelects();
         initCameraPreview();
@@ -511,13 +532,6 @@ async function initCameraSelect() {
         cameraResolutionSelected.textContent = '-';
         
         disableCameraSettings();
-    } finally {
-        if (track) {
-            track.stop();
-        }
-        if (stream) {
-            stream.getTracks().forEach(t => t.stop());
-        }
     }
 }
 
@@ -546,7 +560,7 @@ async function initCameraPreview() {
         const cameraOption = cameraSelect.querySelector('.select-option.selected');
         const resolutionOption = cameraResolutionSelect.querySelector('.select-option.selected');
         
-        const deviceId = cameraOption ? cameraOption.dataset.value : '';
+        const deviceId = cameraOption ? cameraOption.dataset.value : null;
         const width = resolutionOption ? parseInt(resolutionOption.dataset.width) : 1280;
         const height = resolutionOption ? parseInt(resolutionOption.dataset.height) : 720;
         
@@ -578,64 +592,125 @@ function stopCameraPreview() {
     }
 }
 
-async function initCameraResolutionSelect(track) {
-    const cameraResolutionOptions = document.getElementById('cameraResolutionOptions');
-    const cameraResolutionSelected = document.getElementById('cameraResolutionSelected');
-
-    const capabilities = track.getCapabilities();
-    const resolutions = [];
+async function getSupportedResolutions(deviceId) {
+    const commonResolutions = [
+        { w: 640, h: 480, label: '640 x 480 (VGA)', aspectRatio: '4:3' },
+        { w: 800, h: 600, label: '800 x 600 (SVGA)', aspectRatio: '4:3' },
+        { w: 1280, h: 720, label: '1280 x 720 (720p)', aspectRatio: '16:9' },
+        { w: 1280, h: 960, label: '1280 x 960', aspectRatio: '4:3' },
+        { w: 1600, h: 1200, label: '1600 x 1200', aspectRatio: '4:3' },
+        { w: 1920, h: 1080, label: '1920 x 1080 (1080p)', aspectRatio: '16:9' },
+        { w: 2560, h: 1440, label: '2560 x 1440 (2K)', aspectRatio: '16:9' },
+        { w: 3840, h: 2160, label: '3840 x 2160 (4K)', aspectRatio: '16:9' }
+    ];
     
-    if (capabilities.width && capabilities.height) {
-        const widths = capabilities.width;
-        const heights = capabilities.height;
+    let stream = null;
+    let track = null;
+    const supportedResolutions = [];
+    
+    try {
+        let constraints;
+        if (deviceId) {
+            constraints = { video: { deviceId: { exact: deviceId } } };
+        } else {
+            constraints = { video: true };
+        }
         
-        const commonResolutions = [
-            { w: 640, h: 480, label: '640 x 480 (VGA)' },
-            { w: 800, h: 600, label: '800 x 600 (SVGA)' },
-            { w: 1280, h: 720, label: '1280 x 720 (720p)' },
-            { w: 1280, h: 960, label: '1280 x 960' },
-            { w: 1600, h: 1200, label: '1600 x 1200' },
-            { w: 1920, h: 1080, label: '1920 x 1080 (1080p)' },
-            { w: 2560, h: 1440, label: '2560 x 1440 (2K)' },
-            { w: 3840, h: 2160, label: '3840 x 2160 (4K)' }
-        ];
+        stream = await navigator.mediaDevices.getUserMedia(constraints);
+        track = stream.getVideoTracks()[0];
         
-        commonResolutions.forEach(res => {
-            if (widths.max >= res.w && heights.max >= res.h) {
-                resolutions.push(res);
+        const capabilities = track.getCapabilities();
+        const maxWidth = capabilities.width?.max || 1920;
+        const maxHeight = capabilities.height?.max || 1080;
+        
+        const testedResolutions = new Set();
+        
+        for (const res of commonResolutions) {
+            if (res.w > maxWidth || res.h > maxHeight) continue;
+            
+            try {
+                await track.applyConstraints({
+                    width: { exact: res.w },
+                    height: { exact: res.h }
+                });
+                
+                const settings = track.getSettings();
+                if (settings.width === res.w && settings.height === res.h) {
+                    supportedResolutions.push({ ...res, actual: true });
+                    testedResolutions.add(`${res.w}x${res.h}`);
+                }
+            } catch (e) {
+                // 分辨率不支持，跳过
             }
-        });
+        }
         
-        if (widths.max && heights.max) {
-            const maxResLabel = `${widths.max} x ${heights.max}`;
-            const exists = resolutions.some(r => r.w === widths.max && r.h === heights.max);
-            if (!exists) {
+        try {
+            await track.applyConstraints({
+                width: { ideal: maxWidth },
+                height: { ideal: maxHeight }
+            });
+            
+            const maxSettings = track.getSettings();
+            const actualMaxW = maxSettings.width;
+            const actualMaxH = maxSettings.height;
+            const maxKey = `${actualMaxW}x${actualMaxH}`;
+            
+            if (!testedResolutions.has(maxKey) && actualMaxW && actualMaxH) {
                 const maxText = window.i18n?.t('settings.maximum') || '最大';
-                resolutions.push({ w: widths.max, h: heights.max, label: `${maxResLabel} (${maxText})` });
+                supportedResolutions.push({
+                    w: actualMaxW,
+                    h: actualMaxH,
+                    label: `${actualMaxW} x ${actualMaxH} (${maxText})`,
+                    actual: true
+                });
             }
+        } catch (e) {
+            // 忽略错误
+        }
+        
+    } catch (error) {
+        console.error('检测摄像头分辨率失败:', error);
+    } finally {
+        if (track) {
+            track.stop();
+        }
+        if (stream) {
+            stream.getTracks().forEach(t => t.stop());
         }
     }
     
+    return supportedResolutions.sort((a, b) => (b.w * b.h) - (a.w * a.h));
+}
+
+async function initCameraResolutionSelect(deviceId) {
+    const cameraResolutionOptions = document.getElementById('cameraResolutionOptions');
+    const cameraResolutionSelected = document.getElementById('cameraResolutionSelected');
+    
+    if (!cameraResolutionOptions || !cameraResolutionSelected) return;
+    
     cameraResolutionOptions.innerHTML = '';
+    
+    const resolutions = await getSupportedResolutions(deviceId);
     
     if (resolutions.length === 0) {
         cameraResolutionSelected.textContent = window.i18n?.t('settings.cannotGet') || '无法获取';
-    } else {
-        const defaultOption = resolutions.find(r => r.w === 1280 && r.h === 720) || resolutions[0];
-        const defaultIndex = resolutions.indexOf(defaultOption);
-        
-        resolutions.forEach((res, index) => {
-            const option = document.createElement('div');
-            option.className = 'select-option' + (index === defaultIndex ? ' selected' : '');
-            option.dataset.width = res.w;
-            option.dataset.height = res.h;
-            option.dataset.value = `${res.w}x${res.h}`;
-            option.textContent = res.label;
-            cameraResolutionOptions.appendChild(option);
-        });
-        
-        cameraResolutionSelected.textContent = defaultOption.label;
+        return;
     }
+    
+    const defaultOption = resolutions.find(r => r.w === 1280 && r.h === 720) || resolutions[0];
+    const defaultIndex = resolutions.indexOf(defaultOption);
+    
+    resolutions.forEach((res, index) => {
+        const option = document.createElement('div');
+        option.className = 'select-option' + (index === defaultIndex ? ' selected' : '');
+        option.dataset.width = res.w;
+        option.dataset.height = res.h;
+        option.dataset.value = `${res.w}x${res.h}`;
+        option.textContent = res.label;
+        cameraResolutionOptions.appendChild(option);
+    });
+    
+    cameraResolutionSelected.textContent = defaultOption.label;
 }
 
 function setupPage4Buttons() {
@@ -656,13 +731,20 @@ function setupPage4Buttons() {
         if (resolutionOption) {
             cachedSettings.cameraWidth = parseInt(resolutionOption.dataset.width);
             cachedSettings.cameraHeight = parseInt(resolutionOption.dataset.height);
+        } else {
+            cachedSettings.cameraWidth = 1280;
+            cachedSettings.cameraHeight = 720;
         }
         
         const finalSettings = mergeSettings(cachedSettings);
         
         stopCameraPreview();
-        await invoke('save_settings', { settings: finalSettings });
-        showPage5();
+        try {
+            await invoke('save_settings', { settings: finalSettings });
+            showPage5();
+        } catch (error) {
+            console.error('保存设置失败:', error);
+        }
     });
 }
 

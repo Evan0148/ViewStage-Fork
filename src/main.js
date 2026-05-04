@@ -4696,7 +4696,7 @@ async function setCameraState(open, options = {}) {
             if (state.defaultCameraId) {
                 constraints = {
                     video: {
-                        deviceId: { ideal: state.defaultCameraId },
+                        deviceId: { exact: state.defaultCameraId },
                         width: { ideal: state.cameraWidth || 1280 },
                         height: { ideal: state.cameraHeight || 720 }
                     },
@@ -4717,10 +4717,11 @@ async function setCameraState(open, options = {}) {
                 state.cameraStream = await navigator.mediaDevices.getUserMedia(constraints);
             } catch (constraintError) {
                 if (constraintError.name === 'OverconstrainedError') {
-                    console.warn('摄像头不支持请求的分辨率，使用默认设置');
+                    console.warn('指定摄像头不可用，使用默认摄像头');
                     const fallbackConstraints = {
                         video: {
-                            facingMode: state.useFrontCamera ? 'user' : 'environment'
+                            width: { ideal: state.cameraWidth || 1280 },
+                            height: { ideal: state.cameraHeight || 720 }
                         },
                         audio: false
                     };
