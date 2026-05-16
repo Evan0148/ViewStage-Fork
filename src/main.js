@@ -152,6 +152,7 @@ function main_stroke_clone(strokes, deep = false) {
             color: stroke.color,
             lineWidth: stroke.lineWidth,
             eraserSize: stroke.eraserSize,
+            scale: stroke.scale,
             bounds: stroke.bounds ? { ...stroke.bounds } : undefined,
             variableWidths: stroke.variableWidths ? [...stroke.variableWidths] : null,
             savedStrokeHistory: stroke.savedStrokeHistory ? main_stroke_clone(stroke.savedStrokeHistory, true) : undefined,
@@ -164,6 +165,7 @@ function main_stroke_clone(strokes, deep = false) {
         color: stroke.color,
         lineWidth: stroke.lineWidth,
         eraserSize: stroke.eraserSize,
+        scale: stroke.scale,
         bounds: stroke.bounds,
         variableWidths: stroke.variableWidths,
         savedStrokeHistory: stroke.savedStrokeHistory,
@@ -1407,8 +1409,16 @@ function main_setup_mode_events() {
 }
 
 // 切换模式
-function main_update_mode(mode) {
-    state.drawMode = mode;
+async function main_update_mode(mode) {
+    // 切换模式前提交当前未完成的笔画并重置绘制状态
+    if (state.isDrawing) {
+        state.isDrawing = false;
+        main_hide_drawing_mode();
+        await main_submit_stroke();
+        batchDrawManager.batch_draw_delete_all();
+    }
+    state.isDragging = false;
+    state.isScaling = false;
     
     main_hide_pen_control_panel();
     
@@ -1777,23 +1787,23 @@ function main_update_color_button_active() {
 // 设置笔触样式
 function main_update_pen_style() {
     const dc = dom.drawCtx;
-    const scale = main_fetch_safe_scale();
-    dc.strokeStyle = DRAW_CONFIG.penColor;
-    dc.lineWidth = DRAW_CONFIG.penWidth / scale;
-    dc.lineCap = 'round';
-    dc.lineJoin = 'round';
-    dc.miterLimit = 10;
-    dc.globalCompositeOperation = 'source-over';
+    main_update_context_state(dc, {
+        strokeStyle: DRAW_CONFIG.penColor,
+        lineWidth: DRAW_CONFIG.penWidth,
+        lineCap: 'round',
+        lineJoin: 'round',
+        globalCompositeOperation: 'source-over'
+    });
 }
 
 function main_update_eraser_style() {
     const dc = dom.drawCtx;
-    const scale = main_fetch_safe_scale();
-    dc.lineWidth = DRAW_CONFIG.eraserSize / scale;
-    dc.lineCap = 'round';
-    dc.lineJoin = 'round';
-    dc.miterLimit = 10;
-    dc.globalCompositeOperation = 'destination-out';
+    main_update_context_state(dc, {
+        lineWidth: DRAW_CONFIG.eraserSize,
+        lineCap: 'round',
+        lineJoin: 'round',
+        globalCompositeOperation: 'destination-out'
+    });
 }
 
 function main_start_drawing_mode() {
@@ -2195,10 +2205,23 @@ function main_setup_canvas_touch_events() {
     dom.drawCanvas.addEventListener('touchcancel', main_handle_touch_end, { passive: false });
 }
 
-function main_handle_touch_start(e) {
+async function main_handle_touch_start(e) {
     e.preventDefault();
     const touches = e.touches;
     state.drawCanvasRect = dom.drawCanvas.getBoundingClientRect();
+    
+    // 在支持 PointerEvent 的设备上，TouchEvent 只处理多指手势，单指完全由 PointerEvent 处理
+    if (window.PointerEvent) {
+        if (touches.length === 1) {
+            return;
+        }
+        // 2+ 指继续执行下面的缩放逻辑
+    } else {
+        // 不支持 PointerEvent 的设备，通过 isDrawing 防重入
+        if (touches.length === 1 && state.isDrawing) {
+            return;
+        }
+    }
     
     if (touches.length === 1) {
         const touch = touches[0];
@@ -2209,6 +2232,7 @@ function main_handle_touch_start(e) {
             dom.canvasWrapper.classList.add('dragging');
             dom.drawCanvas.classList.add('dragging');
         } else if (state.drawMode === 'comment') {
+            main_hide_pen_control_panel();
             state.isDrawing = true;
             main_start_drawing_mode();
             state.cachedInvScale = 1 / main_fetch_safe_scale();
@@ -2216,6 +2240,7 @@ function main_handle_touch_start(e) {
             state.lastY = (touch.clientY - state.drawCanvasRect.top) * state.cachedInvScale;
             main_start_stroke('draw');
         } else if (state.drawMode === 'eraser') {
+            main_hide_pen_control_panel();
             state.isDrawing = true;
             main_start_drawing_mode();
             main_update_eraser_hint_position(touch.clientX, touch.clientY);
@@ -2225,9 +2250,16 @@ function main_handle_touch_start(e) {
             main_start_stroke('erase');
         }
     } else if (touches.length === 2) {
+        // 双指缩放前先提交当前未完成的笔画
+        if (state.isDrawing) {
+            state.isDrawing = false;
+            main_hide_drawing_mode();
+            await main_submit_stroke();
+            batchDrawManager.batch_draw_delete_all();
+            state.cachedInvScale = 1 / main_fetch_safe_scale();
+        }
         state.isScaling = true;
         state.isDragging = false;
-        state.isDrawing = false;
         state.startDistanceSq = main_calc_touch_distance_squared(touches[0], touches[1]);
         state.startScale = state.scale;
         state.startScaleX = (touches[0].clientX + touches[1].clientX) / 2;
@@ -2241,6 +2273,16 @@ function main_handle_touch_start(e) {
 function main_handle_touch_move(e) {
     e.preventDefault();
     const touches = e.touches;
+    
+    // 在支持 PointerEvent 的设备上，TouchEvent 只处理多指手势
+    if (window.PointerEvent && touches.length === 1) {
+        return;
+    }
+    
+    // 不支持 PointerEvent 设备的防重入检查
+    if (touches.length === 1 && state.isDrawing) {
+        return;
+    }
     
     if (touches.length === 1 && state.isDragging) {
         const touch = touches[0];
@@ -2308,6 +2350,11 @@ function main_handle_touch_move(e) {
 async function main_handle_touch_end(e) {
     e.preventDefault();
     
+    // 在支持 PointerEvent 的设备上，只处理多指缩放结束
+    if (window.PointerEvent && !state.isScaling) {
+        return;
+    }
+    
     if (e.touches.length === 0) {
         state.isDragging = false;
         state.isScaling = false;
@@ -2317,6 +2364,9 @@ async function main_handle_touch_end(e) {
         main_update_move_bound();
         main_update_canvas_position();
         dom.canvasWrapper.style.transform = `translate3d(${state.canvasX}px, ${state.canvasY}px, 0) scale(${state.scale})`;
+        last_canvas_transform.x = state.canvasX;
+        last_canvas_transform.y = state.canvasY;
+        last_canvas_transform.scale = state.scale;
         
         if (state.isDrawing) {
             state.isDrawing = false;
@@ -2482,8 +2532,8 @@ async function main_handle_eraser_stroke(eraserStroke) {
  * 检测橡皮擦是否与现有笔画相交
  */
 function main_validate_eraser_intersection(eraserStroke) {
-    // 如果有 baseImageObj，橡皮擦一定能擦除到内容
-    if (state.baseImageObj) {
+    // 如果有 baseImage（包括加载中的），橡皮擦一定能擦除到内容
+    if (state.baseImageObj || state.baseImageURL) {
         return true;
     }
     
@@ -2510,33 +2560,44 @@ function main_validate_eraser_intersection(eraserStroke) {
             continue;
         }
         
-        // 检查橡皮擦路径上的每个点
-        for (const eraserPoint of eraserPoints) {
-            const ex = eraserPoint.fromX || eraserPoint.x;
-            const ey = eraserPoint.fromY || eraserPoint.y;
-            
-            // 检查笔画的每个线段
-            for (const point of points) {
-                const x1 = point.fromX || point.x;
-                const y1 = point.fromY || point.y;
-                const x2 = point.toX || point.x;
-                const y2 = point.toY || point.y;
+            // 检查橡皮擦路径上的每个点（from 和 to 两个端点都检查）
+            for (const eraserPoint of eraserPoints) {
+                // 检查 from 端点
+                let ex = eraserPoint.fromX;
+                let ey = eraserPoint.fromY;
                 
-                // 检测点到线段的距离
-                const distance = main_calc_point_segment_distance(ex, ey, x1, y1, x2, y2);
+                for (const point of points) {
+                    if (main_calc_eraser_point_hit_stroke(ex, ey, point, stroke.lineWidth, eraserRadius)) {
+                        return true;
+                    }
+                }
                 
-                // 考虑橡皮擦的半径和笔画的线宽
-                const strokeWidth = (stroke.lineWidth || DRAW_CONFIG.penWidth) / 2;
-                const maxDistance = eraserRadius + strokeWidth;
+                // 检查 to 端点（快速移动时长线段可能跳过 from 点）
+                ex = eraserPoint.toX;
+                ey = eraserPoint.toY;
                 
-                if (distance <= maxDistance) {
-                    return true; // 检测到相交
+                for (const point of points) {
+                    if (main_calc_eraser_point_hit_stroke(ex, ey, point, stroke.lineWidth, eraserRadius)) {
+                        return true;
+                    }
                 }
             }
         }
-    }
     
     return false; // 没有检测到相交
+}
+
+function main_calc_eraser_point_hit_stroke(px, py, strokePoint, strokeLineWidth, eraserRadius) {
+    const x1 = strokePoint.fromX;
+    const y1 = strokePoint.fromY;
+    const x2 = strokePoint.toX;
+    const y2 = strokePoint.toY;
+    
+    const distance = main_calc_point_segment_distance(px, py, x1, y1, x2, y2);
+    const strokeWidth = (strokeLineWidth || DRAW_CONFIG.penWidth) / 2;
+    const maxDistance = eraserRadius + strokeWidth;
+    
+    return distance <= maxDistance;
 }
 
 /**
@@ -2620,23 +2681,28 @@ async function main_render_all_strokes(dirtyRect = null) {
     // 检查是否有橡皮擦笔画
     const hasEraseStrokes = strokesToRedraw.some(stroke => stroke.type === 'erase');
     
-    ctx.lineCap = 'round';
-    ctx.lineJoin = 'round';
+    main_update_context_state(ctx, {
+        lineCap: 'round',
+        lineJoin: 'round'
+    });
     
     if (hasEraseStrokes) {
         // 有橡皮擦笔画，必须按原始顺序逐个绘制
         for (const stroke of strokesToRedraw) {
             if (!stroke.points || stroke.points.length < 1) continue;
             
-            const strokeScale = stroke.scale || 1;
             if (stroke.type === 'erase') {
-                ctx.globalCompositeOperation = 'destination-out';
-                ctx.strokeStyle = 'rgba(0, 0, 0, 1)';
-                ctx.lineWidth = (stroke.eraserSize || DRAW_CONFIG.eraserSize) / strokeScale;
+                main_update_context_state(ctx, {
+                    globalCompositeOperation: 'destination-out',
+                    strokeStyle: 'rgba(0, 0, 0, 1)',
+                    lineWidth: stroke.eraserSize || DRAW_CONFIG.eraserSize
+                });
             } else if (stroke.type === 'draw' || stroke.type === 'comment') {
-                ctx.globalCompositeOperation = 'source-over';
-                ctx.strokeStyle = stroke.color || DRAW_CONFIG.penColor;
-                ctx.lineWidth = (stroke.lineWidth || DRAW_CONFIG.penWidth) / strokeScale;
+                main_update_context_state(ctx, {
+                    globalCompositeOperation: 'source-over',
+                    strokeStyle: stroke.color || DRAW_CONFIG.penColor,
+                    lineWidth: stroke.lineWidth || DRAW_CONFIG.penWidth
+                });
             } else {
                 continue;
             }
@@ -2644,19 +2710,12 @@ async function main_render_all_strokes(dirtyRect = null) {
             const path = new Path2D();
             const firstPoint = stroke.points[0];
             
-            if (firstPoint.x !== undefined) {
-                path.moveTo(firstPoint.x, firstPoint.y);
-                for (let i = 1; i < stroke.points.length; i++) {
-                    path.lineTo(stroke.points[i].x, stroke.points[i].y);
-                }
-            } else {
-                path.moveTo(firstPoint.fromX, firstPoint.fromY);
-                path.lineTo(firstPoint.toX, firstPoint.toY);
-                for (let i = 1; i < stroke.points.length; i++) {
-                    const pt = stroke.points[i];
-                    path.lineTo(pt.fromX, pt.fromY);
-                    path.lineTo(pt.toX, pt.toY);
-                }
+            path.moveTo(firstPoint.fromX, firstPoint.fromY);
+            path.lineTo(firstPoint.toX, firstPoint.toY);
+            for (let i = 1; i < stroke.points.length; i++) {
+                const pt = stroke.points[i];
+                path.lineTo(pt.fromX, pt.fromY);
+                path.lineTo(pt.toX, pt.toY);
             }
             
             ctx.stroke(path);
@@ -2671,13 +2730,11 @@ async function main_render_all_strokes(dirtyRect = null) {
                 if (stroke.variableWidths && stroke.variableWidths.length > 0) {
                     variableWidthStrokes.push(stroke);
                 } else {
-                    const strokeScale = stroke.scale || 1;
-                    const stateKey = `${stroke.color || DRAW_CONFIG.penColor}-${stroke.lineWidth || DRAW_CONFIG.penWidth}-${strokeScale}`;
+                    const stateKey = `${stroke.color || DRAW_CONFIG.penColor}-${stroke.lineWidth || DRAW_CONFIG.penWidth}`;
                     if (!fixedWidthStrokes.has(stateKey)) {
                         fixedWidthStrokes.set(stateKey, {
                             color: stroke.color || DRAW_CONFIG.penColor,
                             lineWidth: stroke.lineWidth || DRAW_CONFIG.penWidth,
-                            scale: strokeScale,
                             strokes: []
                         });
                     }
@@ -2692,7 +2749,6 @@ async function main_render_all_strokes(dirtyRect = null) {
         for (const stroke of variableWidthStrokes) {
             if (!stroke.points || stroke.points.length === 0) continue;
             
-            const strokeScale = stroke.scale || 1;
             ctx.fillStyle = stroke.color || DRAW_CONFIG.penColor;
             
             const polygonPath = new Path2D();
@@ -2704,7 +2760,7 @@ async function main_render_all_strokes(dirtyRect = null) {
                 
                 const x1 = point.fromX, y1 = point.fromY;
                 const x2 = point.toX, y2 = point.toY;
-                const w1 = widthInfo.fromWidth / strokeScale, w2 = widthInfo.toWidth / strokeScale;
+                const w1 = widthInfo.fromWidth, w2 = widthInfo.toWidth;
                 
                 const angle = Math.atan2(y2 - y1, x2 - x1);
                 const perpAngle = angle + Math.PI / 2;
@@ -2729,27 +2785,23 @@ async function main_render_all_strokes(dirtyRect = null) {
         
         // 批量绘制固定线宽笔画
         for (const [stateKey, group] of fixedWidthStrokes) {
-            ctx.strokeStyle = group.color;
-            ctx.lineWidth = group.lineWidth / group.scale;
+            main_update_context_state(ctx, {
+                strokeStyle: group.color,
+                lineWidth: group.lineWidth
+            });
             
             const drawPath = new Path2D();
             for (const stroke of group.strokes) {
                 if (!stroke.points || stroke.points.length < 1) continue;
                 
                 const firstPoint = stroke.points[0];
-                if (firstPoint.x !== undefined) {
-                    drawPath.moveTo(firstPoint.x, firstPoint.y);
-                    for (let i = 1; i < stroke.points.length; i++) {
-                        drawPath.lineTo(stroke.points[i].x, stroke.points[i].y);
-                    }
-                } else {
-                    drawPath.moveTo(firstPoint.fromX, firstPoint.fromY);
-                    drawPath.lineTo(firstPoint.toX, firstPoint.toY);
-                    for (let i = 1; i < stroke.points.length; i++) {
-                        const pt = stroke.points[i];
-                        drawPath.lineTo(pt.fromX, pt.fromY);
-                        drawPath.lineTo(pt.toX, pt.toY);
-                    }
+                
+                drawPath.moveTo(firstPoint.fromX, firstPoint.fromY);
+                drawPath.lineTo(firstPoint.toX, firstPoint.toY);
+                for (let i = 1; i < stroke.points.length; i++) {
+                    const pt = stroke.points[i];
+                    drawPath.lineTo(pt.fromX, pt.fromY);
+                    drawPath.lineTo(pt.toX, pt.toY);
                 }
             }
             ctx.stroke(drawPath);
@@ -2757,9 +2809,11 @@ async function main_render_all_strokes(dirtyRect = null) {
     }
     
     // 重置 canvas 状态
-    ctx.globalCompositeOperation = 'source-over';
-    ctx.strokeStyle = DRAW_CONFIG.penColor;
-    ctx.lineWidth = DRAW_CONFIG.penWidth / scale;
+    main_update_context_state(ctx, {
+        globalCompositeOperation: 'source-over',
+        strokeStyle: DRAW_CONFIG.penColor,
+        lineWidth: DRAW_CONFIG.penWidth
+    });
     
     if (dirtyRect) {
         ctx.restore();
@@ -2770,11 +2824,10 @@ async function main_render_eraser_stroke(stroke) {
     if (!stroke.points || stroke.points.length < 1) return;
     
     const ctx = dom.drawCtx;
-    const strokeScale = stroke.scale || 1;
     main_update_context_state(dom.drawCtx, {
         globalCompositeOperation: 'destination-out',
         strokeStyle: 'rgba(0, 0, 0, 1)',
-        lineWidth: (stroke.eraserSize || DRAW_CONFIG.eraserSize) / strokeScale,
+        lineWidth: stroke.eraserSize || DRAW_CONFIG.eraserSize,
         lineCap: 'round',
         lineJoin: 'round'
     });
@@ -2782,19 +2835,13 @@ async function main_render_eraser_stroke(stroke) {
     const path = new Path2D();
     
     const firstPoint = stroke.points[0];
-    if (firstPoint.x !== undefined) {
-        path.moveTo(firstPoint.x, firstPoint.y);
-        for (let i = 1; i < stroke.points.length; i++) {
-            path.lineTo(stroke.points[i].x, stroke.points[i].y);
-        }
-    } else {
-        path.moveTo(firstPoint.fromX, firstPoint.fromY);
-        path.lineTo(firstPoint.toX, firstPoint.toY);
-        for (let i = 1; i < stroke.points.length; i++) {
-            const pt = stroke.points[i];
-            path.lineTo(pt.fromX, pt.fromY);
-            path.lineTo(pt.toX, pt.toY);
-        }
+    
+    path.moveTo(firstPoint.fromX, firstPoint.fromY);
+    path.lineTo(firstPoint.toX, firstPoint.toY);
+    for (let i = 1; i < stroke.points.length; i++) {
+        const pt = stroke.points[i];
+        path.lineTo(pt.fromX, pt.fromY);
+        path.lineTo(pt.toX, pt.toY);
     }
     
     dom.drawCtx.stroke(path);
@@ -2803,10 +2850,9 @@ async function main_render_eraser_stroke(stroke) {
 async function main_render_stroke(stroke) {
     if (!stroke.points || stroke.points.length < 1) return;
     
-    const strokeScale = stroke.scale || 1;
     main_update_context_state(dom.drawCtx, {
         strokeStyle: stroke.color || DRAW_CONFIG.penColor,
-        lineWidth: (stroke.lineWidth || DRAW_CONFIG.penWidth) / strokeScale,
+        lineWidth: stroke.lineWidth || DRAW_CONFIG.penWidth,
         lineCap: 'round',
         lineJoin: 'round',
         globalCompositeOperation: 'source-over'
@@ -2815,19 +2861,13 @@ async function main_render_stroke(stroke) {
     const path = new Path2D();
     
     const firstPoint = stroke.points[0];
-    if (firstPoint.x !== undefined) {
-        path.moveTo(firstPoint.x, firstPoint.y);
-        for (let i = 1; i < stroke.points.length; i++) {
-            path.lineTo(stroke.points[i].x, stroke.points[i].y);
-        }
-    } else {
-        path.moveTo(firstPoint.fromX, firstPoint.fromY);
-        path.lineTo(firstPoint.toX, firstPoint.toY);
-        for (let i = 1; i < stroke.points.length; i++) {
-            const pt = stroke.points[i];
-            path.lineTo(pt.fromX, pt.fromY);
-            path.lineTo(pt.toX, pt.toY);
-        }
+    
+    path.moveTo(firstPoint.fromX, firstPoint.fromY);
+    path.lineTo(firstPoint.toX, firstPoint.toY);
+    for (let i = 1; i < stroke.points.length; i++) {
+        const pt = stroke.points[i];
+        path.lineTo(pt.fromX, pt.fromY);
+        path.lineTo(pt.toX, pt.toY);
     }
     
     dom.drawCtx.stroke(path);
@@ -2880,6 +2920,7 @@ function main_update_context_state(ctx, state) {
         currentContextState.globalCompositeOperation = state.globalCompositeOperation;
     }
 }
+window.main_update_context_state = main_update_context_state;
 
 /**
  * 按时间顺序逐个绘制笔画
@@ -2890,45 +2931,44 @@ function main_update_context_state(ctx, state) {
 async function main_render_strokes_to_context(ctx, strokes) {
     if (strokes.length === 0) return;
     
-    ctx.lineCap = 'round';
-    ctx.lineJoin = 'round';
+    main_update_context_state(ctx, {
+        lineCap: 'round',
+        lineJoin: 'round'
+    });
     
     for (const stroke of strokes) {
         if (!stroke.points || stroke.points.length < 1) continue;
         
-        const strokeScale = stroke.scale || 1;
-        
         if (stroke.type === 'erase') {
-            ctx.globalCompositeOperation = 'destination-out';
-            ctx.strokeStyle = 'rgba(0, 0, 0, 1)';
-            ctx.lineWidth = (stroke.eraserSize || DRAW_CONFIG.eraserSize) / strokeScale;
+            main_update_context_state(ctx, {
+                globalCompositeOperation: 'destination-out',
+                strokeStyle: 'rgba(0, 0, 0, 1)',
+                lineWidth: stroke.eraserSize || DRAW_CONFIG.eraserSize
+            });
         } else {
-            ctx.globalCompositeOperation = 'source-over';
-            ctx.strokeStyle = stroke.color || DRAW_CONFIG.penColor;
-            ctx.lineWidth = (stroke.lineWidth || DRAW_CONFIG.penWidth) / strokeScale;
+            main_update_context_state(ctx, {
+                globalCompositeOperation: 'source-over',
+                strokeStyle: stroke.color || DRAW_CONFIG.penColor,
+                lineWidth: stroke.lineWidth || DRAW_CONFIG.penWidth
+            });
         }
         
         const path = new Path2D();
         const firstPoint = stroke.points[0];
         
-        if (firstPoint.x !== undefined) {
-            path.moveTo(firstPoint.x, firstPoint.y);
-            for (let i = 1; i < stroke.points.length; i++) {
-                path.lineTo(stroke.points[i].x, stroke.points[i].y);
-            }
-        } else {
-            path.moveTo(firstPoint.fromX, firstPoint.fromY);
-            path.lineTo(firstPoint.toX, firstPoint.toY);
-            for (let i = 1; i < stroke.points.length; i++) {
-                path.lineTo(stroke.points[i].fromX, stroke.points[i].fromY);
-                path.lineTo(stroke.points[i].toX, stroke.points[i].toY);
-            }
+        path.moveTo(firstPoint.fromX, firstPoint.fromY);
+        path.lineTo(firstPoint.toX, firstPoint.toY);
+        for (let i = 1; i < stroke.points.length; i++) {
+            path.lineTo(stroke.points[i].fromX, stroke.points[i].fromY);
+            path.lineTo(stroke.points[i].toX, stroke.points[i].toY);
         }
         
         ctx.stroke(path);
     }
     
-    ctx.globalCompositeOperation = 'source-over';
+    main_update_context_state(ctx, {
+        globalCompositeOperation: 'source-over'
+    });
 }
 
 function main_init_compact() {
@@ -2960,6 +3000,7 @@ async function main_handle_compact_strokes() {
     
     const commandsToCompact = history_fetch_commands_to_compact();
     if (commandsToCompact.length === 0) return;
+    const compactTargetCount = commandsToCompact.length;
     
     const loadId = ++state.baseImageLoadId;
     state.compactSnapshotId = (state.compactSnapshotId || 0) + 1;
@@ -2996,20 +3037,21 @@ async function main_handle_compact_strokes() {
                 return;
             }
             
+            if (!history_validate_compact()) {
+                console.log('压缩期间撤销栈已变化，取消压缩');
+                return;
+            }
+            
             const afterImageURL = result;
             
             const remainingStrokes = state.strokeHistory.filter(s => {
-                if (strokesToCompactSet.has(s)) return false;
-                for (const cs of strokesToCompact) {
-                    if (s.points && cs.points && s.points.length === cs.points.length) return false;
-                }
-                return true;
+                return !strokesToCompactSet.has(s);
             });
             
             state.strokeHistory.length = 0;
             remainingStrokes.forEach(s => state.strokeHistory.push(s));
             
-            const afterStrokes = main_stroke_clone(state.strokeHistory);
+            const afterStrokes = [...state.strokeHistory];
             
             const snapshotCmd = new SnapshotCommand({
                 beforeImageURL: frozenImageURL,
@@ -3023,7 +3065,7 @@ async function main_handle_compact_strokes() {
                 loadBaseImageFn: (url) => main_load_base_image(url)
             });
             
-            history_format_compact(snapshotCmd);
+            history_format_compact(snapshotCmd, compactTargetCount);
             
             state.baseImageURL = afterImageURL;
             state.baseImageObj = null;
@@ -3042,6 +3084,11 @@ async function main_handle_compact_strokes() {
         }
     }
     
+    if (!history_validate_compact()) {
+        console.log('压缩期间撤销栈已变化，取消压缩');
+        return;
+    }
+    
     const offscreen = main_fetch_offscreen_canvas();
     const tempCtx = offscreen.ctx;
     
@@ -3056,16 +3103,44 @@ async function main_handle_compact_strokes() {
         return;
     }
     
+    if (compactSnapshotId !== state.compactSnapshotId) {
+        console.log('压缩快照已过期,取消操作');
+        main_release_offscreen_canvas(offscreen);
+        return;
+    }
+    
     const afterImageURL = offscreen.canvas.toDataURL('image/png');
     
+    const remainingStrokes = state.strokeHistory.filter(s => {
+        return !strokesToCompactSet.has(s);
+    });
+    
+    state.strokeHistory.length = 0;
+    remainingStrokes.forEach(s => state.strokeHistory.push(s));
+    
+    const afterStrokes = [...state.strokeHistory];
+    
+    const snapshotCmd = new SnapshotCommand({
+        beforeImageURL: frozenImageURL,
+        afterImageURL,
+        beforeStrokes,
+        afterStrokes,
+        strokeHistoryRef: state.strokeHistory,
+        baseImageURLRef: { get value() { return state.baseImageURL; }, set value(v) { state.baseImageURL = v; } },
+        baseImageObjRef: { get value() { return state.baseImageObj; }, set value(v) { state.baseImageObj = v; } },
+        redrawFn: () => main_render_all_strokes(),
+        loadBaseImageFn: (url) => main_load_base_image(url)
+    });
+    
+    history_format_compact(snapshotCmd, compactTargetCount);
+    
+    state.baseImageURL = afterImageURL;
+    state.baseImageObj = null;
     const img = new Image();
     img.onload = () => {
         if (loadId === state.baseImageLoadId) {
             state.baseImageObj = img;
         }
-        main_release_offscreen_canvas(offscreen);
-    };
-    img.onerror = () => {
         main_release_offscreen_canvas(offscreen);
     };
     img.onerror = () => {
@@ -3105,10 +3180,9 @@ function main_update_history_button_status() {
 // 清空画布
 function main_delete_draw_canvas() {
     dom.drawCtx.clearRect(0, 0, DRAW_CONFIG.canvasW, DRAW_CONFIG.canvasH);
-    const scale = main_fetch_safe_scale();
     main_update_context_state(dom.drawCtx, {
         strokeStyle: DRAW_CONFIG.penColor,
-        lineWidth: DRAW_CONFIG.penWidth / scale,
+        lineWidth: DRAW_CONFIG.penWidth,
         lineCap: 'round',
         lineJoin: 'round',
         globalCompositeOperation: 'source-over'
@@ -3148,6 +3222,13 @@ function main_load_base_image(url) {
     img.onload = () => {
         if (loadId === state.baseImageLoadId) {
             state.baseImageObj = img;
+            main_render_all_strokes();
+        }
+    };
+    img.onerror = () => {
+        console.error('base image 加载失败:', url ? url.substring(0, 50) + '...' : 'null');
+        if (loadId === state.baseImageLoadId) {
+            state.baseImageObj = null;
             main_render_all_strokes();
         }
     };
@@ -4443,6 +4524,7 @@ async function main_update_camera_state(open, options = {}) {
             main_delete_draw_canvas();
             state.strokeHistory = [];
             history_delete_all();
+            currentSourceId = null;
         }
         
         console.log('摄像头已关闭');

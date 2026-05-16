@@ -181,6 +181,8 @@ class RealtimeBatchDrawManager {
         let currentLineWidth = this.lastLineWidth;
         let currentPath = null;
 
+        const updateCtx = window.main_update_context_state;
+
         for (let i = 0; i < count; i++) {
             const cmd = commands[i];
             
@@ -197,16 +199,18 @@ class RealtimeBatchDrawManager {
                 currentColor = cmd.color;
                 currentLineWidth = cmd.lineWidth;
 
-                const scale = window.main_fetch_safe_scale ? window.main_fetch_safe_scale() : 1;
-                
                 if (cmd.type === 'erase') {
-                    ctx.globalCompositeOperation = 'destination-out';
-                    ctx.strokeStyle = 'rgba(0,0,0,1)';
-                    ctx.lineWidth = cmd.lineWidth / scale;
+                    updateCtx(ctx, {
+                        globalCompositeOperation: 'destination-out',
+                        strokeStyle: 'rgba(0,0,0,1)',
+                        lineWidth: cmd.lineWidth
+                    });
                 } else {
-                    ctx.globalCompositeOperation = 'source-over';
-                    ctx.strokeStyle = cmd.color || '#3498db';
-                    ctx.lineWidth = cmd.lineWidth / scale;
+                    updateCtx(ctx, {
+                        globalCompositeOperation: 'source-over',
+                        strokeStyle: cmd.color || '#3498db',
+                        lineWidth: cmd.lineWidth
+                    });
                 }
             }
 
@@ -259,8 +263,16 @@ class RealtimeBatchDrawManager {
         const ctx = this.batch_draw_fetch_ctx();
         if (ctx) {
             ctx.imageSmoothingEnabled = false;
-            ctx.lineCap = 'round';
-            ctx.lineJoin = 'round';
+            const updateCtx = window.main_update_context_state;
+            if (updateCtx) {
+                updateCtx(ctx, {
+                    lineCap: 'round',
+                    lineJoin: 'round'
+                });
+            } else {
+                ctx.lineCap = 'round';
+                ctx.lineJoin = 'round';
+            }
         }
     }
 

@@ -315,8 +315,8 @@ export function history_fetch_commands_to_compact() {
     return history_state.undo_list.slice(0, compactCount);
 }
 
-export function history_format_compact(snapshotCommand) {
-    const compactCount = history_state.undo_list.length - MAX_HISTORY_STEPS;
+export function history_format_compact(snapshotCommand, explicitCount) {
+    const compactCount = explicitCount ?? (history_state.undo_list.length - MAX_HISTORY_STEPS);
     if (compactCount <= 0) return false;
     
     history_state.undo_list = [
