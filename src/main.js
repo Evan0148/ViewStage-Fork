@@ -715,12 +715,12 @@ async function loadCameraSetting() {
                 updateColorButtons();
             }
             
-            // 加载高帧率绘制设置
-            if (settings.highFrameRate !== undefined) {
+            // 加载帧率模式设置
+            if (settings.frameRateMode !== undefined) {
                 if (window.batchDrawManager) {
-                    window.batchDrawManager.setFrameRate(settings.highFrameRate);
+                    window.batchDrawManager.setFrameRateMode(settings.frameRateMode);
                 }
-                console.log('已加载高帧率绘制设置:', settings.highFrameRate);
+                console.log('已加载帧率模式设置:', settings.frameRateMode);
             }
             
             // 加载文档扫描按钮显示设置

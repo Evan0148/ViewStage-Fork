@@ -374,10 +374,18 @@ document.addEventListener('DOMContentLoaded', async () => {
                     });
                 }
                 
-                // 高帧率绘制设置
-                const highFrameRateToggle = document.getElementById('highFrameRateToggle');
-                if (highFrameRateToggle) {
-                    highFrameRateToggle.checked = settings.highFrameRate || false;
+                // 帧率模式设置
+                const frameRateModeGroup = document.getElementById('frameRateModeGroup');
+                if (frameRateModeGroup) {
+                    const mode = settings.frameRateMode || 'adaptive';
+                    frameRateModeGroup.dataset.active = mode;
+                    const buttons = frameRateModeGroup.querySelectorAll('.option-btn');
+                    buttons.forEach(btn => {
+                        btn.classList.toggle('active', btn.dataset.value === mode);
+                    });
+                    if (window.batchDrawManager) {
+                        window.batchDrawManager.setFrameRateMode(mode);
+                    }
                 }
                 
                 // 显示文档扫描按钮设置
@@ -1196,17 +1204,20 @@ document.addEventListener('DOMContentLoaded', async () => {
         });
     }
     
-    // 高帧率绘制开关
-    const highFrameRateToggle = document.getElementById('highFrameRateToggle');
-    if (highFrameRateToggle) {
-        highFrameRateToggle.addEventListener('change', async () => {
-            const saved = await saveSettings({ highFrameRate: highFrameRateToggle.checked });
-            if (saved) {
-                const restartModal = document.getElementById('restartModal');
-                if (restartModal) {
-                    restartModal.classList.add('active');
+    // 帧率模式选择
+    const frameRateModeGroup = document.getElementById('frameRateModeGroup');
+    if (frameRateModeGroup) {
+        const buttons = frameRateModeGroup.querySelectorAll('.option-btn');
+        buttons.forEach(btn => {
+            btn.addEventListener('click', async () => {
+                const mode = btn.dataset.value;
+                frameRateModeGroup.dataset.active = mode;
+                buttons.forEach(b => b.classList.toggle('active', b === btn));
+                await saveSettings({ frameRateMode: mode });
+                if (window.batchDrawManager) {
+                    window.batchDrawManager.setFrameRateMode(mode);
                 }
-            }
+            });
         });
     }
     

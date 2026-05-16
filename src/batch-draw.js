@@ -4,12 +4,35 @@ class RealtimeBatchDrawManager {
         this.pendingCommands = [];
         this.pendingCount = 0;
         this.drawRafId = null;
-        this.highFrameRate = false;
-        this.drawInterval = 1000 / 30;
+        this.drawInterval = 1000 / 60;
         this.lastDrawTime = 0;
         this.lastType = null;
         this.lastColor = null;
         this.lastLineWidth = null;
+        
+        this.currentFps = 60;
+        this.minFps = 15;
+        this.maxFps = 60;
+        this.fpsStep = 5;
+        
+        this.drawTimes = [];
+        this.drawTimesMax = 10;
+        
+        this.commandCounts = [];
+        this.commandCountsMax = 5;
+        
+        this.frameRateMode = 'adaptive';
+        this.lastAdjustTime = 0;
+        this.adjustCooldown = 100;
+        
+        this.lowLoadFps = 60;
+        this.mediumLoadFps = 45;
+        this.highLoadFps = 30;
+        this.criticalLoadFps = 20;
+        
+        this.lowLoadThreshold = 10;
+        this.mediumLoadThreshold = 30;
+        this.highLoadThreshold = 50;
     }
 
     getCtx() {
@@ -19,9 +42,85 @@ class RealtimeBatchDrawManager {
         return this.ctx;
     }
 
-    setFrameRate(highFrameRate) {
-        this.highFrameRate = highFrameRate;
-        this.drawInterval = highFrameRate ? 1000 / 60 : 1000 / 30;
+    setFrameRateMode(mode) {
+        this.frameRateMode = mode;
+        
+        if (mode === 'low') {
+            this.currentFps = 30;
+            this.drawInterval = 1000 / 30;
+        } else if (mode === 'high') {
+            this.currentFps = 60;
+            this.drawInterval = 1000 / 60;
+        } else {
+            this.currentFps = 60;
+            this.drawInterval = 1000 / 60;
+        }
+    }
+
+    get isAdaptive() {
+        return this.frameRateMode === 'adaptive';
+    }
+
+    calculateTargetFps(commandCount) {
+        if (commandCount < this.lowLoadThreshold) {
+            return this.lowLoadFps;
+        } else if (commandCount < this.mediumLoadThreshold) {
+            return this.mediumLoadFps;
+        } else if (commandCount < this.highLoadThreshold) {
+            return this.highLoadFps;
+        } else {
+            return this.criticalLoadFps;
+        }
+    }
+
+    adjustFps(drawTime, commandCount) {
+        const now = performance.now();
+        if (now - this.lastAdjustTime < this.adjustCooldown) {
+            return;
+        }
+        this.lastAdjustTime = now;
+        
+        this.drawTimes.push(drawTime);
+        if (this.drawTimes.length > this.drawTimesMax) {
+            this.drawTimes.shift();
+        }
+        
+        this.commandCounts.push(commandCount);
+        if (this.commandCounts.length > this.commandCountsMax) {
+            this.commandCounts.shift();
+        }
+        
+        const avgDrawTime = this.drawTimes.reduce((a, b) => a + b, 0) / this.drawTimes.length;
+        const avgCommandCount = this.commandCounts.reduce((a, b) => a + b, 0) / this.commandCounts.length;
+        
+        const targetFps = this.calculateTargetFps(avgCommandCount);
+        const currentFrameTime = 1000 / this.currentFps;
+        
+        if (avgDrawTime > currentFrameTime * 1.5) {
+            const newFps = Math.max(this.minFps, this.currentFps - this.fpsStep);
+            if (newFps !== this.currentFps) {
+                this.currentFps = newFps;
+                this.drawInterval = 1000 / this.currentFps;
+            }
+        } else if (this.currentFps < targetFps && avgDrawTime < currentFrameTime * 0.7) {
+            const newFps = Math.min(targetFps, this.currentFps + this.fpsStep);
+            if (newFps !== this.currentFps) {
+                this.currentFps = newFps;
+                this.drawInterval = 1000 / this.currentFps;
+            }
+        }
+    }
+
+    getStats() {
+        return {
+            currentFps: this.currentFps,
+            targetFps: this.calculateTargetFps(this.pendingCount),
+            pendingCount: this.pendingCount,
+            avgDrawTime: this.drawTimes.length > 0 
+                ? this.drawTimes.reduce((a, b) => a + b, 0) / this.drawTimes.length 
+                : 0,
+            frameRateMode: this.frameRateMode
+        };
     }
 
     addCommand(type, fromX, fromY, toX, toY, color, lineWidth) {
@@ -37,6 +136,14 @@ class RealtimeBatchDrawManager {
             cmd.toY = toY;
             cmd.color = color;
             cmd.lineWidth = lineWidth;
+        }
+
+        if (this.isAdaptive && this.pendingCount === 1) {
+            const targetFps = this.calculateTargetFps(1);
+            if (this.currentFps > targetFps) {
+                this.currentFps = targetFps;
+                this.drawInterval = 1000 / this.currentFps;
+            }
         }
 
         this.scheduleBatchDraw();
@@ -66,7 +173,7 @@ class RealtimeBatchDrawManager {
         const ctx = this.getCtx();
         if (!ctx) return;
 
-        this.lastDrawTime = performance.now();
+        const drawStart = performance.now();
 
         const commands = this.pendingCommands;
         let currentType = this.lastType;
@@ -114,9 +221,17 @@ class RealtimeBatchDrawManager {
             ctx.stroke(currentPath);
         }
 
+        const drawEnd = performance.now();
+        const drawTime = drawEnd - drawStart;
+        this.lastDrawTime = drawEnd;
+
         this.lastType = currentType;
         this.lastColor = currentColor;
         this.lastLineWidth = currentLineWidth;
+
+        if (this.isAdaptive) {
+            this.adjustFps(drawTime, count);
+        }
     }
 
     _resetState() {
@@ -136,6 +251,11 @@ class RealtimeBatchDrawManager {
         this.pendingCommands.length = 0;
         this.lastDrawTime = performance.now();
         
+        if (this.isAdaptive) {
+            this.currentFps = this.lowLoadFps;
+            this.drawInterval = 1000 / this.currentFps;
+        }
+        
         const ctx = this.getCtx();
         if (ctx) {
             ctx.imageSmoothingEnabled = false;
@@ -151,6 +271,11 @@ class RealtimeBatchDrawManager {
         }
 
         this.flushPending();
+        
+        if (this.isAdaptive) {
+            this.drawTimes = [];
+            this.commandCounts = [];
+        }
     }
 
     clear() {
