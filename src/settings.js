@@ -1689,19 +1689,19 @@ document.addEventListener('DOMContentLoaded', async () => {
             const modelInfo = await invoke('get_dbnet_model_info');
             
             if (modelInfo.exists) {
-                dbnetModelStatus.textContent = `已安装 (${modelInfo.size_mb.toFixed(2)} MB)`;
+                dbnetModelStatus.textContent = window.i18n?.t('settings.modelInstalledWithSize', { size: modelInfo.size_mb.toFixed(2) }) || `已安装 (${modelInfo.size_mb.toFixed(2)} MB)`;
                 dbnetModelStatus.style.color = '#27ae60';
                 btnDownloadDbnetModel.style.display = 'none';
                 btnDeleteDbnetModel.style.display = 'inline-block';
             } else {
-                dbnetModelStatus.textContent = '未安装';
+                dbnetModelStatus.textContent = window.i18n?.t('settings.modelNotInstalled') || '未安装';
                 dbnetModelStatus.style.color = '#e74c3c';
                 btnDownloadDbnetModel.style.display = 'inline-block';
                 btnDeleteDbnetModel.style.display = 'none';
             }
         } catch (error) {
             console.error('检查模型状态失败:', error);
-            dbnetModelStatus.textContent = '检查失败';
+            dbnetModelStatus.textContent = window.i18n?.t('settings.modelCheckFailed') || '检查失败';
             dbnetModelStatus.style.color = '#e74c3c';
         }
     }
@@ -1781,19 +1781,19 @@ document.addEventListener('DOMContentLoaded', async () => {
             const info = await invoke('get_uvdoc_model_info');
             
             if (info.exists) {
-                uvdocModelStatus.textContent = `已安装 (${info.size_mb.toFixed(1)} MB)`;
+                uvdocModelStatus.textContent = window.i18n?.t('settings.modelInstalledWithSize', { size: info.size_mb.toFixed(1) }) || `已安装 (${info.size_mb.toFixed(1)} MB)`;
                 uvdocModelStatus.style.color = '#27ae60';
                 btnDownloadUvdocModel.style.display = 'none';
                 btnDeleteUvdocModel.style.display = 'inline-block';
             } else {
-                uvdocModelStatus.textContent = '未安装';
+                uvdocModelStatus.textContent = window.i18n?.t('settings.modelNotInstalled') || '未安装';
                 uvdocModelStatus.style.color = '#e74c3c';
                 btnDownloadUvdocModel.style.display = 'inline-block';
                 btnDeleteUvdocModel.style.display = 'none';
             }
         } catch (error) {
             console.error('检查UVDoc模型状态失败:', error);
-            uvdocModelStatus.textContent = '检查失败';
+            uvdocModelStatus.textContent = window.i18n?.t('settings.modelCheckFailed') || '检查失败';
             uvdocModelStatus.style.color = '#e74c3c';
         }
     }
@@ -1874,19 +1874,19 @@ document.addEventListener('DOMContentLoaded', async () => {
             const exists = await invoke('check_dexined_model');
             
             if (exists) {
-                dexinedModelStatus.textContent = '已安装';
+                dexinedModelStatus.textContent = window.i18n?.t('settings.modelInstalled') || '已安装';
                 dexinedModelStatus.style.color = '#27ae60';
                 if (btnImportDexinedModel) btnImportDexinedModel.style.display = 'none';
                 if (btnDeleteDexinedModel) btnDeleteDexinedModel.style.display = 'inline-block';
             } else {
-                dexinedModelStatus.textContent = '未安装';
+                dexinedModelStatus.textContent = window.i18n?.t('settings.modelNotInstalled') || '未安装';
                 dexinedModelStatus.style.color = '#e74c3c';
                 if (btnImportDexinedModel) btnImportDexinedModel.style.display = 'inline-block';
                 if (btnDeleteDexinedModel) btnDeleteDexinedModel.style.display = 'none';
             }
         } catch (error) {
             console.error('检查 DexiNed 模型状态失败:', error);
-            dexinedModelStatus.textContent = '检查失败';
+            dexinedModelStatus.textContent = window.i18n?.t('settings.modelCheckFailed') || '检查失败';
             dexinedModelStatus.style.color = '#e74c3c';
         }
     }

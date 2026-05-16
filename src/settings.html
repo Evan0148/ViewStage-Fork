@@ -299,7 +299,7 @@
                 <div class="page" id="pageStorage">
                     <h2 class="page-title" data-i18n="settings.storage">存储</h2>
                     <div class="setting-item">
-                        <span class="setting-label" data-i18n="settings.cache">缓存 <span id="cacheSize" style="color: #888; font-size: 12px;"></span></span>
+                        <span class="setting-label"><span data-i18n="settings.cache">缓存</span> <span id="cacheSize" style="color: #888; font-size: 12px;"></span></span>
                         <button class="btn-clear-cache" id="btnClearCache" data-i18n="settings.clearCache">清除缓存</button>
                     </div>
                     <div class="setting-item">
@@ -377,13 +377,13 @@
                         
                         <div class="model-card">
                             <div class="model-header">
-                                <span class="model-name">DBNet 文本检测模型</span>
-                                <span class="model-status" id="dbnetModelStatus">检查中...</span>
+                                <span class="model-name" data-i18n="settings.dbnetModelName">DBNet 文本检测模型</span>
+                                <span class="model-status" id="dbnetModelStatus" data-i18n="settings.modelChecking">检查中...</span>
                             </div>
                             <div class="model-content">
                                 <div class="model-actions">
-                                    <button class="btn-action" id="btnDownloadDbnetModel" style="display: none;">下载</button>
-                                    <button class="btn-action delete" id="btnDeleteDbnetModel" style="display: none;">删除</button>
+                                    <button class="btn-action" id="btnDownloadDbnetModel" style="display: none;" data-i18n="common.download">下载</button>
+                                    <button class="btn-action delete" id="btnDeleteDbnetModel" style="display: none;" data-i18n="common.delete">删除</button>
                                 </div>
                                 <div class="model-progress" id="downloadProgress" style="display: none;">
                                     <div class="progress-bar">
@@ -391,7 +391,7 @@
                                     </div>
                                     <div class="progress-text" id="downloadProgressText">0%</div>
                                 </div>
-                                <div class="model-description">
+                                <div class="model-description" data-i18n="settings.dbnetModelDesc">
                                     DBNet 文本检测模型（约54MB），用于文档扫描功能。体积小、速度快、精度高。支持中英文文本检测。
                                 </div>
                             </div>
@@ -399,15 +399,15 @@
                         
                         <div class="model-card">
                             <div class="model-header">
-                                <span class="model-name">DexiNed 文档边界检测模型</span>
-                                <span class="model-status" id="dexinedModelStatus">检查中...</span>
+                                <span class="model-name" data-i18n="settings.dexinedModelName">DexiNed 文档边界检测模型</span>
+                                <span class="model-status" id="dexinedModelStatus" data-i18n="settings.modelChecking">检查中...</span>
                             </div>
                             <div class="model-content">
                                 <div class="model-actions">
-                                    <button class="btn-action" id="btnImportDexinedModel" style="display: none;">导入</button>
-                                    <button class="btn-action delete" id="btnDeleteDexinedModel" style="display: none;">删除</button>
+                                    <button class="btn-action" id="btnImportDexinedModel" style="display: none;" data-i18n="common.import">导入</button>
+                                    <button class="btn-action delete" id="btnDeleteDexinedModel" style="display: none;" data-i18n="common.delete">删除</button>
                                 </div>
-                                <div class="model-description">
+                                <div class="model-description" data-i18n="settings.dexinedModelDesc">
                                     DexiNed 边缘检测模型（ONNX格式），用于检测文档边界并进行透视矫正。安装后文档扫描将优先使用此模型。点击"导入"选择 <code>dexined_mbv4.onnx</code> 文件。
                                 </div>
                             </div>
@@ -415,13 +415,13 @@
                         
                         <div class="model-card">
                             <div class="model-header">
-                                <span class="model-name">UVDoc 文档矫正模型</span>
-                                <span class="model-status" id="uvdocModelStatus">检查中...</span>
+                                <span class="model-name" data-i18n="settings.uvdocModelName">UVDoc 文档矫正模型</span>
+                                <span class="model-status" id="uvdocModelStatus" data-i18n="settings.modelChecking">检查中...</span>
                             </div>
                             <div class="model-content">
                                 <div class="model-actions">
-                                    <button class="btn-action" id="btnDownloadUvdocModel" style="display: none;">下载</button>
-                                    <button class="btn-action delete" id="btnDeleteUvdocModel" style="display: none;">删除</button>
+                                    <button class="btn-action" id="btnDownloadUvdocModel" style="display: none;" data-i18n="common.download">下载</button>
+                                    <button class="btn-action delete" id="btnDeleteUvdocModel" style="display: none;" data-i18n="common.delete">删除</button>
                                 </div>
                                 <div class="model-progress" id="uvdocDownloadProgress" style="display: none;">
                                     <div class="progress-bar">
@@ -429,7 +429,7 @@
                                     </div>
                                     <div class="progress-text" id="uvdocDownloadProgressText">0%</div>
                                 </div>
-                                <div class="model-description">
+                                <div class="model-description" data-i18n="settings.uvdocModelDesc">
                                     UVDoc 文档扭曲矫正模型（约30MB），用于矫正弯曲、折叠的文档图像。
                                 </div>
                             </div>

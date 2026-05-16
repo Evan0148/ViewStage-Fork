@@ -1410,7 +1410,7 @@ async fn get_available_resolutions(app: tauri::AppHandle) -> Result<Vec<(u32, u3
         }
     }
     
-    resolutions.push((max_width, max_height, format!("{} x {} (最大)", max_width, max_height)));
+    resolutions.push((max_width, max_height, format!("{} x {}", max_width, max_height)));
     
     Ok(resolutions)
 }

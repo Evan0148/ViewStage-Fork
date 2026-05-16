@@ -15,7 +15,9 @@
     "noImages": "暂无图片",
     "noFiles": "暂无文件",
     "retry": "重试",
-    "close": "关闭"
+    "close": "关闭",
+    "download": "下载",
+    "import": "导入"
   },
   "loading": {
     "detectingOffice": "正在检测 Office 软件...",
@@ -113,6 +115,17 @@
     "frameRateLow": "低帧率",
     "frameRateAdaptive": "自适应",
     "frameRateHigh": "高帧率",
+    "modelChecking": "检查中...",
+    "modelInstalled": "已安装",
+    "modelInstalledWithSize": "已安装 ({size} MB)",
+    "modelNotInstalled": "未安装",
+    "modelCheckFailed": "检查失败",
+    "dbnetModelName": "DBNet 文本检测模型",
+    "dbnetModelDesc": "DBNet 文本检测模型（约54MB），用于文档扫描功能。体积小、速度快、精度高。支持中英文文本检测。",
+    "dexinedModelName": "DexiNed 文档边界检测模型",
+    "dexinedModelDesc": "DexiNed 边缘检测模型（ONNX格式），用于检测文档边界并进行透视矫正。安装后文档扫描将优先使用此模型。点击「导入」选择 dexined_mbv4.onnx 文件。",
+    "uvdocModelName": "UVDoc 文档矫正模型",
+    "uvdocModelDesc": "UVDoc 文档扭曲矫正模型（约30MB），用于矫正弯曲、折叠的文档图像。",
     "penColors": "画笔颜色",
     "defaultCamera": "默认摄像头",
     "cameraResolution": "摄像头分辨率",

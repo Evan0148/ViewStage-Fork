@@ -15,7 +15,9 @@
     "noImages": "暫無圖片",
     "noFiles": "暫無檔案",
     "retry": "重試",
-    "close": "關閉"
+    "close": "關閉",
+    "download": "下載",
+    "import": "匯入"
   },
   "loading": {
     "detectingOffice": "正在偵測 Office 軟體...",
@@ -109,6 +111,17 @@
     "frameRateLow": "低幀率",
     "frameRateAdaptive": "自適應",
     "frameRateHigh": "高幀率",
+    "modelChecking": "檢查中...",
+    "modelInstalled": "已安裝",
+    "modelInstalledWithSize": "已安裝 ({size} MB)",
+    "modelNotInstalled": "未安裝",
+    "modelCheckFailed": "檢查失敗",
+    "dbnetModelName": "DBNet 文字偵測模型",
+    "dbnetModelDesc": "DBNet 文字偵測模型（約54MB），用於文件掃描功能。體積小、速度快、精度高。支援中英文文字偵測。",
+    "dexinedModelName": "DexiNed 文件邊界偵測模型",
+    "dexinedModelDesc": "DexiNed 邊緣偵測模型（ONNX格式），用於偵測文件邊界並進行透視矯正。安裝後文件掃描將優先使用此模型。點擊「匯入」選擇 dexined_mbv4.onnx 檔案。",
+    "uvdocModelName": "UVDoc 文件矯正模型",
+    "uvdocModelDesc": "UVDoc 文件扭曲矯正模型（約30MB），用於矯正彎曲、折疊的文件圖像。",
     "penColors": "畫筆顏色",
     "defaultCamera": "預設攝影機",
     "cameraResolution": "攝影機解析度",
