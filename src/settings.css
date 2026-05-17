@@ -1244,6 +1244,18 @@ button {
     transform: translateX(200%);
 }
 
+.option-group#penEffectModeGroup[data-active="off"]::before {
+    transform: translateX(0);
+}
+
+.option-group#penEffectModeGroup[data-active="limited"]::before {
+    transform: translateX(100%);
+}
+
+.option-group#penEffectModeGroup[data-active="full"]::before {
+    transform: translateX(200%);
+}
+
 .option-btn {
     position: relative;
     z-index: 1;

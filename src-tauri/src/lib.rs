@@ -874,7 +874,7 @@ async fn update_fetch_check() -> Result<UpdateCheckResult, String> {
     })
 }
 
-const CURRENT_CONFIG_VERSION: u32 = 1;
+const CURRENT_CONFIG_VERSION: u32 = 2;
 
 type MigrationFn = fn(&mut serde_json::Value) -> Result<(), String>;
 
@@ -882,6 +882,7 @@ fn migration_fetch_all() -> std::collections::HashMap<u32, MigrationFn> {
     let mut migrations: std::collections::HashMap<u32, MigrationFn> = std::collections::HashMap::new();
     
     migrations.insert(0u32, migration_v0_to_v1 as MigrationFn);
+    migrations.insert(1u32, migration_v1_to_v2 as MigrationFn);
     
     migrations
 }
@@ -927,6 +928,22 @@ fn migration_v0_to_v1(config: &mut serde_json::Value) -> Result<(), String> {
         
         obj.insert("config_version".to_string(), serde_json::json!(1));
         log::info!("设置配置版本: config_version = 1");
+    }
+    
+    Ok(())
+}
+
+fn migration_v1_to_v2(config: &mut serde_json::Value) -> Result<(), String> {
+    log::info!("执行配置迁移: v1 -> v2");
+    
+    if let Some(obj) = config.as_object_mut() {
+        if !obj.contains_key("penEffectMode") {
+            obj.insert("penEffectMode".to_string(), serde_json::json!("limited"));
+            log::info!("添加字段: penEffectMode = limited");
+        }
+        
+        obj.insert("config_version".to_string(), serde_json::json!(2));
+        log::info!("设置配置版本: config_version = 2");
     }
     
     Ok(())
@@ -1045,7 +1062,8 @@ fn config_fetch_default() -> serde_json::Value {
         "showDocScanButton": true,
         "scanQuality": "standard",
         "scanMode": "auto",
-        "enhanceMode": "auto"
+        "enhanceMode": "auto",
+        "penEffectMode": "limited"
     })
 }
 

@@ -388,6 +388,23 @@ document.addEventListener('DOMContentLoaded', async () => {
                     }
                 }
                 
+                // 钢笔效果模式设置
+                const penEffectModeGroup = document.getElementById('penEffectModeGroup');
+                if (penEffectModeGroup) {
+                    const mode = settings.penEffectMode || 'limited';
+                    penEffectModeGroup.dataset.active = mode;
+                    const buttons = penEffectModeGroup.querySelectorAll('.option-btn');
+                    buttons.forEach(btn => {
+                        btn.classList.toggle('active', btn.dataset.value === mode);
+                    });
+                    if (window.DRAW_CONFIG) {
+                        window.DRAW_CONFIG.penEffectMode = mode;
+                        if (window.realPenManager) {
+                            window.realPenManager.invalidate_cache();
+                        }
+                    }
+                }
+                
                 // 显示文档扫描按钮设置
                 const showDocScanButtonToggle = document.getElementById('showDocScanButtonToggle');
                 if (showDocScanButtonToggle) {
@@ -1216,6 +1233,26 @@ document.addEventListener('DOMContentLoaded', async () => {
                 await settings_save_all_local({ frameRateMode: mode });
                 if (window.batchDrawManager) {
                     window.batchDrawManager.batch_draw_update_frame_rate(mode);
+                }
+            });
+        });
+    }
+    
+    // 钢笔效果模式选择
+    const penEffectModeGroup = document.getElementById('penEffectModeGroup');
+    if (penEffectModeGroup) {
+        const buttons = penEffectModeGroup.querySelectorAll('.option-btn');
+        buttons.forEach(btn => {
+            btn.addEventListener('click', async () => {
+                const mode = btn.dataset.value;
+                penEffectModeGroup.dataset.active = mode;
+                buttons.forEach(b => b.classList.toggle('active', b === btn));
+                await settings_save_all_local({ penEffectMode: mode });
+                if (window.DRAW_CONFIG) {
+                    window.DRAW_CONFIG.penEffectMode = mode;
+                    if (window.realPenManager) {
+                        window.realPenManager.invalidate_cache();
+                    }
                 }
             });
         });

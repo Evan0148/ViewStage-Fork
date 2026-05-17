@@ -19,10 +19,12 @@ import {
     EraseCommand,
     ClearCommand,
     SnapshotCommand,
+    PenEraseCommand,
     history_validate_undo,
     history_handle_undo,
     history_delete_all,
     history_validate_compact,
+    history_fetch_undo_stack,
     history_fetch_commands_to_compact,
     history_format_compact,
     MAX_HISTORY_STEPS
@@ -106,7 +108,8 @@ const DRAW_CONFIG = {
         '#14b8a6', '#64748b', '#1e293b', '#000000', '#ffffff'
     ],
     // 钢笔效果配置
-    penSmoothness: 0.8             // 钢笔平滑度 (0-1, 越高越平滑)
+    penSmoothness: 0.8,             // 钢笔平滑度 (0-1, 越高越平滑)
+    penEffectMode: 'limited'        // 钢笔效果模式: 'full' | 'limited' | 'off'
 };
 
 // 将配置暴露到全局，供 batch-draw.js 使用
@@ -117,27 +120,198 @@ function main_fetch_safe_scale() {
 }
 window.main_fetch_safe_scale = main_fetch_safe_scale;
 
-// ==================== 真实笔触效果管理器 ====================
-// 根据速度和压感动态调整线宽，模拟真实笔触效果
+// ==================== 钢笔笔锋效果管理器 ====================
+// 使用曲面细分算法，根据速度和压感动态调整线宽
+// 效果分级: full(完整) | limited(限制) | off(关闭)
 
 class RealPenManager {
     constructor() {
-        // 钢笔模式不需要速度计算
+        this.tessellator = null;
+        this.cached_tessellated = new WeakMap();
+    }
+
+    init_tessellator() {
+        if (!this.tessellator && window.penTessellator) {
+            this.tessellator = window.penTessellator;
+        }
     }
     
     reset() {
-        // 钢笔模式不需要重置
+        this.cached_tessellated = new WeakMap();
+        this.init_tessellator();
     }
     
     update_position(x, y, timestamp) {
-        // 钢笔模式不需要速度计算
         return 0;
     }
     
     calc_line_width(baseWidth, velocity, pressure = 0.5) {
-        // 钢笔模式：固定线宽 + 轻微压感 (0.9-1.1 倍)
-        const pressureFactor = 0.9 + (pressure * 0.2);
-        return baseWidth * pressureFactor;
+        const speedScale = Math.max(0.4, Math.min(2.5, baseWidth / 4));
+        const maxSpeed = 2.5 * speedScale;
+        const minSpeed = 0.2 * speedScale;
+        const clamped = Math.max(0, Math.min(1, (velocity - minSpeed) / (maxSpeed - minSpeed)));
+        const eased = clamped * clamped * (3 - 2 * clamped);
+        const speedFactor = 1 - eased * 0.75;
+        const pressureFactor = 0.85 + (pressure * 0.3);
+        return baseWidth * speedFactor * pressureFactor;
+    }
+
+    _build_smooth_points(rawPoints, smoothness) {
+        if (rawPoints.length < 2) return rawPoints;
+
+        const result = [];
+        const steps = Math.max(3, Math.round(smoothness * 10));
+        const ctrl = rawPoints;
+
+        for (let i = 0; i < ctrl.length - 1; i++) {
+            const p0 = ctrl[Math.max(0, i - 1)];
+            const p1 = ctrl[i];
+            const p2 = ctrl[Math.min(ctrl.length - 1, i + 1)];
+            const p3 = ctrl[Math.min(ctrl.length - 1, i + 2)];
+
+            for (let j = 0; j <= steps; j++) {
+                if (i > 0 && j === 0) continue;
+                const t = j / steps;
+                const t2 = t * t;
+                const t3 = t2 * t;
+                const x = 0.5 * (
+                    (2 * p1.x) +
+                    (-p0.x + p2.x) * t +
+                    (2 * p0.x - 5 * p1.x + 4 * p2.x - p3.x) * t2 +
+                    (-p0.x + 3 * p1.x - 3 * p2.x + p3.x) * t3
+                );
+                const y = 0.5 * (
+                    (2 * p1.y) +
+                    (-p0.y + p2.y) * t +
+                    (2 * p0.y - 5 * p1.y + 4 * p2.y - p3.y) * t2 +
+                    (-p0.y + 3 * p1.y - 3 * p2.y + p3.y) * t3
+                );
+                result.push({ x, y });
+            }
+        }
+
+        return result;
+    }
+
+    build_tessellated_stroke(stroke, mode = null) {
+        this.init_tessellator();
+        if (!this.tessellator) return null;
+        
+        const effect_mode = mode || DRAW_CONFIG.penEffectMode || 'off';
+        if (effect_mode === 'off') return null;
+        
+        if (this.cached_tessellated.has(stroke)) {
+            return this.cached_tessellated.get(stroke);
+        }
+        
+        const points = stroke.points;
+        const base_width = stroke.lineWidth || DRAW_CONFIG.penWidth;
+        const color = stroke.color || DRAW_CONFIG.penColor;
+        const storedWidths = stroke.storedWidths;
+        
+        if (!points || points.length < 1) return null;
+
+        // 有存储宽度时：直接构建 segments，绕过 tessellator 的速度重算
+        // 存储宽度来自 batch-draw 的实时计算（含真实指针时序），确保与预览完全一致
+        if (storedWidths && storedWidths.length === points.length) {
+            const raw = [{ x: points[0].fromX, y: points[0].fromY }];
+            for (let i = 0; i < points.length; i++) {
+                raw.push({ x: points[i].toX, y: points[i].toY });
+            }
+            if (raw.length < 2) return null;
+
+            const segments = [];
+            for (let i = 0; i < storedWidths.length; i++) {
+                segments.push({
+                    x1: raw[i].x, y1: raw[i].y,
+                    x2: raw[i + 1].x, y2: raw[i + 1].y,
+                    line_width: Math.max(0.5, storedWidths[i])
+                });
+            }
+
+            // 仅应用收笔渐变（起笔渐变已由 batch-draw 实时计算）
+            // 算法与 batch-draw _apply_end_taper 保持一致
+            if (!stroke.noEndTaper && segments.length >= 2) {
+                const taperLen = Math.min(segments.length, 6);
+                const startIdx = segments.length - taperLen;
+                for (let i = startIdx; i < segments.length; i++) {
+                    const localIdx = i - startIdx;
+                    const t = localIdx / (taperLen - 1);
+                    const eased = 1 - t * t * (3 - 2 * t);
+                    const widthScale = 0.15 + eased * 0.85;
+                    segments[i].line_width = Math.max(0.5, segments[i].line_width * widthScale);
+                }
+            }
+
+            const result = { segments, color };
+            if (result) {
+                this.cached_tessellated.set(stroke, result);
+            }
+            return result;
+        }
+
+        // 无存储宽度：走标准 tessellator 速度重算路径
+        const raw = [{ x: points[0].fromX, y: points[0].fromY }];
+        for (let i = 0; i < points.length; i++) {
+            raw.push({ x: points[i].toX, y: points[i].toY });
+        }
+        if (raw.length < 2) return null;
+
+        const filtered = [raw[0]];
+        for (let i = 1; i < raw.length; i++) {
+            const prev = filtered[filtered.length - 1];
+            const curr = raw[i];
+            const dx = curr.x - prev.x;
+            const dy = curr.y - prev.y;
+            if (dx * dx + dy * dy >= 1) {
+                filtered.push(curr);
+            }
+        }
+        if (filtered.length < 2) return null;
+
+        let input_points;
+        let density = 1;
+        if (effect_mode === 'full') {
+            const smoothness = DRAW_CONFIG.penSmoothness ?? 0.8;
+            const steps = Math.max(3, Math.round(smoothness * 10));
+            density = steps;
+            input_points = this._build_smooth_points(filtered, smoothness);
+        } else {
+            input_points = filtered;
+        }
+        if (!input_points || input_points.length < 2) return null;
+
+        const stroke_data = [];
+        for (let i = 0; i < input_points.length; i++) {
+            if (i === 0) {
+                stroke_data.push({ fromX: input_points[i].x, fromY: input_points[i].y, toX: input_points[i].x, toY: input_points[i].y });
+            } else {
+                const prev = input_points[i - 1];
+                stroke_data.push({ fromX: prev.x, fromY: prev.y, toX: input_points[i].x, toY: input_points[i].y });
+            }
+        }
+
+        const result = this.tessellator.tessellator_build_stroke_from_stroke_data(
+            { points: stroke_data, lineWidth: base_width, color },
+            { density, noStartTaper: stroke.noStartTaper, noEndTaper: stroke.noEndTaper }
+        );
+        
+        if (result) {
+            this.cached_tessellated.set(stroke, result);
+        }
+        return result;
+    }
+
+    render_tessellated_stroke(ctx, tessellated_stroke) {
+        this.init_tessellator();
+        if (!this.tessellator || !tessellated_stroke) return false;
+        
+        this.tessellator.tessellator_render_stroke(ctx, tessellated_stroke);
+        return true;
+    }
+    
+    invalidate_cache() {
+        this.cached_tessellated = new WeakMap();
     }
 }
 
@@ -155,6 +329,9 @@ function main_stroke_clone(strokes, deep = false) {
             scale: stroke.scale,
             bounds: stroke.bounds ? { ...stroke.bounds } : undefined,
             variableWidths: stroke.variableWidths ? [...stroke.variableWidths] : null,
+            storedWidths: stroke.storedWidths ? [...stroke.storedWidths] : undefined,
+            noStartTaper: stroke.noStartTaper,
+            noEndTaper: stroke.noEndTaper,
             savedStrokeHistory: stroke.savedStrokeHistory ? main_stroke_clone(stroke.savedStrokeHistory, true) : undefined,
             savedBaseImageURL: stroke.savedBaseImageURL
         }));
@@ -168,6 +345,9 @@ function main_stroke_clone(strokes, deep = false) {
         scale: stroke.scale,
         bounds: stroke.bounds,
         variableWidths: stroke.variableWidths,
+        storedWidths: stroke.storedWidths,
+        noStartTaper: stroke.noStartTaper,
+        noEndTaper: stroke.noEndTaper,
         savedStrokeHistory: stroke.savedStrokeHistory,
         savedBaseImageURL: stroke.savedBaseImageURL
     }));
@@ -1428,6 +1608,8 @@ async function main_update_mode(mode) {
     
     dom.drawCanvas.classList.remove('drawing', 'eraser', 'dragging');
     
+    state.drawMode = mode;
+    
     switch (mode) {
         case 'move':
             dom.btnMove.classList.add('primary-btn');
@@ -2343,6 +2525,10 @@ function main_handle_touch_move(e) {
         state.canvasY = centerY - (state.startScaleY - state.startCanvasY) * finalRatio;
         state.scale = newScale;
         
+        // 缩放/平移过程中实时进行边界钳制，防止画布越界
+        main_update_move_bound();
+        main_update_canvas_position();
+        
         main_update_transform_schedule(state.canvasX, state.canvasY, state.scale);
     }
 }
@@ -2490,6 +2676,15 @@ function main_save_stroke_point(fromX, fromY, toX, toY, pressure = 0.5) {
 
 async function main_submit_stroke() {
     if (state.currentStroke && state.currentStroke.points.length > 0) {
+        // 强制刷新待处理命令，确保 _storedWidths 包含所有段的线宽
+        batchDrawManager.batch_draw_handle_flush();
+        // 捕获实时绘制的逐段宽度，确保离线渲染与实时预览一致
+        const storedWidths = batchDrawManager._storedWidths;
+        if (storedWidths && storedWidths.length > 0 &&
+            storedWidths.length === state.currentStroke.points.length) {
+            state.currentStroke.storedWidths = [...storedWidths];
+        }
+        
         if (state.currentStroke.type === 'erase') {
             await main_handle_eraser_stroke(state.currentStroke);
         } else {
@@ -2513,6 +2708,45 @@ async function main_submit_stroke() {
 }
 
 async function main_handle_eraser_stroke(eraserStroke) {
+    const penEffectMode = get_pen_effect_mode();
+    const isPenEffectOn = penEffectMode !== 'off';
+    
+    // 钢笔效果 ON + 无 baseImage：使用笔画分割方案
+    if (isPenEffectOn && !state.baseImageObj && !state.baseImageURL) {
+        const splitResults = [];
+        
+        for (const stroke of state.strokeHistory) {
+            if (stroke.type !== 'draw' && stroke.type !== 'comment') continue;
+            
+            const result = main_calc_split_strokes_by_eraser(stroke, eraserStroke, penEffectMode);
+            if (result) {
+                splitResults.push({
+                    originalStroke: result.originalStroke,
+                    subStrokes: result.subStrokes,
+                    insertIndex: -1
+                });
+            }
+        }
+        
+        if (splitResults.length > 0) {
+            const cmd = new PenEraseCommand({
+                pairs: splitResults,
+                strokeHistoryRef: state.strokeHistory,
+                redrawFn: () => main_render_all_strokes()
+            });
+            await history_execute_command(cmd, false);
+            
+            if (history_validate_compact()) {
+                main_init_compact();
+            }
+            console.log('钢笔效果下橡皮擦切割了', splitResults.length, '个笔画');
+        } else {
+            console.log('橡皮擦未擦除到钢笔笔画，不记录撤销步骤');
+        }
+        return;
+    }
+    
+    // 钢笔效果 OFF 或存在 baseImage：使用现有 destination-out 方案
     const hasIntersection = main_validate_eraser_intersection(eraserStroke);
     
     if (hasIntersection) {
@@ -2623,6 +2857,109 @@ function main_calc_point_segment_distance(px, py, x1, y1, x2, y2) {
     return Math.sqrt((px - projX) ** 2 + (py - projY) ** 2);
 }
 
+function main_calc_stroke_bounds(points) {
+    const bounds = {
+        minX: Infinity, minY: Infinity,
+        maxX: -Infinity, maxY: -Infinity
+    };
+    for (const pt of points) {
+        if (pt.fromX < bounds.minX) bounds.minX = pt.fromX;
+        if (pt.toX < bounds.minX) bounds.minX = pt.toX;
+        if (pt.fromY < bounds.minY) bounds.minY = pt.fromY;
+        if (pt.toY < bounds.minY) bounds.minY = pt.toY;
+        if (pt.fromX > bounds.maxX) bounds.maxX = pt.fromX;
+        if (pt.toX > bounds.maxX) bounds.maxX = pt.toX;
+        if (pt.fromY > bounds.maxY) bounds.maxY = pt.fromY;
+        if (pt.toY > bounds.maxY) bounds.maxY = pt.toY;
+    }
+    return bounds;
+}
+
+function main_calc_split_strokes_by_eraser(drawStroke, eraserStroke, penEffectMode) {
+    const eraserSize = eraserStroke.eraserSize || DRAW_CONFIG.eraserSize;
+    const eraserRadius = eraserSize / 2;
+    const points = drawStroke.points;
+    if (!points || points.length === 0) return null;
+    if (!eraserStroke.points || eraserStroke.points.length === 0) return null;
+    
+    // 钢笔效果下实际渲染宽度 ≈ lineWidth + 5（tessellator 的基础增量）
+    // 用此作为保守的检测宽度，避免因滤波/平滑导致的 segment 索引偏移
+    const effectiveWidth = (penEffectMode && penEffectMode !== 'off')
+        ? (drawStroke.lineWidth || DRAW_CONFIG.penWidth) + 5
+        : (drawStroke.lineWidth || DRAW_CONFIG.penWidth);
+    
+    // 遍历每个原始 segment，检测擦除交集
+    const segmentErased = new Array(points.length).fill(false);
+    let anyErased = false;
+    
+    for (let i = 0; i < points.length; i++) {
+        const pt = points[i];
+        
+        for (const eraserPoint of eraserStroke.points) {
+            if (main_calc_eraser_point_hit_stroke(
+                eraserPoint.fromX, eraserPoint.fromY, pt, effectiveWidth, eraserRadius
+            )) {
+                segmentErased[i] = true;
+                anyErased = true;
+                break;
+            }
+            if (main_calc_eraser_point_hit_stroke(
+                eraserPoint.toX, eraserPoint.toY, pt, effectiveWidth, eraserRadius
+            )) {
+                segmentErased[i] = true;
+                anyErased = true;
+                break;
+            }
+        }
+    }
+    
+    if (!anyErased) return null;
+    
+    // 分组连续未擦除的 segments 为子笔画
+    const subPointsList = [];
+    let currentBatch = [];
+    
+    for (let i = 0; i < points.length; i++) {
+        if (!segmentErased[i]) {
+            currentBatch.push(points[i]);
+        } else {
+            if (currentBatch.length > 0) {
+                subPointsList.push(currentBatch);
+                currentBatch = [];
+            }
+        }
+    }
+    if (currentBatch.length > 0) {
+        subPointsList.push(currentBatch);
+    }
+    
+    // 过滤掉点数不足的子笔画（tessellator 至少需要 2 个点）
+    const validBatches = subPointsList.filter(pts => pts.length >= 2);
+    if (validBatches.length <= 1) return null;
+    
+    // 创建子笔画对象
+    const subStrokes = validBatches.map((pts, index) => {
+        const isFirst = index === 0;
+        const isLast = index === validBatches.length - 1;
+        
+        return {
+            type: 'draw',
+            points: pts,
+            color: drawStroke.color,
+            lineWidth: drawStroke.lineWidth,
+            scale: drawStroke.scale,
+            bounds: main_calc_stroke_bounds(pts),
+            noStartTaper: !isFirst,
+            noEndTaper: !isLast
+        };
+    });
+    
+    return {
+        originalStroke: drawStroke,
+        subStrokes
+    };
+}
+
 async function main_render_all_strokes(dirtyRect = null) {
     const ctx = dom.drawCtx;
     const scale = main_fetch_safe_scale();
@@ -2686,8 +3023,10 @@ async function main_render_all_strokes(dirtyRect = null) {
         lineJoin: 'round'
     });
     
+    const pen_effect_mode = DRAW_CONFIG.penEffectMode || 'off';
+    const pen_effect_active = pen_effect_mode !== 'off';
+    
     if (hasEraseStrokes) {
-        // 有橡皮擦笔画，必须按原始顺序逐个绘制
         for (const stroke of strokesToRedraw) {
             if (!stroke.points || stroke.points.length < 1) continue;
             
@@ -2697,31 +3036,45 @@ async function main_render_all_strokes(dirtyRect = null) {
                     strokeStyle: 'rgba(0, 0, 0, 1)',
                     lineWidth: stroke.eraserSize || DRAW_CONFIG.eraserSize
                 });
+                
+                const path = new Path2D();
+                const firstPoint = stroke.points[0];
+                path.moveTo(firstPoint.fromX, firstPoint.fromY);
+                path.lineTo(firstPoint.toX, firstPoint.toY);
+                for (let i = 1; i < stroke.points.length; i++) {
+                    const pt = stroke.points[i];
+                    path.lineTo(pt.fromX, pt.fromY);
+                    path.lineTo(pt.toX, pt.toY);
+                }
+                ctx.stroke(path);
             } else if (stroke.type === 'draw' || stroke.type === 'comment') {
+                ctx.globalCompositeOperation = 'source-over';
+                
+                if (pen_effect_active) {
+                    const tessellated = realPenManager.build_tessellated_stroke(stroke, pen_effect_mode);
+                    if (tessellated) {
+                        realPenManager.render_tessellated_stroke(ctx, tessellated);
+                        continue;
+                    }
+                }
+                
                 main_update_context_state(ctx, {
-                    globalCompositeOperation: 'source-over',
                     strokeStyle: stroke.color || DRAW_CONFIG.penColor,
                     lineWidth: stroke.lineWidth || DRAW_CONFIG.penWidth
                 });
-            } else {
-                continue;
+                const path = new Path2D();
+                const firstPoint = stroke.points[0];
+                path.moveTo(firstPoint.fromX, firstPoint.fromY);
+                path.lineTo(firstPoint.toX, firstPoint.toY);
+                for (let i = 1; i < stroke.points.length; i++) {
+                    const pt = stroke.points[i];
+                    path.lineTo(pt.fromX, pt.fromY);
+                    path.lineTo(pt.toX, pt.toY);
+                }
+                ctx.stroke(path);
             }
-            
-            const path = new Path2D();
-            const firstPoint = stroke.points[0];
-            
-            path.moveTo(firstPoint.fromX, firstPoint.fromY);
-            path.lineTo(firstPoint.toX, firstPoint.toY);
-            for (let i = 1; i < stroke.points.length; i++) {
-                const pt = stroke.points[i];
-                path.lineTo(pt.fromX, pt.fromY);
-                path.lineTo(pt.toX, pt.toY);
-            }
-            
-            ctx.stroke(path);
         }
-    } else {
-        // 没有橡皮擦笔画，可以批量绘制优化性能
+    } else if (!pen_effect_active) {
         const variableWidthStrokes = [];
         const fixedWidthStrokes = new Map();
         
@@ -2745,7 +3098,6 @@ async function main_render_all_strokes(dirtyRect = null) {
         
         ctx.globalCompositeOperation = 'source-over';
         
-        // 绘制可变线宽笔画
         for (const stroke of variableWidthStrokes) {
             if (!stroke.points || stroke.points.length === 0) continue;
             
@@ -2783,7 +3135,6 @@ async function main_render_all_strokes(dirtyRect = null) {
             ctx.fill(circlePath);
         }
         
-        // 批量绘制固定线宽笔画
         for (const [stateKey, group] of fixedWidthStrokes) {
             main_update_context_state(ctx, {
                 strokeStyle: group.color,
@@ -2795,7 +3146,6 @@ async function main_render_all_strokes(dirtyRect = null) {
                 if (!stroke.points || stroke.points.length < 1) continue;
                 
                 const firstPoint = stroke.points[0];
-                
                 drawPath.moveTo(firstPoint.fromX, firstPoint.fromY);
                 drawPath.lineTo(firstPoint.toX, firstPoint.toY);
                 for (let i = 1; i < stroke.points.length; i++) {
@@ -2805,6 +3155,33 @@ async function main_render_all_strokes(dirtyRect = null) {
                 }
             }
             ctx.stroke(drawPath);
+        }
+    } else {
+        ctx.globalCompositeOperation = 'source-over';
+        
+        for (const stroke of strokesToRedraw) {
+            if (stroke.type !== 'draw' && stroke.type !== 'comment') continue;
+            if (!stroke.points || stroke.points.length < 1) continue;
+            
+            const tessellated = realPenManager.build_tessellated_stroke(stroke, pen_effect_mode);
+            if (tessellated) {
+                realPenManager.render_tessellated_stroke(ctx, tessellated);
+            } else {
+                main_update_context_state(ctx, {
+                    strokeStyle: stroke.color || DRAW_CONFIG.penColor,
+                    lineWidth: stroke.lineWidth || DRAW_CONFIG.penWidth
+                });
+                const path = new Path2D();
+                const firstPoint = stroke.points[0];
+                path.moveTo(firstPoint.fromX, firstPoint.fromY);
+                path.lineTo(firstPoint.toX, firstPoint.toY);
+                for (let i = 1; i < stroke.points.length; i++) {
+                    const pt = stroke.points[i];
+                    path.lineTo(pt.fromX, pt.fromY);
+                    path.lineTo(pt.toX, pt.toY);
+                }
+                ctx.stroke(path);
+            }
         }
     }
     
@@ -2850,16 +3227,27 @@ async function main_render_eraser_stroke(stroke) {
 async function main_render_stroke(stroke) {
     if (!stroke.points || stroke.points.length < 1) return;
     
+    if (stroke.type === 'draw' || stroke.type === 'comment') {
+        const pen_effect = get_pen_effect_mode();
+        if (pen_effect !== 'off') {
+            const tessellated = realPenManager.build_tessellated_stroke(stroke, pen_effect);
+            if (tessellated) {
+                dom.drawCtx.globalCompositeOperation = 'source-over';
+                realPenManager.render_tessellated_stroke(dom.drawCtx, tessellated);
+                return;
+            }
+        }
+    }
+    
     main_update_context_state(dom.drawCtx, {
         strokeStyle: stroke.color || DRAW_CONFIG.penColor,
         lineWidth: stroke.lineWidth || DRAW_CONFIG.penWidth,
         lineCap: 'round',
         lineJoin: 'round',
-        globalCompositeOperation: 'source-over'
+        globalCompositeOperation: stroke.type === 'erase' ? 'destination-out' : 'source-over'
     });
     
     const path = new Path2D();
-    
     const firstPoint = stroke.points[0];
     
     path.moveTo(firstPoint.fromX, firstPoint.fromY);
@@ -2872,6 +3260,11 @@ async function main_render_stroke(stroke) {
     
     dom.drawCtx.stroke(path);
 }
+
+function get_pen_effect_mode() {
+    return DRAW_CONFIG.penEffectMode || 'off';
+}
+window.get_pen_effect_mode = get_pen_effect_mode;
 
 let compactIdleId = null;
 
@@ -2936,6 +3329,8 @@ async function main_render_strokes_to_context(ctx, strokes) {
         lineJoin: 'round'
     });
     
+    const pen_effect = get_pen_effect_mode();
+    
     for (const stroke of strokes) {
         if (!stroke.points || stroke.points.length < 1) continue;
         
@@ -2945,25 +3340,42 @@ async function main_render_strokes_to_context(ctx, strokes) {
                 strokeStyle: 'rgba(0, 0, 0, 1)',
                 lineWidth: stroke.eraserSize || DRAW_CONFIG.eraserSize
             });
+            
+            const path = new Path2D();
+            const firstPoint = stroke.points[0];
+            path.moveTo(firstPoint.fromX, firstPoint.fromY);
+            path.lineTo(firstPoint.toX, firstPoint.toY);
+            for (let i = 1; i < stroke.points.length; i++) {
+                path.lineTo(stroke.points[i].fromX, stroke.points[i].fromY);
+                path.lineTo(stroke.points[i].toX, stroke.points[i].toY);
+            }
+            ctx.stroke(path);
         } else {
+            ctx.globalCompositeOperation = 'source-over';
+            
+            if (pen_effect !== 'off') {
+                const tessellated = realPenManager.build_tessellated_stroke(stroke, pen_effect);
+                if (tessellated) {
+                    realPenManager.render_tessellated_stroke(ctx, tessellated);
+                    continue;
+                }
+            }
+            
             main_update_context_state(ctx, {
-                globalCompositeOperation: 'source-over',
                 strokeStyle: stroke.color || DRAW_CONFIG.penColor,
                 lineWidth: stroke.lineWidth || DRAW_CONFIG.penWidth
             });
+            
+            const path = new Path2D();
+            const firstPoint = stroke.points[0];
+            path.moveTo(firstPoint.fromX, firstPoint.fromY);
+            path.lineTo(firstPoint.toX, firstPoint.toY);
+            for (let i = 1; i < stroke.points.length; i++) {
+                path.lineTo(stroke.points[i].fromX, stroke.points[i].fromY);
+                path.lineTo(stroke.points[i].toX, stroke.points[i].toY);
+            }
+            ctx.stroke(path);
         }
-        
-        const path = new Path2D();
-        const firstPoint = stroke.points[0];
-        
-        path.moveTo(firstPoint.fromX, firstPoint.fromY);
-        path.lineTo(firstPoint.toX, firstPoint.toY);
-        for (let i = 1; i < stroke.points.length; i++) {
-            path.lineTo(stroke.points[i].fromX, stroke.points[i].fromY);
-            path.lineTo(stroke.points[i].toX, stroke.points[i].toY);
-        }
-        
-        ctx.stroke(path);
     }
     
     main_update_context_state(ctx, {
@@ -3169,7 +3581,11 @@ async function main_handle_undo() {
     state.baseImageLoadId++;
     state.compactSnapshotId = (state.compactSnapshotId || 0) + 1;
     
+    // 撤销前清除钢笔效果缓存，使所有笔画使用当前设置重新计算
+    realPenManager.invalidate_cache();
+    
     await history_handle_undo();
+    
     console.log('撤销操作');
 }
 
@@ -3193,7 +3609,7 @@ async function main_delete_all_drawings() {
     if (state.strokeHistory.length === 0 && !state.baseImageObj) return;
     
     const cmd = new ClearCommand({
-        savedStrokeHistory: main_main_stroke_clone_deep(state.strokeHistory),
+        savedStrokeHistory: [...state.strokeHistory],
         savedBaseImageURL: state.baseImageURL,
         strokeHistoryRef: state.strokeHistory,
         baseImageURLRef: { get value() { return state.baseImageURL; }, set value(v) { state.baseImageURL = v; } },

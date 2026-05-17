@@ -5,6 +5,7 @@
  * - Command: 命令基类，定义execute/undo/redo接口
  * - DrawCommand: 绘制命令
  * - EraseCommand: 橡皮擦命令
+ * - PenEraseCommand: 钢笔效果笔画切割命令
  * - ClearCommand: 清空命令
  * - SnapshotCommand: 快照命令（用于压缩）
  * - HistoryManager: 历史管理器，管理undo/redo栈
@@ -110,6 +111,52 @@ export class EraseCommand extends Command {
 
     can_compact() {
         return false;
+    }
+}
+
+export class PenEraseCommand extends Command {
+    constructor(options) {
+        super('pen_erase');
+        this.pairs = options.pairs || [];
+        this.strokeHistoryRef = options.strokeHistoryRef;
+        this.redrawFn = options.redrawFn;
+    }
+
+    async execute(needRedraw = true) {
+        for (const pair of this.pairs) {
+            const idx = this.strokeHistoryRef.indexOf(pair.originalStroke);
+            if (idx > -1) {
+                pair.insertIndex = idx;
+                this.strokeHistoryRef.splice(idx, 1, ...pair.subStrokes);
+            }
+        }
+        if (needRedraw && this.redrawFn) await this.redrawFn();
+    }
+
+    async undo() {
+        for (const pair of this.pairs) {
+            for (let i = pair.subStrokes.length - 1; i >= 0; i--) {
+                const idx = this.strokeHistoryRef.indexOf(pair.subStrokes[i]);
+                if (idx > -1) this.strokeHistoryRef.splice(idx, 1);
+            }
+        }
+        // 按原始位置升序插入，确保靠前的 original 先恢复，位置不偏移
+        const sortedPairs = [...this.pairs].sort((a, b) => a.insertIndex - b.insertIndex);
+        for (const pair of sortedPairs) {
+            if (!this.strokeHistoryRef.includes(pair.originalStroke)) {
+                const insertAt = Math.min(pair.insertIndex, this.strokeHistoryRef.length);
+                this.strokeHistoryRef.splice(insertAt, 0, pair.originalStroke);
+            }
+        }
+        if (this.redrawFn) await this.redrawFn();
+    }
+
+    async redo() {
+        await this.execute(true);
+    }
+
+    can_compact() {
+        return true;
     }
 }
 

@@ -184,6 +184,10 @@ async function settings_load_camera_config() {
                 }
             }
 
+            if (settings.penEffectMode !== undefined) {
+                DRAW_CONFIG.penEffectMode = settings.penEffectMode;
+            }
+
             if (settings.showDocScanButton !== undefined) {
                 state.showDocScanButton = settings.showDocScanButton;
             }
