@@ -70,7 +70,7 @@ fn model_load_dexined(model_path: &std::path::Path) -> Result<Arc<Mutex<ort::ses
     let session = Session::builder()
         .map_err(|e| format!("创建 Session builder 失败: {}", e))?
         .with_execution_providers(&[ort::ep::DirectMLExecutionProvider::default().into()])
-        .map_err(|e| format!("设置 DirectML 执行提供器失败: {}", e))?
+        .map_err(|e| format!("DexiNed 模型需要 Windows 10 1709+ 及 DirectX 12 显卡: {}", e))?
         .commit_from_file(model_path)
         .map_err(|e| format!("加载 DexiNed ONNX 模型失败: {}", e))?;
     
