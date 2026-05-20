@@ -97,6 +97,9 @@ function canvas_init_all() {
     DRAW_CONFIG.canvasW = Math.floor(screenW * 2);
     DRAW_CONFIG.canvasH = Math.floor(screenH * 2);
 
+    DRAW_CONFIG.baseDpr = window.devicePixelRatio || 1;
+    DRAW_CONFIG.dpr = window.main_calc_capped_dpr(DRAW_CONFIG.baseDpr, DRAW_CONFIG.dprLimit);
+
     window.main_update_move_bound();
 
     state.canvasX = -(DRAW_CONFIG.canvasW - DRAW_CONFIG.screenW) / 2;
@@ -163,17 +166,9 @@ async function settings_load_camera_config() {
             }
 
             if (settings.dprLimit !== undefined) {
-                const oldDprLimit = DRAW_CONFIG.dprLimit;
                 DRAW_CONFIG.dprLimit = settings.dprLimit;
-                if (oldDprLimit !== DRAW_CONFIG.dprLimit) {
-                    const dom = window.dom;
-                    DRAW_CONFIG.baseDpr = window.devicePixelRatio || 1;
-                    DRAW_CONFIG.dpr = window.main_calc_capped_dpr(DRAW_CONFIG.baseDpr, DRAW_CONFIG.dprLimit);
-                    dom.drawCanvas.width = DRAW_CONFIG.canvasW * DRAW_CONFIG.dpr;
-                    dom.drawCanvas.height = DRAW_CONFIG.canvasH * DRAW_CONFIG.dpr;
-                    dom.drawCtx.setTransform(1, 0, 0, 1, 0, 0);
-                    dom.drawCtx.scale(DRAW_CONFIG.dpr, DRAW_CONFIG.dpr);
-                }
+                DRAW_CONFIG.baseDpr = window.devicePixelRatio || 1;
+                DRAW_CONFIG.dpr = window.main_calc_capped_dpr(DRAW_CONFIG.baseDpr, DRAW_CONFIG.dprLimit);
             }
 
             if (settings.pdfScale) {
@@ -252,21 +247,7 @@ async function main_init_all() {
             console.error('[init] dom_init_all failed');
             throw new Error('DOM 初始化失败');
         }
-        console.log('[init] dom_init_all ok, calling canvas_init_all');
-        canvas_init_all();
-        console.log('[init] history_init_manager');
-        history_init_manager({
-            on_state_change: () => {
-                history_update_button_status();
-            }
-        });
-        console.log('[init] setup_all_events');
-        window.main_setup_all_events();
-        console.log('[init] draw_save_snapshot');
-        await draw_save_snapshot();
-
-        console.log('[init] resize listener');
-        window.addEventListener('resize', window.main_handle_resize);
+        console.log('[init] dom_init_all ok');
 
         app_emit_splash_progress(1, '正在加载设置...');
         console.log('[init] progress 1 emitted');
@@ -285,6 +266,22 @@ async function main_init_all() {
         console.log('[init] settings_load_camera_config begin');
         await settings_load_camera_config();
         console.log('[init] settings_load_camera_config done');
+
+        console.log('[init] calling canvas_init_all');
+        canvas_init_all();
+        console.log('[init] history_init_manager');
+        history_init_manager({
+            on_state_change: () => {
+                history_update_button_status();
+            }
+        });
+        console.log('[init] setup_all_events');
+        window.main_setup_all_events();
+        console.log('[init] draw_save_snapshot');
+        await draw_save_snapshot();
+
+        console.log('[init] resize listener');
+        window.addEventListener('resize', window.main_handle_resize);
 
         app_emit_splash_progress(2, '正在加载主题...');
         console.log('[init] progress 2 emitted');

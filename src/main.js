@@ -98,7 +98,7 @@ const DRAW_CONFIG = {
     renderW: 1920,                 // 渲染分辨率宽度
     renderH: 1080,                 // 渲染分辨率高度
     dprLimit: 2,                   // DPR 上限（0=自动无限制，从配置加载后覆盖）
-    dpr: Math.min(window.devicePixelRatio || 1, 2),  // 设备像素比（受 dprLimit 限制）
+    dpr: 1,  // 设备像素比（初始化后由配置覆盖）
     pdfScale: 2,                   // PDF 渲染缩放比例
     imageSmoothingQuality: 'high', // 图像平滑质量
     baseDpr: window.devicePixelRatio || 1, // 基础设备像素比（受 dprLimit 限制）
