@@ -1350,16 +1350,22 @@ async function main_load_pdf_from_path(filePath) {
     }
 }
 
-// 处理窗口大小变化
-async function main_handle_resize() {
+// 处理窗口大小变化（防抖 150ms）
+let resizeTimeout = null;
+
+function main_handle_resize() {
     main_delete_cached_rect();
-    const container = dom.canvasContainer;
-    const newScreenW = container.clientWidth;
-    const newScreenH = container.clientHeight;
-    
-    if (newScreenW !== DRAW_CONFIG.screenW || newScreenH !== DRAW_CONFIG.screenH) {
-        await main_update_canvas_size(newScreenW, newScreenH);
-    }
+    if (resizeTimeout) clearTimeout(resizeTimeout);
+    resizeTimeout = setTimeout(() => {
+        resizeTimeout = null;
+        const container = dom.canvasContainer;
+        const newScreenW = container.clientWidth;
+        const newScreenH = container.clientHeight;
+        
+        if (newScreenW !== DRAW_CONFIG.screenW || newScreenH !== DRAW_CONFIG.screenH) {
+            main_update_canvas_size(newScreenW, newScreenH);
+        }
+    }, 150);
 }
 
 // 调整画布大小
@@ -2070,7 +2076,7 @@ function main_setup_canvas_mouse_events() {
         dom.drawCanvas.addEventListener('mouseup', main_handle_mouse_up);
         dom.drawCanvas.addEventListener('mouseleave', main_handle_mouse_leave);
     }
-    dom.drawCanvas.addEventListener('wheel', main_handle_wheel, { passive: false });
+    dom.drawCanvas.addEventListener('wheel', main_handle_wheel, { passive: true });
 }
 
 /**
@@ -2124,12 +2130,7 @@ function main_handle_pointer_move(e) {
         state.canvasY = e.clientY - state.startDragY;
         main_update_canvas_position();
         
-        const transform = `translate3d(${state.canvasX}px, ${state.canvasY}px, 0) scale(${state.scale})`;
-        dom.canvasWrapper.style.transform = transform;
-        
-        last_canvas_transform.x = state.canvasX;
-        last_canvas_transform.y = state.canvasY;
-        last_canvas_transform.scale = state.scale;
+        main_update_transform_schedule(state.canvasX, state.canvasY, state.scale);
     } else if (state.isDrawing) {
         const rect = state.drawCanvasRect;
         const invScale = state.cachedInvScale;
@@ -2299,7 +2300,6 @@ async function main_handle_mouse_leave(e) {
 }
 
 function main_handle_wheel(e) {
-    e.preventDefault();
     const delta = e.deltaY > 0 ? -0.1 : 0.1;
     const maxScale = state.isCameraOpen ? DRAW_CONFIG.maxScaleCamera : DRAW_CONFIG.maxScaleImage;
     const newScale = Math.max(DRAW_CONFIG.minScale, Math.min(maxScale, state.scale + delta));
