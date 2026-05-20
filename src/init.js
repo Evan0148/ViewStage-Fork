@@ -43,12 +43,10 @@ function dom_init_all() {
     dom.penControlPanel = document.getElementById('penControlPanel');
     dom.settingsPanel = document.getElementById('settingsPanel');
 
-    dom.penSizeSliderWrapper = document.getElementById('penSizeSliderWrapper');
-    dom.penSizeThumb = document.getElementById('penSizeThumb');
+    dom.penSizePresets = document.getElementById('penSizePresets');
     dom.penSizeValue = document.getElementById('penSizeValue');
     dom.penColorPicker = document.getElementById('penColorPicker');
-    dom.eraserSizeSliderWrapper = document.getElementById('eraserSizeSliderWrapper');
-    dom.eraserSizeThumb = document.getElementById('eraserSizeThumb');
+    dom.eraserSizePresets = document.getElementById('eraserSizePresets');
     dom.eraserSizeValue = document.getElementById('eraserSizeValue');
 
     dom.btnMove = document.getElementById('btnMove');

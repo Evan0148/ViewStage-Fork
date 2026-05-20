@@ -957,68 +957,52 @@ body {
     pointer-events: auto;
 }
 
-.slider-wrapper {
-    position: relative;
-    width: 40px;
-    height: 50px;
-    cursor: ns-resize;
-}
-
-.triangle-track {
-    position: absolute;
-    top: 0;
-    left: 0;
-    width: 100%;
-    height: 100%;
-    z-index: 1;
-}
-
-.triangle-track svg {
-    width: 100%;
-    height: 100%;
-    display: block;
-}
-
-.triangle-track path {
-    fill: var(--color-surface-strong);
-    stroke: none;
-    transition: all 0.15s ease;
-}
-
-.custom-thumb {
-    position: absolute;
-    left: 50%;
-    transform: translateX(-50%);
-    width: 18px;
-    height: 18px;
-    border-radius: 50%;
-    background: var(--color-primary);
-    border: 3px solid var(--color-canvas);
-    box-shadow: var(--shadow-sm);
-    transition: all 0.15s ease;
-    z-index: 2;
-    user-select: none;
-    -webkit-user-drag: none;
-}
-
-.custom-thumb:hover {
-    background: var(--color-primary-active);
-    transform: translateX(-50%) scale(1.1);
-}
-
-.pen-size-vertical {
+.pen-size-presets {
     display: flex;
-    flex-direction: column;
+    flex-direction: row;
     align-items: center;
-    gap: var(--spacing-xs);
-    min-width: 30px;
+    gap: 6px;
     padding: 0 2px;
+}
+
+.size-preset-btn {
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    border: 2px solid var(--color-hairline);
+    background: var(--color-surface-card);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.15s ease;
+    padding: 0;
+}
+
+.size-preset-btn:hover {
+    border-color: var(--color-primary);
+    transform: scale(1.1);
+}
+
+.size-preset-btn.active {
+    border-color: var(--color-primary);
+    background: var(--color-surface-soft);
+}
+
+.size-preset-btn::after {
+    content: '';
+    width: var(--dot-size);
+    height: var(--dot-size);
+    border-radius: 50%;
+    background: var(--dot-color, var(--color-muted));
+    transition: all 0.15s ease;
 }
 
 .pen-size-label {
     font-size: 11px;
     font-weight: 500;
     color: var(--color-muted);
+    margin-left: 4px;
 }
 
 .pen-color-buttons {

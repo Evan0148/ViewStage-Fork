@@ -43,14 +43,13 @@
             </div>
             
             <div class="pen-control-panel" id="penControlPanel">
-                <div class="pen-size-vertical">
-                    <div class="slider-wrapper" id="penSizeSliderWrapper">
-                        <svg class="triangle-track" viewBox="0 0 40 50" preserveAspectRatio="none">
-                            <path d="M 12 0 L 28 0 L 20 50 Z" fill="rgba(255, 255, 255, 0.15)" stroke="rgba(255, 255, 255, 0.2)" stroke-width="1" stroke-linejoin="round" stroke-linecap="round"/>
-                        </svg>
-                        <div class="custom-thumb" id="penSizeThumb"></div>
-                    </div>
-                    <span class="pen-size-label" id="penSizeValue">2px</span>
+                <div class="pen-size-presets" id="penSizePresets">
+                    <button class="size-preset-btn" data-value="2" style="--dot-size:6px"></button>
+                    <button class="size-preset-btn" data-value="5" style="--dot-size:10px"></button>
+                    <button class="size-preset-btn" data-value="10" style="--dot-size:14px"></button>
+                    <button class="size-preset-btn" data-value="15" style="--dot-size:18px"></button>
+                    <button class="size-preset-btn" data-value="21" style="--dot-size:22px"></button>
+                    <span class="pen-size-label" id="penSizeValue">5px</span>
                 </div>
                 <div class="pen-color-buttons" id="penColorButtons">
                     <button class="pen-color-btn" data-index="0" title="颜色1"></button>
@@ -69,13 +68,12 @@
                     <button class="pen-color-btn" data-index="13" title="颜色14"></button>
                     <button class="pen-color-btn" data-index="14" title="颜色15"></button>
                 </div>
-                <div class="pen-size-vertical">
-                    <div class="slider-wrapper" id="eraserSizeSliderWrapper">
-                        <svg class="triangle-track" viewBox="0 0 40 50" preserveAspectRatio="none">
-                            <path d="M 12 0 L 28 0 L 20 50 Z" fill="rgba(255, 255, 255, 0.15)" stroke="rgba(255, 255, 255, 0.2)" stroke-width="1" stroke-linejoin="round" stroke-linecap="round"/>
-                        </svg>
-                        <div class="custom-thumb" id="eraserSizeThumb"></div>
-                    </div>
+                <div class="pen-size-presets" id="eraserSizePresets">
+                    <button class="size-preset-btn" data-value="5" style="--dot-size:8px"></button>
+                    <button class="size-preset-btn" data-value="15" style="--dot-size:12px"></button>
+                    <button class="size-preset-btn" data-value="25" style="--dot-size:16px"></button>
+                    <button class="size-preset-btn" data-value="38" style="--dot-size:20px"></button>
+                    <button class="size-preset-btn" data-value="50" style="--dot-size:24px"></button>
                     <span class="pen-size-label" id="eraserSizeValue">15px</span>
                 </div>
             </div>

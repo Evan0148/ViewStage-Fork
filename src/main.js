@@ -84,7 +84,7 @@ async function main_wait_pdfjs(maxWait = 5000) {
 // 绘制参数、画布尺寸、缩放限制等全局配置
 
 const DRAW_CONFIG = {
-    penColor: '#3498db',           // 默认笔色
+    penColor: null,                // 默认笔色（初始化时设为 penColors[0]）
     penWidth: 5,                   // 默认笔宽 (px)
     eraserSize: 15,                // 橡皮大小 (px)
     minScale: 0.5,                 // 最小缩放比例
@@ -112,6 +112,11 @@ const DRAW_CONFIG = {
     penSmoothness: 0.8,             // 钢笔平滑度 (0-1, 越高越平滑)
     penEffectMode: 'limited'        // 钢笔效果模式: 'full' | 'limited' | 'off'
 };
+
+// 默认选中第一号颜色
+if (DRAW_CONFIG.penColor === null && DRAW_CONFIG.penColors.length > 0) {
+    DRAW_CONFIG.penColor = DRAW_CONFIG.penColors[0];
+}
 
 // 将配置暴露到全局，供 batch-draw.js 使用
 window.DRAW_CONFIG = DRAW_CONFIG;
@@ -1787,20 +1792,41 @@ async function main_submit_close_window() {
 
 // 笔触控制事件
 function main_setup_pen_control_events() {
-    main_init_triangle_slider(dom.penSizeSliderWrapper, dom.penSizeThumb, dom.penSizeValue, 2, 21, DRAW_CONFIG.penWidth, (value) => {
-        DRAW_CONFIG.penWidth = value;
-        if (state.drawMode === 'comment') {
-            main_update_pen_style();
-        }
+    // 画笔预设尺寸点击
+    dom.penSizePresets.querySelectorAll('.size-preset-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            const value = parseInt(btn.dataset.value);
+            DRAW_CONFIG.penWidth = value;
+            dom.penSizePresets.querySelectorAll('.size-preset-btn').forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+            dom.penSizeValue.textContent = `${value}px`;
+            if (state.drawMode === 'comment') {
+                main_update_pen_style();
+            }
+        });
     });
     
-    main_init_triangle_slider(dom.eraserSizeSliderWrapper, dom.eraserSizeThumb, dom.eraserSizeValue, 5, 50, DRAW_CONFIG.eraserSize, (value) => {
-        DRAW_CONFIG.eraserSize = value;
-        main_update_eraser_hint_size();
-        if (state.drawMode === 'eraser') {
-            main_update_eraser_style();
-        }
+    // 橡皮预设尺寸点击
+    dom.eraserSizePresets.querySelectorAll('.size-preset-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            const value = parseInt(btn.dataset.value);
+            DRAW_CONFIG.eraserSize = value;
+            dom.eraserSizePresets.querySelectorAll('.size-preset-btn').forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+            dom.eraserSizeValue.textContent = `${value}px`;
+            main_update_eraser_hint_size();
+            if (state.drawMode === 'eraser') {
+                main_update_eraser_style();
+            }
+        });
     });
+    
+    // 初始化选中状态
+    const penActive = dom.penSizePresets.querySelector(`[data-value="${DRAW_CONFIG.penWidth}"]`);
+    if (penActive) penActive.classList.add('active');
+    const eraserActive = dom.eraserSizePresets.querySelector(`[data-value="${DRAW_CONFIG.eraserSize}"]`);
+    if (eraserActive) eraserActive.classList.add('active');
+    main_update_pen_preset_dot_color();
     
     // 颜色按钮点击事件
     const colorButtons = document.querySelectorAll('.pen-color-btn');
@@ -1810,6 +1836,7 @@ function main_setup_pen_control_events() {
             const color = DRAW_CONFIG.penColors[index];
             if (color) {
                 DRAW_CONFIG.penColor = color;
+                main_update_pen_preset_dot_color();
                 
                 // 更新选中状态
                 colorButtons.forEach(b => b.classList.remove('active'));
@@ -1824,85 +1851,6 @@ function main_setup_pen_control_events() {
     
     // 初始化颜色按钮
     main_update_color_buttons();
-}
-
-// 初始化三角形滑块
-function main_init_triangle_slider(wrapper, thumb, valueLabel, minValue, maxValue, initialValue, onChange) {
-    const wrapperHeight = 50;
-    const thumbHeight = 18;
-    const validHeight = wrapperHeight - thumbHeight;
-    
-    let currentValue = initialValue;
-    let isDragging = false;
-    
-    function main_update_thumb_position() {
-        const ratio = (currentValue - minValue) / (maxValue - minValue);
-        const top = (1 - ratio) * validHeight;
-        thumb.style.top = `${top}px`;
-        valueLabel.textContent = `${currentValue}px`;
-    }
-    
-    function main_fetch_position_from_event(e) {
-        if (e.touches && e.touches.length > 0) {
-            return e.touches[0].clientY;
-        }
-        return e.clientY;
-    }
-    
-    function main_handle_drag(e) {
-        if (!isDragging) return;
-        e.preventDefault();
-        const clientY = main_fetch_position_from_event(e);
-        const mouseY = clientY - wrapper.getBoundingClientRect().top;
-        const clampedY = Math.max(0, Math.min(mouseY, validHeight));
-        const ratio = 1 - (clampedY / validHeight);
-        currentValue = Math.round(minValue + ratio * (maxValue - minValue));
-        main_update_thumb_position();
-        if (onChange) onChange(currentValue);
-    }
-    
-    function main_submit_drag() {
-        isDragging = false;
-        document.removeEventListener('mousemove', main_handle_drag);
-        document.removeEventListener('mouseup', main_submit_drag);
-        document.removeEventListener('touchmove', main_handle_drag);
-        document.removeEventListener('touchend', main_submit_drag);
-        document.removeEventListener('touchcancel', main_submit_drag);
-    }
-    
-    function main_start_drag(e) {
-        e.preventDefault();
-        isDragging = true;
-        document.addEventListener('mousemove', main_handle_drag);
-        document.addEventListener('mouseup', main_submit_drag);
-        document.addEventListener('touchmove', main_handle_drag, { passive: false });
-        document.addEventListener('touchend', main_submit_drag);
-        document.addEventListener('touchcancel', main_submit_drag);
-    }
-    
-    thumb.addEventListener('mousedown', main_start_drag);
-    thumb.addEventListener('touchstart', main_start_drag, { passive: false });
-    
-    wrapper.addEventListener('click', (e) => {
-        if (isDragging) return;
-        const clickY = e.clientY - wrapper.getBoundingClientRect().top;
-        const ratio = 1 - Math.max(0, Math.min(clickY / validHeight, 1));
-        currentValue = Math.round(minValue + ratio * (maxValue - minValue));
-        main_update_thumb_position();
-        if (onChange) onChange(currentValue);
-    });
-    
-    wrapper.addEventListener('touchstart', (e) => {
-        if (e.target === thumb) return;
-        const touch = e.touches[0];
-        const clickY = touch.clientY - wrapper.getBoundingClientRect().top;
-        const ratio = 1 - Math.max(0, Math.min(clickY / validHeight, 1));
-        currentValue = Math.round(minValue + ratio * (maxValue - minValue));
-        main_update_thumb_position();
-        if (onChange) onChange(currentValue);
-    }, { passive: true });
-    
-    main_update_thumb_position();
 }
 
 // RGB转十六进制颜色
@@ -1954,6 +1902,13 @@ function main_update_color_button_active() {
         if (btn.dataset.color === DRAW_CONFIG.penColor) {
             btn.classList.add('active');
         }
+    });
+    main_update_pen_preset_dot_color();
+}
+
+function main_update_pen_preset_dot_color() {
+    dom.penSizePresets.querySelectorAll('.size-preset-btn').forEach(btn => {
+        btn.style.setProperty('--dot-color', DRAW_CONFIG.penColor);
     });
 }
 
@@ -2013,9 +1968,9 @@ function main_show_pen_control_panel(targetBtn, mode) {
     const btnRect = targetBtn.getBoundingClientRect();
     const containerRect = document.querySelector('.main-function').getBoundingClientRect();
     
-    const penSizeControl = panel.querySelector('.pen-size-vertical:nth-child(1)');
+    const penSizeControl = panel.querySelector('.pen-size-presets:nth-child(1)');
     const colorButtons = panel.querySelector('.pen-color-buttons');
-    const eraserSizeControl = panel.querySelector('.pen-size-vertical:nth-child(3)');
+    const eraserSizeControl = panel.querySelector('.pen-size-presets:nth-child(3)');
     
     if (mode === 'comment') {
         if (penSizeControl) penSizeControl.style.display = 'flex';
@@ -2041,7 +1996,7 @@ function main_show_pen_control_panel(targetBtn, mode) {
     panel.offsetHeight;
     
     // 获取实际面板尺寸
-    const panelWidth = panel.offsetWidth || (mode === 'comment' ? 240 : 120);
+    const panelWidth = panel.offsetWidth || (mode === 'comment' ? 380 : 240);
     const panelHeight = panel.offsetHeight || 120;
     
     // 计算面板位置，确保居中对齐按钮
