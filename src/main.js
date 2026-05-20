@@ -525,7 +525,6 @@ let state = {
     cameraWidth: 1280,             // 摄像头宽度
     cameraHeight: 720,             // 摄像头高度
     wasCameraOpenBeforeMinimize: false, // 最小化前摄像头是否开启
-    showDocScanButton: true,       // 文档扫描按钮是否显示（设置）
     
     // 图像管理
     currentImage: null,            // 当前显示的图像 Image 对象
@@ -842,12 +841,6 @@ function main_setup_pdf_file_open() {
             console.log('画笔颜色已更改:', DRAW_CONFIG.penColors);
         }
         
-        if (settings.showDocScanButton !== undefined) {
-            state.showDocScanButton = settings.showDocScanButton;
-            main_update_photo_button_state();
-            console.log('文档扫描按钮显示已更改:', settings.showDocScanButton);
-        }
-        
         if (settings.theme !== undefined) {
             ThemeManager.theme_update_active(settings.theme).then(() => {
                 const canvasBgColor = ThemeManager.theme_fetch_canvas_bg_color();
@@ -880,20 +873,6 @@ function main_setup_pdf_file_open() {
         console.error('settings-changed 事件监听失败:', err);
     });
     
-    listen('doc-scan-save-image', async (event) => {
-        console.log('收到文档扫描保存图片事件');
-        const { imageData, name } = event.payload;
-        
-        if (imageData) {
-            const img = new Image();
-            img.onload = async () => {
-                await main_save_image_to_list_no_highlight(img, name);
-            };
-            img.src = imageData;
-        }
-    }).catch(err => {
-        console.error('doc-scan-save-image 事件监听失败:', err);
-    });
 }
 
 async function main_render_pdf_pages_lazy(pdf, totalPages, initialPages = 3, docNumber = null) {
@@ -1643,24 +1622,7 @@ function main_setup_tool_events() {
     dom.btnSave.addEventListener('click', main_handle_file_sidebar_toggle);
     dom.btnMinimize.addEventListener('click', main_hide_window);
     dom.btnMenu.addEventListener('click', main_handle_menu_toggle);
-    dom.btnDocScan.addEventListener('click', main_show_doc_scan_window);
     dom.btnExpand.addEventListener('click', main_handle_sidebar_toggle);
-}
-
-// 打开文档扫描窗口
-async function main_show_doc_scan_window() {
-    try {
-        if (!window.__TAURI__) {
-            alert('文档扫描功能需要Tauri环境');
-            return;
-        }
-        
-        const { invoke } = window.__TAURI__.core;
-            await invoke('window_show_doc_scan');
-    } catch (error) {
-        console.error('打开文档扫描窗口失败:', error);
-        alert('打开文档扫描窗口失败: ' + error.message);
-    }
 }
 
 // 菜单弹出
@@ -3692,16 +3654,13 @@ let lastPhotoButtonState = null;
 
 function main_update_photo_button_state() {
     const btnPhoto = dom.btnPhoto;
-    const btnDocScan = dom.btnDocScan;
     
     if (!state.cameraAvailable) {
         if (btnPhoto) btnPhoto.style.display = 'none';
-        if (btnDocScan) btnDocScan.style.display = 'none';
         return;
     }
     
     if (btnPhoto) btnPhoto.style.display = '';
-    if (btnDocScan) btnDocScan.style.display = state.showDocScanButton ? '' : 'none';
     
     if (!btnPhoto) return;
     
@@ -5505,7 +5464,6 @@ async function main_save_image_to_list_no_highlight(img, name) {
     main_update_sidebar_content();
 }
 
-// 暴露必要的函数到 window 对象，供 doc-scan.js 使用
 window.main_save_image_to_list_no_highlight = main_save_image_to_list_no_highlight;
 window.main_update_sidebar_content = main_update_sidebar_content;
 window.main_delete_all_drawings = main_delete_all_drawings;

@@ -61,15 +61,6 @@ function dom_init_all() {
     dom.btnMinimize = document.getElementById('btnMinimize');
     dom.btnMenu = document.getElementById('btnMenu');
 
-    dom.btnDocScan = document.getElementById('btnDocScan');
-    dom.docScanPanel = document.getElementById('docScanPanel');
-    dom.scanAutoDetect = document.getElementById('scanAutoDetect');
-    dom.scanEnhance = document.getElementById('scanEnhance');
-    dom.scanDenoise = document.getElementById('scanDenoise');
-    dom.scanBinarize = document.getElementById('scanBinarize');
-    dom.btnApplyScan = document.getElementById('btnApplyScan');
-    dom.btnCancelScan = document.getElementById('btnCancelScan');
-
     if (!dom.imageElement || !dom.drawCanvas || !dom.canvasContainer) {
         console.error('必需的元素未找到');
         return false;
@@ -193,10 +184,6 @@ async function settings_load_camera_config() {
 
             if (settings.penEffectMode !== undefined) {
                 DRAW_CONFIG.penEffectMode = settings.penEffectMode;
-            }
-
-            if (settings.showDocScanButton !== undefined) {
-                state.showDocScanButton = settings.showDocScanButton;
             }
 
             const themeName = settings.theme || 'simplify';

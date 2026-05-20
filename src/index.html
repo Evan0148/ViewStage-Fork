@@ -7,7 +7,6 @@
     <title>ViewStage</title>
     <link rel="stylesheet" href="styles.css">
     <script src="JS/pdf.min.js"></script>
-    <script src="doc-scan/doc-scan.js"></script>
     <script src="i18n.js"></script>
     <script>
         window.__TAURI__?.core.invoke('main_signal_loaded').catch(()=>{});
@@ -90,20 +89,6 @@
                 </div>
             </div>
             
-            <div class="doc-scan-panel" id="docScanPanel">
-                <div class="doc-scan-title">文档扫描</div>
-                <div class="doc-scan-options">
-                    <p class="doc-scan-hint" data-i18n="docScan.hint">自动检测文档区域并裁剪</p>
-                </div>
-                <div class="doc-scan-actions">
-                    <button class="doc-scan-btn primary" id="btnApplyScan">
-                        <span data-i18n="docScan.apply">应用</span>
-                    </button>
-                    <button class="doc-scan-btn" id="btnCancelScan">
-                        <span data-i18n="docScan.cancel">取消</span>
-                    </button>
-                </div>
-            </div>
             
             <div class="toolbar">
                 <div class="toolbar-left">
@@ -151,10 +136,6 @@
                         <span data-i18n="toolbar.settings">设置</span>
                     </button>
                     
-                    <button class="toolbar-btn function-btn" id="btnDocScan">
-                        <img data-icon="scan" width="16" height="16" alt="文档扫描">
-                        <span data-i18n="toolbar.docScan">扫描</span>
-                    </button>
                 </div>
                 
                 <div class="toolbar-right">
