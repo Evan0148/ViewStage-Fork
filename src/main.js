@@ -274,6 +274,11 @@ class RealPenManager {
             const steps = Math.max(3, Math.round(smoothness * 10));
             density = steps;
             input_points = this._build_smooth_points(filtered, smoothness);
+        } else if (effect_mode === 'limited') {
+            const smoothness = (DRAW_CONFIG.penSmoothness ?? 0.8) * 0.5;
+            const steps = Math.max(3, Math.round(smoothness * 10));
+            density = Math.max(2, steps);
+            input_points = this._build_smooth_points(filtered, smoothness);
         } else {
             input_points = filtered;
         }
@@ -2854,7 +2859,13 @@ function main_calc_split_strokes_by_eraser(drawStroke, eraserStroke, penEffectMo
             lineWidth: drawStroke.lineWidth,
             scale: drawStroke.scale,
             bounds: main_calc_stroke_bounds(pts),
-            noStartTaper: !isFirst
+            noStartTaper: !isFirst,
+            storedWidths: drawStroke.storedWidths
+                ? drawStroke.storedWidths.slice(
+                    drawStroke.points.indexOf(pts[0]),
+                    drawStroke.points.indexOf(pts[0]) + pts.length
+                  )
+                : undefined
         };
     });
     

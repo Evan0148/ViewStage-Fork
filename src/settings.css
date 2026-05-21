@@ -1824,3 +1824,41 @@ button {
 .status-error {
     color: var(--color-error, #f44336);
 }
+
+.theme-user-list {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    width: 100%;
+}
+
+.theme-user-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 8px 12px;
+    background: var(--color-surface, #2a2a2a);
+    border: 1px solid var(--color-muted, #444);
+    border-radius: var(--rounded-md, 6px);
+}
+
+.theme-user-item-name {
+    font-size: 13px;
+    color: var(--color-ink, #e0e0e0);
+}
+
+.theme-user-item-delete {
+    background: none;
+    border: none;
+    color: var(--color-error, #f44336);
+    cursor: pointer;
+    font-size: 18px;
+    padding: 0 4px;
+    line-height: 1;
+    opacity: 0.6;
+    transition: opacity 0.15s;
+}
+
+.theme-user-item-delete:hover {
+    opacity: 1;
+}

@@ -89,14 +89,32 @@ const ThemeManager = {
 
   async theme_load_user(themeDir, themeName) {
     const { fs, convertFileSrc } = window.__TAURI__;
-    
-    const configPath = `${themeDir}/theme.json`;
-    const configContent = await fs.readTextFile(configPath);
-    const config = JSON.parse(configContent);
-    
+
+    let mergedConfig = {};
+
+    // theme.json = 视觉配置
+    try {
+      const themeJsonPath = `${themeDir}/theme.json`;
+      const themeJsonContent = await fs.readTextFile(themeJsonPath);
+      const themeJson = JSON.parse(themeJsonContent);
+      mergedConfig = { ...themeJson };
+    } catch (e) {
+      console.warn('User theme missing theme.json:', e);
+    }
+
+    // config.json = 身份信息
+    try {
+      const configPath = `${themeDir}/config.json`;
+      const configContent = await fs.readTextFile(configPath);
+      const config = JSON.parse(configContent);
+      mergedConfig = { ...mergedConfig, ...config };
+    } catch (e) {
+      console.warn('User theme missing config.json:', e);
+    }
+
     return {
       name: themeName,
-      config: config,
+      config: mergedConfig,
       themeDir: themeDir,
       
       async load_theme() {

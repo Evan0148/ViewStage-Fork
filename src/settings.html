@@ -313,6 +313,14 @@
                             </div>
                         </div>
                     </div>
+                    <div class="setting-item">
+                        <span class="setting-label" data-i18n="settings.importTheme">导入主题</span>
+                        <button class="btn-action" id="btnImportTheme" data-i18n="settings.importThemeBtn">导入 .vst 主题</button>
+                    </div>
+                    <div class="setting-item" id="userThemeListContainer" style="display: none;">
+                        <span class="setting-label" data-i18n="settings.installedThemes">已安装的主题</span>
+                        <div id="userThemeList" class="theme-user-list"></div>
+                    </div>
                 </div>
                 
                 <div class="page" id="pageStorage">
@@ -406,9 +414,13 @@
                             <button class="btn-action btn-update-download" id="btnUpdateDownload" style="display: none;" data-i18n="settings.downloadUpdate">下载更新</button>
                         </div>
                         <div class="update-status" id="updateStatus"></div>
+                        </div>
+                    </div>
+                    <div class="setting-item">
+                        <span class="setting-label" data-i18n="settings.importTheme">导入主题</span>
+                        <button class="btn-action" id="btnImportTheme" data-i18n="settings.importThemeBtn">导入 .vst 主题</button>
                     </div>
                 </div>
-            </div>
         </div>
 
         <div class="modal-overlay" id="modalOverlay">

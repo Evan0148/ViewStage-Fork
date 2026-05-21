@@ -65,8 +65,11 @@ class PenTessellator {
                     line_width = base_width - eased * (base_width * 0.75);
                 }
 
-                const blend = Math.max(0.2, Math.min(0.8, 1 - dist / (base_width * 4)));
+                const blend = Math.max(0.3, Math.min(0.85, 1 - dist / (base_width * 3)));
                 line_width = line_width * (1 - blend) + last_line_width * blend;
+
+                const maxDelta = base_width * 0.12;
+                line_width = Math.min(last_line_width + maxDelta, Math.max(last_line_width - maxDelta, line_width));
                 last_line_width = line_width;
 
                 line_widths.push(line_width);
@@ -74,10 +77,7 @@ class PenTessellator {
         }
 
         const totalSegments = line_widths.length;
-        const taperSegments = Math.min(
-            Math.max(3, Math.round(4 * density)),
-            Math.max(3, Math.floor(totalSegments * 0.25))
-        );
+        const taperSegments = 4;
 
         for (let i = 0; i < totalSegments; i++) {
             if (!noStartTaper && i < taperSegments) {

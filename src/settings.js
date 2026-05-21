@@ -404,8 +404,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                 const themeOptionsContainer = document.getElementById('themeOptions');
                 if (themeSelected && themeOptionsContainer) {
                     const savedTheme = settings.theme || 'simplify';
-                    const themeOptions = themeOptionsContainer.querySelectorAll('.select-option');
-                    themeOptions.forEach(option => {
+                    themeOptionsContainer.querySelectorAll('.select-option').forEach(option => {
                         if (option.dataset.value === savedTheme) {
                             themeSelected.textContent = option.textContent;
                             option.classList.add('selected');
@@ -413,6 +412,9 @@ document.addEventListener('DOMContentLoaded', async () => {
                             option.classList.remove('selected');
                         }
                     });
+
+                    // 加载用户安装的主题
+                    settings_load_user_themes(savedTheme);
                 }
                 
                 // 默认旋转角度设置
@@ -494,6 +496,100 @@ document.addEventListener('DOMContentLoaded', async () => {
             }
         }
         return false;
+    }
+
+    function settings_load_user_themes(savedTheme) {
+        if (!window.__TAURI__) return;
+
+        const { invoke } = window.__TAURI__.core;
+        const container = document.getElementById('themeOptions');
+        if (!container) return;
+
+        invoke('theme_list_user').then(themes => {
+            themes.forEach(({ name, display_name }) => {
+                const existing = container.querySelector(`.select-option[data-value="${name}"]`);
+                if (!existing) {
+                    const opt = document.createElement('div');
+                    opt.className = 'select-option';
+                    opt.dataset.value = name;
+                    opt.textContent = display_name;
+                    container.appendChild(opt);
+                    if (name === savedTheme) {
+                        const sel = document.getElementById('themeSelected');
+                        if (sel) sel.textContent = display_name;
+                        opt.classList.add('selected');
+                    }
+                }
+            });
+
+            // 刷新已安装主题列表
+            settings_refresh_theme_list(themes);
+        }).catch(e => {
+            console.error('Failed to load user themes:', e);
+        });
+    }
+
+    function settings_refresh_theme_list(themes) {
+        const container = document.getElementById('userThemeListContainer');
+        const list = document.getElementById('userThemeList');
+        if (!container || !list) return;
+
+        if (!themes || themes.length === 0) {
+            container.style.display = 'none';
+            return;
+        }
+
+        container.style.display = '';
+        list.innerHTML = '';
+
+        themes.forEach(({ name, display_name }) => {
+            const item = document.createElement('div');
+            item.className = 'theme-user-item';
+
+            const nameSpan = document.createElement('span');
+            nameSpan.className = 'theme-user-item-name';
+            nameSpan.textContent = display_name;
+            item.appendChild(nameSpan);
+
+            const delBtn = document.createElement('button');
+            delBtn.className = 'theme-user-item-delete';
+            delBtn.textContent = '×';
+            delBtn.title = `Delete ${display_name}`;
+            delBtn.addEventListener('click', async () => {
+                if (!confirm(`Delete theme "${display_name}"?`)) return;
+
+                const { invoke } = window.__TAURI__.core;
+                try {
+                    await invoke('theme_delete', { name });
+
+                    // 从下拉框中移除
+                    const opt = document.querySelector(`#themeOptions .select-option[data-value="${name}"]`);
+                    if (opt) opt.remove();
+
+                    // 刷新列表
+                    const updated = themes.filter(t => t.name !== name);
+                    settings_refresh_theme_list(updated);
+
+                    // 如果当前选中的是已删除的主题，切回 simplify
+                    const themeSelected = document.getElementById('themeSelected');
+                    if (themeSelected && themeSelected.textContent === display_name) {
+                        const defaultOpt = document.querySelector(`#themeOptions .select-option[data-value="simplify"]`);
+                        if (defaultOpt) {
+                            document.querySelectorAll('#themeOptions .select-option').forEach(o => o.classList.remove('selected'));
+                            defaultOpt.classList.add('selected');
+                            themeSelected.textContent = defaultOpt.textContent;
+                            await settings_save_all_local({ theme: 'simplify' });
+                        }
+                    }
+                } catch (e) {
+                    console.error('Failed to delete theme:', e);
+                    alert(`Failed to delete theme: ${e}`);
+                }
+            });
+
+            item.appendChild(delBtn);
+            list.appendChild(item);
+        });
     }
     
     async function settings_fetch_supported_resolutions(deviceId) {
@@ -1246,33 +1342,36 @@ document.addEventListener('DOMContentLoaded', async () => {
     // 主题选择
     const themeSelect = document.getElementById('themeSelect');
     const themeSelected = document.getElementById('themeSelected');
-    
-    if (themeSelect && themeSelected) {
+    const themeOptions = document.getElementById('themeOptions');
+
+    if (themeSelect && themeSelected && themeOptions) {
         themeSelected.addEventListener('click', () => {
             themeSelect.classList.toggle('open');
         });
-        
-        const themeOptions = document.querySelectorAll('#themeOptions .select-option');
-        themeOptions.forEach(option => {
-            option.addEventListener('click', async () => {
-                const value = option.dataset.value;
-                themeSelected.textContent = option.textContent;
-                
-                themeOptions.forEach(opt => opt.classList.remove('selected'));
-                option.classList.add('selected');
-                
-                themeSelect.classList.remove('open');
-                
-                const saved = await settings_save_all_local({ theme: value });
-                if (saved) {
-                    const restartModal = document.getElementById('restartModal');
-                    if (restartModal) {
-                        restartModal.classList.add('active');
-                    }
+
+        // 使用事件委托处理静态和动态添加的选项
+        themeOptions.addEventListener('click', async (e) => {
+            const option = e.target.closest('.select-option');
+            if (!option) return;
+
+            const value = option.dataset.value;
+            themeSelected.textContent = option.textContent;
+
+            const allOptions = themeOptions.querySelectorAll('.select-option');
+            allOptions.forEach(opt => opt.classList.remove('selected'));
+            option.classList.add('selected');
+
+            themeSelect.classList.remove('open');
+
+            const saved = await settings_save_all_local({ theme: value });
+            if (saved) {
+                const restartModal = document.getElementById('restartModal');
+                if (restartModal) {
+                    restartModal.classList.add('active');
                 }
-            });
+            }
         });
-        
+
         document.addEventListener('click', (e) => {
             if (!themeSelect.contains(e.target)) {
                 themeSelect.classList.remove('open');
@@ -1462,7 +1561,93 @@ document.addEventListener('DOMContentLoaded', async () => {
             }
         });
     }
-    
+
+    // 导入 .vst 主题
+    const btnImportTheme = document.getElementById('btnImportTheme');
+    if (btnImportTheme && window.__TAURI__) {
+        btnImportTheme.addEventListener('click', async () => {
+            try {
+                const { invoke } = window.__TAURI__.core;
+                const { open } = window.__TAURI__.dialog;
+
+                const filePath = await open({
+                    filters: [{ name: 'ViewStage Theme', extensions: ['vst'] }]
+                });
+
+                if (filePath) {
+                    let themeResult;
+                    try {
+                        themeResult = await invoke('theme_import_vst', { filePath, force: false });
+                    } catch (err) {
+                        // 主题已存在，询问是否覆盖
+                        if (String(err).includes('already exists')) {
+                            if (!confirm(window.i18n?.format_translate('settings.themeOverwriteConfirm') || 'Theme already exists. Overwrite?')) {
+                                return;
+                            }
+                            themeResult = await invoke('theme_import_vst', { filePath, force: true });
+                        } else {
+                            throw err;
+                        }
+                    }
+
+                    const themeName = themeResult.name;
+                    const displayName = themeResult.display_name;
+                    console.log('主题已导入:', themeName);
+
+                    // 动态添加到下拉框
+                    const container = document.getElementById('themeOptions');
+                    if (container) {
+                        let opt = container.querySelector(`.select-option[data-value="${themeName}"]`);
+                        if (opt) {
+                            opt.textContent = displayName;
+                        } else {
+                            opt = document.createElement('div');
+                            opt.className = 'select-option';
+                            opt.dataset.value = themeName;
+                            opt.textContent = displayName;
+                            container.appendChild(opt);
+                        }
+                    }
+
+                    // 自动选中并提示重启
+                    const themeSelected = document.getElementById('themeSelected');
+                    if (themeSelected) {
+                        themeSelected.textContent = displayName;
+                    }
+                    const allOptions = document.querySelectorAll('#themeOptions .select-option');
+                    allOptions.forEach(opt => opt.classList.remove('selected'));
+                    const newOpt = container?.querySelector(`.select-option[data-value="${themeName}"]`);
+                    if (newOpt) newOpt.classList.add('selected');
+
+                    await settings_save_all_local({ theme: themeName });
+                    const restartModal = document.getElementById('restartModal');
+                    if (restartModal) restartModal.classList.add('active');
+
+                    // 刷新已安装主题列表
+                    if (window.__TAURI__) {
+                        const { invoke } = window.__TAURI__.core;
+                        invoke('theme_list_user').then(themes => {
+                            settings_refresh_theme_list(themes);
+                        }).catch(() => {});
+                    }
+
+                    settings_show_dialog(
+                        window.i18n?.format_translate('settings.themeImportSuccess') || '主题导入成功，重启后生效。',
+                        '',
+                        'success'
+                    );
+                }
+            } catch (error) {
+                console.error('导入主题失败:', error);
+                settings_show_dialog(
+                    window.i18n?.format_translate('settings.themeImportFailed') || '主题导入失败',
+                    String(error),
+                    'error'
+                );
+            }
+        });
+    }
+
     if (btnReset && modalOverlay && window.__TAURI__) {
         btnReset.addEventListener('click', () => {
             const modalTitle = modalOverlay.querySelector('.modal-title');

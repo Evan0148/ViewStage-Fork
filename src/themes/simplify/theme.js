@@ -1,18 +1,25 @@
 const SimplifyTheme = {
   name: 'simplify',
   config: null,
-  
+
   fetch_base_path() {
     const parts = window.location.pathname.split('/').filter(p => p);
     const depth = Math.max(0, parts.length - 1);
     return '../'.repeat(depth);
   },
-  
+
   async load_theme(isSettingsPage = false) {
     const base = this.fetch_base_path();
-    const response = await fetch(`${base}themes/simplify/theme.json`);
-    this.config = await response.json();
-    
+    const [themeRes, configRes] = await Promise.all([
+      fetch(`${base}themes/simplify/theme.json`),
+      fetch(`${base}themes/simplify/config.json`)
+    ]);
+    const [themeJson, configJson] = await Promise.all([
+      themeRes.json(),
+      configRes.json()
+    ]);
+    this.config = { ...themeJson, ...configJson };
+
     if (isSettingsPage) {
       const link = document.createElement('link');
       link.rel = 'stylesheet';
@@ -25,21 +32,21 @@ const SimplifyTheme = {
       document.head.appendChild(link);
     }
   },
-  
+
   fetch_icon_path(iconName) {
     const actualName = this.config?.icons?.[iconName] || iconName;
     const base = this.fetch_base_path();
     return `${base}themes/simplify/icons/${actualName}.svg`;
   },
-  
+
   fetch_toolbar_text() {
     return this.config?.showToolbarText !== false;
   },
-  
+
   fetch_canvas_bg_color() {
     return this.config?.canvasBgColor || '#ffffff';
   },
-  
+
   fetch_no_camera_style() {
     return this.config?.noCameraMessage || {
       textColor: '#1a1a1a',

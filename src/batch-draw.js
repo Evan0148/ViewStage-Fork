@@ -43,6 +43,7 @@ class RealtimeBatchDrawManager {
         this._lastToX = null;
         this._lastToY = null;
         this._speedBuffer = [];
+        this._storedWidths = [];
     }
 
     batch_draw_fetch_ctx() {

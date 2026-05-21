@@ -12,8 +12,10 @@
 //! - 使用 image 库进行图像处理
 
 use tauri::{Manager, Emitter};
-use image::{DynamicImage, ImageBuffer, Rgba, RgbaImage, GenericImageView};
+use image::{DynamicImage, ImageBuffer, Rgba, RgbaImage};
 use base64::{Engine as _, engine::general_purpose};
+use zip::ZipArchive;
+use std::io::{Read, Write};
 
 mod image_processing;
 
@@ -302,6 +304,334 @@ fn dir_fetch_theme(app: tauri::AppHandle) -> Result<String, String> {
     }
     
     Ok(theme_dir.to_string_lossy().to_string())
+}
+
+#[derive(Serialize)]
+struct ThemeInfo {
+    name: String,
+    display_name: String,
+}
+
+/// 获取用户主题目录下所有已安装的主题信息
+#[tauri::command]
+fn theme_list_user(app: tauri::AppHandle) -> Result<Vec<ThemeInfo>, String> {
+    let config_dir = app.path().app_config_dir()
+        .map_err(|e| format!("Failed to get config dir: {}", e))?;
+    let theme_dir = config_dir.join("themes");
+
+    if !theme_dir.exists() {
+        return Ok(Vec::new());
+    }
+
+    let mut themes = Vec::new();
+    let entries = std::fs::read_dir(&theme_dir)
+        .map_err(|e| format!("Failed to read theme dir: {}", e))?;
+
+    for entry in entries {
+        let entry = entry.map_err(|e| format!("Failed to read entry: {}", e))?;
+        let path = entry.path();
+        if !path.is_dir() {
+            continue;
+        }
+
+        let dir_name = path.file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_default();
+
+        // 优先从 config.json 读取身份信息，回退到 theme.json
+        let identity_paths = [path.join("config.json"), path.join("theme.json")];
+        let mut found = false;
+
+        for identity_path in &identity_paths {
+            if identity_path.exists() {
+                let content = match std::fs::read_to_string(identity_path) {
+                    Ok(c) => c,
+                    Err(_) => continue,
+                };
+                let json: serde_json::Value = match serde_json::from_str(&content) {
+                    Ok(v) => v,
+                    Err(_) => continue,
+                };
+
+                let pkg = json["packageName"].as_str().filter(|s| !s.is_empty());
+                let disp = json["displayName"].as_str().filter(|s| !s.is_empty());
+                let theme_name = pkg.unwrap_or(&dir_name);
+
+                themes.push(ThemeInfo {
+                    name: theme_name.to_string(),
+                    display_name: disp.unwrap_or(theme_name).to_string(),
+                });
+                found = true;
+                break;
+            }
+        }
+
+        if !found {
+            // 没有身份文件，仍然使用目录名
+            themes.push(ThemeInfo {
+                name: dir_name.clone(),
+                display_name: dir_name,
+            });
+        }
+    }
+
+    themes.sort_by(|a, b| a.display_name.to_lowercase().cmp(&b.display_name.to_lowercase()));
+    Ok(themes)
+}
+
+/// 删除用户安装的主题
+#[tauri::command]
+fn theme_delete(app: tauri::AppHandle, name: String) -> Result<(), String> {
+    if name.is_empty() {
+        return Err("Theme name cannot be empty".to_string());
+    }
+
+    let config_dir = app.path().app_config_dir()
+        .map_err(|e| format!("Failed to get config dir: {}", e))?;
+    let theme_base = config_dir.join("themes");
+    let theme_dir = theme_base.join(&name);
+
+    // 确保目标目录在 themes/ 内（防止路径遍历）
+    if !theme_dir.starts_with(&theme_base) {
+        return Err("Invalid theme name".to_string());
+    }
+
+    if !theme_dir.exists() {
+        return Err(format!("Theme '{}' not found", name));
+    }
+
+    // 确保不是内置主题（内置主题不在 themes/ 目录下，此检查为安全兜底）
+    if !theme_dir.join("theme.json").exists() && !theme_dir.join("config.json").exists() {
+        return Err(format!("'{}' is not a valid user theme", name));
+    }
+
+    std::fs::remove_dir_all(&theme_dir)
+        .map_err(|e| format!("Failed to delete theme '{}': {}", name, e))?;
+
+    log::info!("Theme '{}' deleted", name);
+    Ok(())
+}
+
+/// 在 ZIP 中查找文件条目的索引（忽略路径前缀）
+fn zip_find_entry(archive: &mut ZipArchive<std::fs::File>, target: &str) -> Option<usize> {
+    for i in 0..archive.len() {
+        if let Ok(entry) = archive.by_index(i) {
+            let name = entry.name().replace('\\', "/");
+            if name.ends_with(target) && (name == target || name.ends_with(&format!("/{}", target))) {
+                return Some(i);
+            }
+        }
+    }
+    None
+}
+
+/// 从 ZIP 中读取文本文件内容（按文件名查找）
+fn zip_read_text(archive: &mut ZipArchive<std::fs::File>, target: &str) -> Result<String, String> {
+    let idx = zip_find_entry(archive, target)
+        .ok_or_else(|| format!("Missing {} in .vst file", target))?;
+    let mut entry = archive.by_index(idx)
+        .map_err(|e| format!("Failed to read {}: {}", target, e))?;
+    let mut content = String::new();
+    entry.read_to_string(&mut content)
+        .map_err(|e| format!("Failed to read {}: {}", target, e))?;
+    Ok(content)
+}
+
+/// 从 .vst 文件导入主题
+/// .vst 是一个重命名的 ZIP 压缩包，包含 theme.json, config.json, theme.css 等文件
+/// force=true 时允许覆盖已存在的主题
+#[tauri::command]
+fn theme_import_vst(app: tauri::AppHandle, file_path: String, force: Option<bool>) -> Result<ThemeInfo, String> {
+    let config_dir = app.path().app_config_dir()
+        .map_err(|e| format!("Failed to get config dir: {}", e))?;
+    let theme_base = config_dir.join("themes");
+
+    if !theme_base.exists() {
+        std::fs::create_dir_all(&theme_base)
+            .map_err(|e| format!("Failed to create theme dir: {}", e))?;
+    }
+
+    // 打开 .vst 文件（ZIP 格式）
+    let file = std::fs::File::open(&file_path)
+        .map_err(|e| format!("Failed to open file: {}", e))?;
+    let mut archive = ZipArchive::new(file)
+        .map_err(|e| format!("Invalid .vst file: {}", e))?;
+
+    // 检测 ZIP 中是否包含公共根目录
+    let common_prefix = {
+        let mut names = Vec::new();
+        for i in 0..archive.len() {
+            if let Ok(entry) = archive.by_index(i) {
+                if !entry.is_dir() {
+                    names.push(entry.name().replace('\\', "/").to_string());
+                }
+            }
+        }
+
+        if names.is_empty() {
+            return Err("Empty .vst file".to_string());
+        }
+
+        // 找公共前缀（所有路径都包含的顶层目录）
+        let first = names[0].clone();
+        let prefix = first.find('/').map(|i| &first[..=i]).unwrap_or("");
+        if !prefix.is_empty() && names.iter().all(|n| n.starts_with(prefix)) {
+            prefix.to_string()
+        } else {
+            String::new()
+        }
+    };
+
+    // 用灵活查找校验必需文件
+    if zip_find_entry(&mut archive, "theme.json").is_none() {
+        return Err("Missing theme.json in .vst file (visual config)".to_string());
+    }
+    if zip_find_entry(&mut archive, "config.json").is_none() {
+        return Err("Missing config.json in .vst file (identity)".to_string());
+    }
+    if zip_find_entry(&mut archive, "theme.css").is_none() {
+        return Err("Missing theme.css in .vst file".to_string());
+    }
+
+    // 读取并解析 config.json（身份信息）
+    let config_json_content = zip_read_text(&mut archive, "config.json")?;
+    let config_json: serde_json::Value = serde_json::from_str(&config_json_content)
+        .map_err(|e| format!("Invalid config.json: {}", e))?;
+
+    let _theme_name = config_json["name"]
+        .as_str()
+        .ok_or_else(|| "config.json: 'name' is required (string)".to_string())?;
+
+    let package_name = config_json["packageName"]
+        .as_str()
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| "config.json: 'packageName' is required (non-empty string)".to_string())?;
+
+    if !package_name.chars().all(|c| c.is_ascii_lowercase() || c == '.' || c == '_')
+        || package_name.starts_with('.')
+        || package_name.ends_with('.')
+        || !package_name.contains('.')
+    {
+        return Err("config.json: 'packageName' must be a reverse-domain name, e.g. com.example.mytheme".to_string());
+    }
+
+    let display_name = config_json["displayName"]
+        .as_str()
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| "config.json: 'displayName' is required (non-empty string)".to_string())?;
+
+    // 读取并解析 theme.json（视觉配置）
+    let theme_json_content = zip_read_text(&mut archive, "theme.json")?;
+    let theme_json: serde_json::Value = serde_json::from_str(&theme_json_content)
+        .map_err(|e| format!("Invalid theme.json: {}", e))?;
+
+    // 校验 theme.json 字段
+    if theme_json["showToolbarText"].as_bool().is_none() {
+        return Err("theme.json: 'showToolbarText' is required (bool)".to_string());
+    }
+
+    if theme_json["showAuroraEffect"].as_bool().is_none() {
+        return Err("theme.json: 'showAuroraEffect' is required (bool)".to_string());
+    }
+
+    {
+        let bg = theme_json["canvasBgColor"].as_str().filter(|s| !s.is_empty());
+        if bg.is_none() {
+            return Err("theme.json: 'canvasBgColor' is required (non-empty string)".to_string());
+        }
+    }
+
+    {
+        let no_cam = theme_json.get("noCameraMessage")
+            .and_then(|v| v.as_object())
+            .ok_or_else(|| "theme.json: 'noCameraMessage' is required (object)".to_string())?;
+
+        for key in &["textColor", "secondaryTextColor", "tertiaryTextColor", "textShadow"] {
+            if !no_cam.contains_key(*key) {
+                return Err(format!("theme.json: 'noCameraMessage.{}' is required", key));
+            }
+        }
+    }
+
+    // 校验 icons 字段并验证 SVG 文件存在
+    let icons = theme_json.get("icons")
+        .and_then(|v| v.as_object())
+        .ok_or_else(|| "theme.json: 'icons' is required (object)".to_string())?;
+
+    let required_icons = [
+        "menu", "minimize", "move", "pen", "eraser", "undo", "clear",
+        "camera", "camera-fill", "settings", "image", "file", "folder",
+        "close", "collapse", "addFile", "word", "pdf", "scan",
+        "app-settings", "doc-scan", "canvas", "source", "theme-icon", "about"
+    ];
+
+    for key in &required_icons {
+        if !icons.contains_key(*key) {
+            return Err(format!("theme.json: 'icons.{}' is required", key));
+        }
+    }
+
+    // 验证图标 SVG 文件存在（不强制，仅警告）
+    for (_key, val) in icons.iter() {
+        if let Some(icon_name) = val.as_str() {
+            let svg_path = format!("icons/{}.svg", icon_name);
+            if zip_find_entry(&mut archive, &svg_path).is_none() {
+                log::warn!("Icon file 'icons/{}.svg' referenced in theme.json but not found in .vst", icon_name);
+            }
+        }
+    }
+
+    // 检查是否已存在，根据 force 决定是否覆盖
+    let target_dir = theme_base.join(package_name);
+    if target_dir.exists() {
+        if force.unwrap_or(false) {
+            std::fs::remove_dir_all(&target_dir)
+                .map_err(|e| format!("Failed to remove existing theme '{}': {}", package_name, e))?;
+        } else {
+            return Err(format!("Theme '{}' already exists", package_name));
+        }
+    }
+
+    // 解压所有文件，去除公共前缀
+    let prefix_len = common_prefix.len();
+    for i in 0..archive.len() {
+        let mut entry = archive.by_index(i)
+            .map_err(|e| format!("Failed to read zip entry {}: {}", i, e))?;
+
+        if entry.is_dir() {
+            continue;
+        }
+
+        let entry_name = entry.name().replace('\\', "/");
+        let relative = if prefix_len > 0 && entry_name.starts_with(&common_prefix) {
+            entry_name[prefix_len..].to_string()
+        } else {
+            entry_name.clone()
+        };
+
+        let target_path = target_dir.join(&relative);
+
+        if let Some(parent) = target_path.parent() {
+            std::fs::create_dir_all(parent)
+                .map_err(|e| format!("Failed to create directory {:?}: {}", parent, e))?;
+        }
+
+        let mut buffer = Vec::new();
+        entry.read_to_end(&mut buffer)
+            .map_err(|e| format!("Failed to read entry '{}': {}", entry_name, e))?;
+
+        let mut out_file = std::fs::File::create(&target_path)
+            .map_err(|e| format!("Failed to create file {:?}: {}", target_path, e))?;
+        out_file.write_all(&buffer)
+            .map_err(|e| format!("Failed to write file {:?}: {}", target_path, e))?;
+    }
+
+    log::info!("Theme imported successfully: packageName='{}', displayName='{}'", package_name, display_name);
+
+    Ok(ThemeInfo {
+        name: package_name.to_string(),
+        display_name: display_name.to_string(),
+    })
 }
 
 // ==================== 图片保存 ====================
@@ -1126,8 +1456,6 @@ async fn app_restart_process(app: tauri::AppHandle) -> Result<(), String> {
     
     Ok(())
 }
-
-use std::io::Write;
 
 #[tauri::command]
 async fn update_download_file(
@@ -2381,6 +2709,9 @@ pub fn app_init_run() {
             dir_fetch_config, 
             dir_fetch_pictures_viewstage,
             dir_fetch_theme,
+            theme_list_user,
+            theme_delete,
+            theme_import_vst,
             image_update_rotation,
             image_save_file,
             stroke_format_compact,
