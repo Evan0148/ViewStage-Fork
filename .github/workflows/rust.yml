@@ -105,10 +105,11 @@ jobs:
             linux)          suffix="-linux" ;;
           esac
           if [ -n "$suffix" ]; then
-            find src-tauri/target/release/bundle -maxdepth 2 -type f | while IFS= read -r f; do
-              base="${f%.*}"
-              ext="${f##*.}"
-              mv "$f" "${base}${suffix}.${ext}"
+            for f in src-tauri/target/release/bundle/*/*; do
+              [ -f "$f" ] || continue
+              dir=$(dirname "$f")
+              name=$(basename "$f")
+              mv "$f" "$dir/${name%.*}${suffix}.${name##*.}"
             done
           fi
 
@@ -116,7 +117,7 @@ jobs:
         shell: bash
         run: |
           echo "=== Build artifacts (${{ matrix.label }}) ==="
-          find src-tauri/target/release/bundle -maxdepth 2 -type f -exec ls -lh {} \;
+          ls -lh src-tauri/target/release/bundle/*/*
 
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
