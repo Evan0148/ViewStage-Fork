@@ -1822,6 +1822,33 @@ fn device_detect_windows_version() -> (String, u32, String) {
         }
     }
 
+    #[cfg(target_os = "linux")]
+    {
+        let name = std::fs::read_to_string("/etc/os-release")
+            .ok()
+            .and_then(|content| {
+                for line in content.lines() {
+                    if line.starts_with("PRETTY_NAME=") {
+                        let val = line.trim_start_matches("PRETTY_NAME=");
+                        let trimmed = val.trim_matches('"').trim().to_string();
+                        return Some(trimmed);
+                    }
+                }
+                None
+            })
+            .unwrap_or_else(|| "Linux".to_string());
+
+        let kernel = std::fs::read_to_string("/proc/version")
+            .ok()
+            .and_then(|content| {
+                content.split_whitespace().nth(2).map(|s| s.to_string())
+            })
+            .unwrap_or_default();
+
+        let build: u32 = kernel.split('.').next().and_then(|s| s.parse().ok()).unwrap_or(0);
+        return (name, build, kernel);
+    }
+
     ("Unknown".to_string(), 0, String::new())
 }
 
@@ -1840,7 +1867,22 @@ fn device_detect_cpu() -> (String, usize, String) {
         }
     }
 
-    #[cfg(not(target_os = "windows"))]
+    #[cfg(target_os = "linux")]
+    {
+        cpu_name = std::fs::read_to_string("/proc/cpuinfo")
+            .ok()
+            .and_then(|content| {
+                for line in content.lines() {
+                    if line.starts_with("model name") {
+                        return line.split(':').nth(1).map(|s| s.trim().to_string());
+                    }
+                }
+                None
+            })
+            .unwrap_or_else(|| "Unknown".to_string());
+    }
+
+    #[cfg(not(any(target_os = "windows", target_os = "linux")))]
     {
         cpu_name = "Unknown".to_string();
     }
@@ -1882,6 +1924,55 @@ fn device_detect_gpu() -> (String, String, String, u64) {
         }
     }
 
+    #[cfg(target_os = "linux")]
+    {
+        if let Ok(output) = std::process::Command::new("lspci")
+            .args(["-mm"])
+            .output()
+        {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            for line in stdout.lines() {
+                if line.contains("VGA") || line.contains("3D") || line.contains("Display") {
+                    let parts: Vec<&str> = line.split('"').collect();
+                    if parts.len() >= 3 {
+                        let name = parts[1].trim().to_string();
+                        if !name.is_empty() {
+                            // Try to get VRAM from sysfs
+                            let vram = std::fs::read_to_string("/sys/class/drm/card0/device/mem_info_vram_total")
+                                .ok()
+                                .and_then(|s| s.trim().parse::<u64>().ok())
+                                .map(|b| b / (1024 * 1024))
+                                .unwrap_or(0);
+                            return (name, String::new(), String::new(), vram);
+                        }
+                    }
+                }
+            }
+        }
+
+        // Fallback: read from /sys/class/drm
+        if let Ok(entries) = std::fs::read_dir("/sys/class/drm") {
+            for entry in entries.flatten() {
+                let name = entry.file_name().to_string_lossy().to_string();
+                if name.starts_with("card") && !name.contains('-') {
+                    let device_path = entry.path().join("device");
+                    let gpu_name = std::fs::read_to_string(device_path.join("uevent"))
+                        .ok()
+                        .and_then(|c| {
+                            for l in c.lines() {
+                                if l.starts_with("DRIVER=") {
+                                    return l.split('=').nth(1).map(|s| s.to_string());
+                                }
+                            }
+                            None
+                        })
+                        .unwrap_or_else(|| "Unknown".to_string());
+                    return (gpu_name, String::new(), String::new(), 0);
+                }
+            }
+        }
+    }
+
     ("Unknown".to_string(), String::new(), String::new(), 0)
 }
 
@@ -1914,6 +2005,43 @@ fn device_detect_system() -> (u64, String) {
                 }
             }
         }
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        // Read total RAM from /proc/meminfo
+        let total_ram_mb = std::fs::read_to_string("/proc/meminfo")
+            .ok()
+            .and_then(|content| {
+                for line in content.lines() {
+                    if line.starts_with("MemTotal:") {
+                        let parts: Vec<&str> = line.split_whitespace().collect();
+                        if parts.len() >= 2 {
+                            return parts[1].parse::<u64>().ok().map(|kb| kb / 1024);
+                        }
+                    }
+                }
+                None
+            })
+            .unwrap_or(0);
+
+        // Detect system type from DMI chassis type
+        let system_type = std::fs::read_to_string("/sys/class/dmi/id/chassis_type")
+            .ok()
+            .and_then(|content| {
+                match content.trim() {
+                    "3" | "4" | "5" | "6" | "7" | "15" | "16" => Some("Desktop"),
+                    "8" | "9" | "10" | "11" | "12" => Some("Laptop"),
+                    "14" => Some("Notebook"),
+                    "17" | "19" | "29" | "30" => Some("Tablet"),
+                    "21" | "22" | "23" => Some("Server"),
+                    _ => None,
+                }
+            })
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| "Unknown".to_string());
+
+        return (total_ram_mb, system_type);
     }
 
     (0, "Unknown".to_string())
@@ -1972,7 +2100,47 @@ fn device_detect_disk() -> (u64, String) {
         return (disk_size / (1024 * 1024 * 1024), disk_type);
     }
 
-    #[cfg(not(target_os = "windows"))]
+    #[cfg(target_os = "linux")]
+    {
+        // Get total disk size for root filesystem using df
+        let disk_size_gb = std::process::Command::new("df")
+            .args(["-B1", "--output=size", "/"])
+            .output()
+            .ok()
+            .and_then(|output| {
+                if output.status.success() {
+                    let stdout = String::from_utf8_lossy(&output.stdout);
+                    stdout.lines().nth(1)
+                        .and_then(|line| line.trim().parse::<u64>().ok())
+                        .map(|bytes| bytes / (1024 * 1024 * 1024))
+                } else {
+                    None
+                }
+            })
+            .unwrap_or(0);
+
+        // Detect disk type (SSD/HDD) from rotational flag
+        let disk_type = std::fs::read_dir("/sys/block")
+            .ok()
+            .and_then(|entries| {
+                for entry in entries.flatten() {
+                    let name = entry.file_name().to_string_lossy().to_string();
+                    if name.starts_with("sd") || name.starts_with("nvme") || name.starts_with("vd") || name.starts_with("mmcblk") {
+                        let rotational_path = entry.path().join("queue").join("rotational");
+                        if let Ok(content) = std::fs::read_to_string(&rotational_path) {
+                            let val = content.trim();
+                            return Some(if val == "0" { "SSD".to_string() } else { "HDD".to_string() });
+                        }
+                    }
+                }
+                None
+            })
+            .unwrap_or_else(|| "Unknown".to_string());
+
+        return (disk_size_gb, disk_type);
+    }
+
+    #[cfg(not(any(target_os = "windows", target_os = "linux")))]
     { (0, "Unknown".to_string()) }
 }
 
@@ -1991,6 +2159,42 @@ fn device_detect_touchscreen() -> bool {
             if output.status.success() {
                 let stdout = String::from_utf8_lossy(&output.stdout).trim().to_lowercase();
                 return stdout == "true" || stdout == "True";
+            }
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        if let Ok(content) = std::fs::read_to_string("/proc/bus/input/devices") {
+            let low = content.to_lowercase();
+            if low.contains("touchscreen") || low.contains("touch screen") {
+                return true;
+            }
+        }
+        // Also check /dev/input for event devices with touchscreen in name
+        if let Ok(entries) = std::fs::read_dir("/dev/input") {
+            for entry in entries.flatten() {
+                let name = entry.file_name().to_string_lossy().to_lowercase();
+                if name.contains("touch") {
+                    return true;
+                }
+            }
+        }
+        // Check through sysfs
+        if let Ok(entries) = std::fs::read_dir("/sys/bus/input/devices") {
+            for entry in entries.flatten() {
+                let path = entry.path().join("capabilities");
+                let abs_path = path.join("abs");
+                if abs_path.exists() {
+                    if let Ok(entries2) = std::fs::read_dir(entry.path()) {
+                        for e2 in entries2.flatten() {
+                            let name = e2.file_name().to_string_lossy().to_lowercase();
+                            if name.contains("touch") {
+                                return true;
+                            }
+                        }
+                    }
+                }
             }
         }
     }
@@ -2097,6 +2301,40 @@ fn office_check_libreoffice(hkcu: &winreg::RegKey, hklm: &winreg::RegKey) -> boo
     false
 }
 
+#[cfg(target_os = "linux")]
+fn office_check_command_exists(name: &str) -> bool {
+    std::process::Command::new("which")
+        .arg(name)
+        .output()
+        .ok()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
+}
+
+#[cfg(target_os = "linux")]
+fn office_detect_linux() -> OfficeDetectionResult {
+    let has_libreoffice = office_check_command_exists("soffice") || office_check_command_exists("libreoffice");
+    let has_wps = office_check_command_exists("wps") || office_check_command_exists("wpp");
+    let has_word = office_check_command_exists("winword") || office_check_command_exists("WINWORD.EXE");
+
+    let recommended = if has_libreoffice {
+        OfficeSoftware::LibreOffice
+    } else if has_wps {
+        OfficeSoftware::WpsOffice
+    } else if has_word {
+        OfficeSoftware::MicrosoftWord
+    } else {
+        OfficeSoftware::None
+    };
+
+    OfficeDetectionResult {
+        has_word,
+        has_wps,
+        has_libreoffice,
+        recommended,
+    }
+}
+
 #[cfg(not(target_os = "windows"))]
 fn office_detect_windows() -> OfficeDetectionResult {
     OfficeDetectionResult {
@@ -2109,122 +2347,20 @@ fn office_detect_windows() -> OfficeDetectionResult {
 
 #[tauri::command]
 fn office_detect_all() -> OfficeDetectionResult {
-    office_detect_windows()
-}
-
-#[cfg(target_os = "windows")]
-#[tauri::command]
-async fn office_convert_docx_to_pdf_bytes(file_data: Vec<u8>, file_name: String, app: tauri::AppHandle) -> Result<String, String> {
-    use std::fs;
-    use std::io::Write;
-    
-    println!("收到文件数据: {} 字节", file_data.len());
-    println!("文件名: {}", file_name);
-    
-    if file_data.len() < 4 {
-        return Err("文件数据太小，可能已损坏".to_string());
-    }
-    
-    let header: Vec<String> = file_data.iter().take(16).map(|b| format!("{:02x}", b)).collect();
-    println!("文件头: {}", header.join(" "));
-    
-    if file_data[0] == 0x50 && file_data[1] == 0x4B {
-        println!("检测到 ZIP 格式 (docx)");
-    } else if file_data[0] == 0xD0 && file_data[1] == 0xCF {
-        println!("检测到 OLE 格式 (doc)");
-    } else {
-        println!("未知文件格式");
-    }
-    
-    let detection = office_detect_windows();
-    println!("推荐使用: {:?}", detection.recommended);
-    
-    let paths = AppPaths::new(&app)?;
-    fs::create_dir_all(&paths.cache_dir).map_err(|e| e.to_string())?;
-    
-    let folder_name = format!("document_{}", chrono::Local::now().format("%Y%m%d%H%M%S"));
-    let doc_cache_dir = paths.cache_dir.join(&folder_name);
-    fs::create_dir_all(&doc_cache_dir).map_err(|e| e.to_string())?;
-    
-    let temp_name = format!("temp_{}.docx", chrono::Local::now().format("%Y%m%d%H%M%S"));
-    let temp_docx_path = doc_cache_dir.join(&temp_name);
-    
+    #[cfg(target_os = "windows")]
     {
-        let mut file = fs::File::create(&temp_docx_path)
-            .map_err(|e| format!("创建临时文件失败: {}", e))?;
-        file.write_all(&file_data)
-            .map_err(|e| format!("写入临时文件失败: {}", e))?;
-        file.sync_all()
-            .map_err(|e| format!("同步文件失败: {}", e))?;
+        office_detect_windows()
     }
-    
-    let pdf_name = format!("{}.pdf", folder_name);
-    let pdf_path = doc_cache_dir.join(&pdf_name);
-    
-    if pdf_path.exists() {
-        fs::remove_file(&pdf_path).map_err(|e| e.to_string())?;
+    #[cfg(target_os = "linux")]
+    {
+        office_detect_linux()
     }
-    
-    let docx_path_str = temp_docx_path.to_string_lossy().to_string();
-    let pdf_path_str = pdf_path.to_string_lossy().to_string();
-    
-    println!("临时文件路径: {}", docx_path_str);
-    println!("输出 PDF 路径: {}", pdf_path_str);
-    
-    let result = match detection.recommended {
-        OfficeSoftware::MicrosoftWord => {
-            let r = office_convert_word(&docx_path_str, &pdf_path_str);
-            if r.is_err() && detection.has_wps {
-                println!("Word 转换失败，尝试 WPS...");
-                office_convert_wps(&docx_path_str, &pdf_path_str)
-            } else if r.is_err() && detection.has_libreoffice {
-                println!("Word 转换失败，尝试 LibreOffice...");
-                office_convert_libreoffice(&docx_path_str, &pdf_path_str, &doc_cache_dir)
-            } else {
-                r
-            }
-        }
-        OfficeSoftware::WpsOffice => {
-            let r = office_convert_wps(&docx_path_str, &pdf_path_str);
-            if r.is_err() && detection.has_word {
-                println!("WPS 转换失败，尝试 Word...");
-                office_convert_word(&docx_path_str, &pdf_path_str)
-            } else if r.is_err() && detection.has_libreoffice {
-                println!("WPS 转换失败，尝试 LibreOffice...");
-                office_convert_libreoffice(&docx_path_str, &pdf_path_str, &doc_cache_dir)
-            } else {
-                r
-            }
-        }
-        OfficeSoftware::LibreOffice => {
-            office_convert_libreoffice(&docx_path_str, &pdf_path_str, &doc_cache_dir)
-        }
-        OfficeSoftware::None => {
-            Err("未检测到可用的 Office 软件，请安装 Microsoft Word、WPS Office 或 LibreOffice".to_string())
-        }
-    };
-    
-    if let Err(e) = fs::remove_file(&temp_docx_path) {
-        println!("清理临时文件失败: {}", e);
-    }
-    
-    result?;
-    
-    for _ in 0..10 {
-        if pdf_path.exists() {
-            break;
-        }
-        std::thread::sleep(std::time::Duration::from_millis(100));
-    }
-    
-    if pdf_path.exists() {
-        Ok(pdf_path_str)
-    } else {
-        Err("PDF 文件生成失败".to_string())
+    #[cfg(not(any(target_os = "windows", target_os = "linux")))]
+    {
+        office_detect_windows()
     }
 }
 
-#[cfg(target_os = "windows")]
 fn office_convert_libreoffice(docx_path: &str, _pdf_path: &str, cache_dir: &std::path::Path) -> Result<(), String> {
     use std::process::Command;
     let output_dir = cache_dir.to_str()
@@ -2237,53 +2373,190 @@ fn office_convert_libreoffice(docx_path: &str, _pdf_path: &str, cache_dir: &std:
         .map_err(|e| format!("LibreOffice 转换失败: {}", e))
 }
 
-#[cfg(target_os = "windows")]
 #[tauri::command]
-async fn office_convert_docx_to_pdf(docx_path: String, app: tauri::AppHandle) -> Result<String, String> {
-    use std::process::Command;
+async fn office_convert_docx_to_pdf_bytes(file_data: Vec<u8>, file_name: String, app: tauri::AppHandle) -> Result<String, String> {
     use std::fs;
-    
-    let detection = office_detect_windows();
-    
-    let docx = std::path::Path::new(&docx_path);
-    let docx_absolute = std::fs::canonicalize(docx)
-        .map_err(|e| format!("无法获取文件绝对路径: {}", e))?;
-    
-    if !docx_absolute.exists() {
-        return Err(format!("文件不存在: {}", docx_absolute.display()));
+    use std::io::Write;
+
+    println!("收到文件数据: {} 字节", file_data.len());
+    println!("文件名: {}", file_name);
+
+    if file_data.len() < 4 {
+        return Err("文件数据太小，可能已损坏".to_string());
     }
-    
-    println!("转换文件: {}", docx_absolute.display());
-    
+
+    let header: Vec<String> = file_data.iter().take(16).map(|b| format!("{:02x}", b)).collect();
+    println!("文件头: {}", header.join(" "));
+
+    if file_data[0] == 0x50 && file_data[1] == 0x4B {
+        println!("检测到 ZIP 格式 (docx)");
+    } else if file_data[0] == 0xD0 && file_data[1] == 0xCF {
+        println!("检测到 OLE 格式 (doc)");
+    } else {
+        println!("未知文件格式");
+    }
+
+    let detection = office_detect_all();
+    println!("推荐使用: {:?}", detection.recommended);
+
     let paths = AppPaths::new(&app)?;
     fs::create_dir_all(&paths.cache_dir).map_err(|e| e.to_string())?;
-    
+
     let folder_name = format!("document_{}", chrono::Local::now().format("%Y%m%d%H%M%S"));
     let doc_cache_dir = paths.cache_dir.join(&folder_name);
     fs::create_dir_all(&doc_cache_dir).map_err(|e| e.to_string())?;
-    
+
+    let temp_name = format!("temp_{}.docx", chrono::Local::now().format("%Y%m%d%H%M%S"));
+    let temp_docx_path = doc_cache_dir.join(&temp_name);
+
+    {
+        let mut file = fs::File::create(&temp_docx_path)
+            .map_err(|e| format!("创建临时文件失败: {}", e))?;
+        file.write_all(&file_data)
+            .map_err(|e| format!("写入临时文件失败: {}", e))?;
+        file.sync_all()
+            .map_err(|e| format!("同步文件失败: {}", e))?;
+    }
+
     let pdf_name = format!("{}.pdf", folder_name);
     let pdf_path = doc_cache_dir.join(&pdf_name);
-    
+
     if pdf_path.exists() {
         fs::remove_file(&pdf_path).map_err(|e| e.to_string())?;
     }
-    
-    let docx_path_str = docx_absolute.to_string_lossy().to_string();
+
+    let docx_path_str = temp_docx_path.to_string_lossy().to_string();
     let pdf_path_str = pdf_path.to_string_lossy().to_string();
-    
-    match detection.recommended {
+
+    println!("临时文件路径: {}", docx_path_str);
+    println!("输出 PDF 路径: {}", pdf_path_str);
+
+    let result = match detection.recommended {
         OfficeSoftware::MicrosoftWord => {
-            office_convert_word(&docx_path_str, &pdf_path_str)?;
+            #[cfg(target_os = "windows")]
+            {
+                let r = office_convert_word(&docx_path_str, &pdf_path_str);
+                if r.is_err() && detection.has_wps {
+                    println!("Word 转换失败，尝试 WPS...");
+                    office_convert_wps(&docx_path_str, &pdf_path_str)
+                } else if r.is_err() && detection.has_libreoffice {
+                    println!("Word 转换失败，尝试 LibreOffice...");
+                    office_convert_libreoffice(&docx_path_str, &pdf_path_str, &doc_cache_dir)
+                } else {
+                    r
+                }
+            }
+            #[cfg(not(target_os = "windows"))]
+            {
+                Err("Microsoft Word 不支持当前操作系统".to_string())
+            }
         }
         OfficeSoftware::WpsOffice => {
-            office_convert_wps(&docx_path_str, &pdf_path_str)?;
+            #[cfg(target_os = "windows")]
+            {
+                let r = office_convert_wps(&docx_path_str, &pdf_path_str);
+                if r.is_err() && detection.has_word {
+                    println!("WPS 转换失败，尝试 Word...");
+                    office_convert_word(&docx_path_str, &pdf_path_str)
+                } else if r.is_err() && detection.has_libreoffice {
+                    println!("WPS 转换失败，尝试 LibreOffice...");
+                    office_convert_libreoffice(&docx_path_str, &pdf_path_str, &doc_cache_dir)
+                } else {
+                    r
+                }
+            }
+            #[cfg(not(target_os = "windows"))]
+            {
+                Err("WPS Office 不支持当前操作系统".to_string())
+            }
+        }
+        OfficeSoftware::LibreOffice => {
+            office_convert_libreoffice(&docx_path_str, &pdf_path_str, &doc_cache_dir)
+        }
+        OfficeSoftware::None => {
+            Err("未检测到可用的 Office 软件，请安装 Microsoft Word、WPS Office 或 LibreOffice".to_string())
+        }
+    };
+
+    if let Err(e) = fs::remove_file(&temp_docx_path) {
+        println!("清理临时文件失败: {}", e);
+    }
+
+    result?;
+
+    for _ in 0..10 {
+        if pdf_path.exists() {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+
+    if pdf_path.exists() {
+        Ok(pdf_path_str)
+    } else {
+        Err("PDF 文件生成失败".to_string())
+    }
+}
+
+#[tauri::command]
+async fn office_convert_docx_to_pdf(docx_path: String, app: tauri::AppHandle) -> Result<String, String> {
+    use std::fs;
+
+    let detection = office_detect_all();
+
+    let docx = std::path::Path::new(&docx_path);
+    let docx_absolute = std::fs::canonicalize(docx)
+        .map_err(|e| format!("无法获取文件绝对路径: {}", e))?;
+
+    if !docx_absolute.exists() {
+        return Err(format!("文件不存在: {}", docx_absolute.display()));
+    }
+
+    println!("转换文件: {}", docx_absolute.display());
+
+    let paths = AppPaths::new(&app)?;
+    fs::create_dir_all(&paths.cache_dir).map_err(|e| e.to_string())?;
+
+    let folder_name = format!("document_{}", chrono::Local::now().format("%Y%m%d%H%M%S"));
+    let doc_cache_dir = paths.cache_dir.join(&folder_name);
+    fs::create_dir_all(&doc_cache_dir).map_err(|e| e.to_string())?;
+
+    let pdf_name = format!("{}.pdf", folder_name);
+    let pdf_path = doc_cache_dir.join(&pdf_name);
+
+    if pdf_path.exists() {
+        fs::remove_file(&pdf_path).map_err(|e| e.to_string())?;
+    }
+
+    let docx_path_str = docx_absolute.to_string_lossy().to_string();
+    let pdf_path_str = pdf_path.to_string_lossy().to_string();
+
+    match detection.recommended {
+        OfficeSoftware::MicrosoftWord => {
+            #[cfg(target_os = "windows")]
+            {
+                office_convert_word(&docx_path_str, &pdf_path_str)?;
+            }
+            #[cfg(not(target_os = "windows"))]
+            {
+                return Err("Microsoft Word 不支持当前操作系统".to_string());
+            }
+        }
+        OfficeSoftware::WpsOffice => {
+            #[cfg(target_os = "windows")]
+            {
+                office_convert_wps(&docx_path_str, &pdf_path_str)?;
+            }
+            #[cfg(not(target_os = "windows"))]
+            {
+                return Err("WPS Office 不支持当前操作系统".to_string());
+            }
         }
         OfficeSoftware::LibreOffice => {
             let output_dir = doc_cache_dir.to_str()
                 .ok_or("Invalid cache directory path")?
                 .to_string();
-            Command::new("soffice")
+            std::process::Command::new("soffice")
                 .args(["--headless", "--convert-to", "pdf", "--outdir", &output_dir, &docx_path_str])
                 .output()
                 .map_err(|e| format!("LibreOffice 转换失败: {}", e))?;
@@ -2292,9 +2565,9 @@ async fn office_convert_docx_to_pdf(docx_path: String, app: tauri::AppHandle) ->
             return Err("未检测到可用的 Office 软件，请安装 Microsoft Word、WPS Office 或 LibreOffice".to_string());
         }
     }
-    
+
     std::thread::sleep(std::time::Duration::from_millis(500));
-    
+
     if pdf_path.exists() {
         Ok(pdf_path_str)
     } else {
@@ -2403,15 +2676,111 @@ fn office_convert_wps(docx_path: &str, pdf_path: &str) -> Result<(), String> {
     }
 }
 
-#[cfg(not(target_os = "windows"))]
 #[tauri::command]
-async fn office_convert_docx_to_pdf(_docx_path: String, _app: tauri::AppHandle) -> Result<String, String> {
-    Err("此功能仅支持 Windows 系统".to_string())
+async fn filetype_set_icons(app: tauri::AppHandle) -> Result<(), String> {
+    #[cfg(target_os = "windows")]
+    {
+        return filetype_set_icons_windows(app).await;
+    }
+    #[cfg(target_os = "linux")]
+    {
+        return filetype_set_icons_linux(&app);
+    }
+    #[cfg(not(any(target_os = "windows", target_os = "linux")))]
+    Err("此功能仅支持 Windows 和 Linux 系统".to_string())
+}
+
+#[cfg(target_os = "linux")]
+fn filetype_set_icons_linux(app: &tauri::AppHandle) -> Result<(), String> {
+    use std::process::Command;
+
+    let resource_dir = app.path().resource_dir()
+        .map_err(|e| format!("获取资源目录失败: {}", e))?;
+
+    let data_home = std::env::var("XDG_DATA_HOME")
+        .unwrap_or_else(|_| {
+            let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
+            format!("{}/.local/share", home)
+        });
+
+    let applications_dir = std::path::Path::new(&data_home).join("applications");
+    let mime_packages_dir = std::path::Path::new(&data_home).join("mime").join("packages");
+    let icons_dir = std::path::Path::new(&data_home).join("icons").join("hicolor").join("scalable").join("apps");
+
+    std::fs::create_dir_all(&applications_dir).map_err(|e| e.to_string())?;
+    std::fs::create_dir_all(&mime_packages_dir).map_err(|e| e.to_string())?;
+    std::fs::create_dir_all(&icons_dir).map_err(|e| e.to_string())?;
+
+    let exe_path = std::env::current_exe().map_err(|e| e.to_string())?;
+
+    // Copy icon files if available
+    for (icon_name, ext) in &[("viewstage", "png"), ("viewstage", "svg")] {
+        let src = resource_dir.join("icons").join(format!("{}.{}", icon_name, ext));
+        if src.exists() {
+            let dst = icons_dir.join(format!("{}.{}", icon_name, ext));
+            let _ = std::fs::copy(&src, &dst);
+        }
+    }
+
+    // Create .desktop file
+    let desktop_entry = format!(
+        "[Desktop Entry]\n\
+         Type=Application\n\
+         Name=ViewStage\n\
+         Exec={} %f\n\
+         MimeType=application/pdf;application/vnd.openxmlformats-officedocument.wordprocessingml.document;application/msword;\n\
+         Icon=viewstage\n\
+         Categories=Office;Viewer;\n\
+         NoDisplay=true\n",
+        exe_path.display()
+    );
+    std::fs::write(applications_dir.join("viewstage.desktop"), &desktop_entry)
+        .map_err(|e| format!("写入 .desktop 文件失败: {}", e))?;
+
+    // Create MIME XML
+    let mime_xml = r#"<?xml version="1.0"?>
+<mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info">
+  <mime-type type="application/pdf">
+    <comment>PDF Document</comment>
+    <glob pattern="*.pdf"/>
+  </mime-type>
+  <mime-type type="application/vnd.openxmlformats-officedocument.wordprocessingml.document">
+    <comment>Word Document</comment>
+    <glob pattern="*.docx"/>
+  </mime-type>
+  <mime-type type="application/msword">
+    <comment>Word 97-2003 Document</comment>
+    <glob pattern="*.doc"/>
+  </mime-type>
+</mime-info>"#;
+    std::fs::write(mime_packages_dir.join("viewstage-mime.xml"), mime_xml)
+        .map_err(|e| format!("写入 MIME XML 文件失败: {}", e))?;
+
+    // Set as default for PDF using xdg-mime
+    let _ = Command::new("xdg-mime")
+        .args(["default", "viewstage.desktop", "application/pdf"])
+        .output();
+    let _ = Command::new("xdg-mime")
+        .args(["default", "viewstage.desktop", "application/vnd.openxmlformats-officedocument.wordprocessingml.document"])
+        .output();
+    let _ = Command::new("xdg-mime")
+        .args(["default", "viewstage.desktop", "application/msword"])
+        .output();
+
+    // Update desktop and MIME databases
+    let _ = Command::new("update-desktop-database")
+        .arg(&applications_dir)
+        .output();
+    let _ = Command::new("update-mime-database")
+        .arg(std::path::Path::new(&data_home).join("mime"))
+        .output();
+
+    log::info!("Linux 文件关联设置完成");
+    Ok(())
 }
 
 #[cfg(target_os = "windows")]
-#[tauri::command]
-async fn filetype_set_icons(app: tauri::AppHandle) -> Result<(), String> {
+async fn filetype_set_icons_windows(app: tauri::AppHandle) -> Result<(), String> {
     use std::process::Command;
     use winreg::RegKey;
     use winreg::enums::*;
@@ -2568,15 +2937,58 @@ async fn filetype_set_icons(app: tauri::AppHandle) -> Result<(), String> {
     }
 }
 
-#[cfg(not(target_os = "windows"))]
 #[tauri::command]
-async fn set_file_type_icons() -> Result<(), String> {
-    Err("此功能仅支持 Windows 系统".to_string())
+async fn filetype_delete_icons() -> Result<(), String> {
+    #[cfg(target_os = "windows")]
+    {
+        return filetype_delete_icons_windows().await;
+    }
+    #[cfg(target_os = "linux")]
+    {
+        return filetype_delete_icons_linux();
+    }
+    #[cfg(not(any(target_os = "windows", target_os = "linux")))]
+    Err("此功能仅支持 Windows 和 Linux 系统".to_string())
+}
+
+#[cfg(target_os = "linux")]
+fn filetype_delete_icons_linux() -> Result<(), String> {
+    let data_home = std::env::var("XDG_DATA_HOME")
+        .unwrap_or_else(|_| {
+            let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
+            format!("{}/.local/share", home)
+        });
+
+    let applications_dir = std::path::Path::new(&data_home).join("applications");
+    let mime_packages_dir = std::path::Path::new(&data_home).join("mime").join("packages");
+    let mime_dir = std::path::Path::new(&data_home).join("mime");
+
+    // Remove desktop file
+    let desktop_file = applications_dir.join("viewstage.desktop");
+    if desktop_file.exists() {
+        std::fs::remove_file(&desktop_file).map_err(|e| format!("删除 .desktop 文件失败: {}", e))?;
+    }
+
+    // Remove MIME XML
+    let mime_xml = mime_packages_dir.join("viewstage-mime.xml");
+    if mime_xml.exists() {
+        std::fs::remove_file(&mime_xml).map_err(|e| format!("删除 MIME XML 文件失败: {}", e))?;
+    }
+
+    // Update databases
+    let _ = std::process::Command::new("update-desktop-database")
+        .arg(&applications_dir)
+        .output();
+    let _ = std::process::Command::new("update-mime-database")
+        .arg(&mime_dir)
+        .output();
+
+    log::info!("Linux 文件关联移除完成");
+    Ok(())
 }
 
 #[cfg(target_os = "windows")]
-#[tauri::command]
-async fn filetype_delete_icons() -> Result<(), String> {
+async fn filetype_delete_icons_windows() -> Result<(), String> {
     use std::process::Command;
     use winreg::RegKey;
     use winreg::enums::*;
@@ -2660,12 +3072,6 @@ async fn filetype_delete_icons() -> Result<(), String> {
     
     log::info!("文件关联移除完成");
     Ok(())
-}
-
-#[cfg(not(target_os = "windows"))]
-#[tauri::command]
-async fn filetype_delete_icons() -> Result<(), String> {
-    Err("此功能仅支持 Windows 系统".to_string())
 }
 
 
