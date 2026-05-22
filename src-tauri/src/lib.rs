@@ -1849,7 +1849,10 @@ fn device_detect_windows_version() -> (String, u32, String) {
         return (name, build, kernel);
     }
 
-    ("Unknown".to_string(), 0, String::new())
+    #[cfg(not(target_os = "linux"))]
+    {
+        ("Unknown".to_string(), 0, String::new())
+    }
 }
 
 fn device_detect_cpu() -> (String, usize, String) {
@@ -2044,7 +2047,10 @@ fn device_detect_system() -> (u64, String) {
         return (total_ram_mb, system_type);
     }
 
-    (0, "Unknown".to_string())
+    #[cfg(not(target_os = "linux"))]
+    {
+        (0, "Unknown".to_string())
+    }
 }
 
 fn device_detect_disk() -> (u64, String) {
@@ -2357,7 +2363,12 @@ fn office_detect_all() -> OfficeDetectionResult {
     }
     #[cfg(not(any(target_os = "windows", target_os = "linux")))]
     {
-        office_detect_windows()
+        OfficeDetectionResult {
+            has_word: false,
+            has_wps: false,
+            has_libreoffice: false,
+            recommended: OfficeSoftware::None,
+        }
     }
 }
 

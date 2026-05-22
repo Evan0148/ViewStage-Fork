@@ -527,6 +527,16 @@ button {
 
 .link-icon {
     font-size: 14px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 20px;
+    height: 20px;
+}
+
+.link-icon img {
+    width: 14px;
+    height: 14px;
 }
 
 .about-copyright {
