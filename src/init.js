@@ -162,6 +162,8 @@ async function settings_load_camera_config() {
                 state.cameraRotation = settings.defaultRotation;
             }
 
+            // Do not load brightness/contrast from saved settings — session-only controls
+
             if (settings.width && settings.height) {
                 DRAW_CONFIG.renderW = settings.width;
                 DRAW_CONFIG.renderH = settings.height;

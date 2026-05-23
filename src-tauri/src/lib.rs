@@ -11,7 +11,7 @@ mod image_processing;
 
 use image_processing::{
     image_load_base64, image_fetch_base64_data,
-    image_update_rotation,
+    image_update_rotation, image_update_adjustments,
 };
 
 #[cfg(target_os = "windows")]
@@ -3406,6 +3406,7 @@ pub fn app_init_run() {
             theme_import_vst,
             theme_get_preview,
             image_update_rotation,
+            image_update_adjustments,
             image_save_file,
             stroke_format_compact,
             window_show_settings,

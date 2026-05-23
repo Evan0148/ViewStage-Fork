@@ -102,3 +102,48 @@ pub fn image_update_rotation(image_data: String, direction: String) -> Result<St
     
     Ok(result)
 }
+
+/// Tauri IPC: apply brightness and contrast adjustments to an image
+/// brightness: integer -100..100, contrast: float multiplier (e.g. 1.0 normal)
+#[tauri::command]
+pub fn image_update_adjustments(image_data: String, brightness: i32, contrast: f32) -> Result<String, String> {
+    // No need to import GenericImageView/Pixel here
+    let img = image_load_base64(&image_data)?;
+
+    let (w, h) = (img.width(), img.height());
+    let mut rgba = img.to_rgba8();
+
+    // Map brightness (-100..100) to additive value (-255..255)
+    let add = (brightness as f32) * 255.0 / 100.0;
+    let c = contrast;
+
+    for y in 0..h {
+        for x in 0..w {
+            let channels = rgba.get_pixel(x, y).0;
+            let r = channels[0] as f32 / 255.0;
+            let g = channels[1] as f32 / 255.0;
+            let b = channels[2] as f32 / 255.0;
+            let a = channels[3];
+
+            // Apply contrast then brightness (brightness applied as additive after scaling)
+            let r2 = ((r - 0.5) * c + 0.5) * 255.0 + add;
+            let g2 = ((g - 0.5) * c + 0.5) * 255.0 + add;
+            let b2 = ((b - 0.5) * c + 0.5) * 255.0 + add;
+
+            let nr = r2.round().clamp(0.0, 255.0) as u8;
+            let ng = g2.round().clamp(0.0, 255.0) as u8;
+            let nb = b2.round().clamp(0.0, 255.0) as u8;
+
+            rgba.put_pixel(x, y, image::Rgba([nr, ng, nb, a]));
+        }
+    }
+
+    let dyn_img = image::DynamicImage::ImageRgba8(rgba);
+    let mut buffer: Vec<u8> = Vec::new();
+    dyn_img
+        .write_to(&mut std::io::Cursor::new(&mut buffer), image::ImageFormat::Png)
+        .map_err(|e| format!("Failed to encode adjusted image: {}", e))?;
+
+    let result = format!("data:image/png;base64,{}", general_purpose::STANDARD.encode(&buffer));
+    Ok(result)
+}

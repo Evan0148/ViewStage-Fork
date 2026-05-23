@@ -500,6 +500,8 @@ let state = {
     isMirrored: false,
     cameraAnimationId: null,
     cameraRotation: 0,
+    camera_brightness: 10,
+    camera_contrast: 1.4,
     useFrontCamera: false,
     defaultCameraId: null,
     cameraWidth: 1280,
@@ -1480,6 +1482,69 @@ function main_setup_settings_events() {
     
     document.getElementById('btnRotateRight')?.addEventListener('click', () => {
         main_update_image_rotation('right');
+    });
+
+    // 亮度 / 对比度 / 黑白 控件
+    const brightnessEl = document.getElementById('cameraBrightness');
+    const brightnessVal = document.getElementById('cameraBrightnessValue');
+    const contrastEl = document.getElementById('cameraContrast');
+    const contrastVal = document.getElementById('cameraContrastValue');
+    const grayscaleGroup = document.getElementById('cameraGrayscaleGroup');
+
+    // brightness / contrast / grayscale input: only apply to current session (do not persist)
+    brightnessEl?.addEventListener('input', (e) => {
+        const v = parseInt(e.target.value, 10);
+        state.camera_brightness = v;
+        if (brightnessVal) brightnessVal.textContent = String(v);
+        main_apply_camera_filters();
+    });
+
+    contrastEl?.addEventListener('input', (e) => {
+        const v = parseInt(e.target.value, 10) / 100.0;
+        state.camera_contrast = v;
+        if (contrastVal) contrastVal.textContent = v.toFixed(2);
+        main_apply_camera_filters();
+    });
+
+    grayscaleGroup?.addEventListener('click', (e) => {
+        const btn = e.target.closest('.option-btn');
+        if (!btn) return;
+        const value = btn.dataset.value;
+        grayscaleGroup.querySelectorAll('.option-btn').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        grayscaleGroup.dataset.active = value;
+        state.camera_grayscale = value === 'on' ? 1 : 0;
+        main_apply_camera_filters();
+    });
+
+    // reset sliders
+    document.getElementById('btnResetSliders')?.addEventListener('click', () => {
+        const brightnessInput = document.getElementById('cameraBrightness');
+        const brightnessVal = document.getElementById('cameraBrightnessValue');
+        const contrastInput = document.getElementById('cameraContrast');
+        const contrastVal = document.getElementById('cameraContrastValue');
+        const grayscaleGroup = document.getElementById('cameraGrayscaleGroup');
+
+        if (brightnessInput) {
+            brightnessInput.value = '10';
+            state.camera_brightness = 10;
+            if (brightnessVal) brightnessVal.textContent = '10';
+        }
+        if (contrastInput) {
+            contrastInput.value = '140';
+            state.camera_contrast = 1.4;
+            if (contrastVal) contrastVal.textContent = '1.40';
+        }
+        if (grayscaleGroup) {
+            grayscaleGroup.querySelectorAll('.option-btn').forEach(b => b.classList.remove('active'));
+            const offBtn = grayscaleGroup.querySelector('.option-btn[data-value="off"]');
+            if (offBtn) {
+                offBtn.classList.add('active');
+                grayscaleGroup.dataset.active = 'off';
+            }
+            state.camera_grayscale = 0;
+        }
+        main_apply_camera_filters();
     });
 }
 
@@ -3655,10 +3720,34 @@ function main_show_settings_panel() {
     panel.style.left = `${left}px`;
     panel.style.top = `${top}px`;
     panel.classList.add('visible');
+
+    main_update_settings_controls_state();
 }
 
 function main_hide_settings_panel() {
     dom.settingsPanel.classList.remove('visible');
+}
+
+function main_update_settings_controls_state() {
+    const brightnessRow = dom.settingsPanel?.querySelector('.settings-slider-row:has(#cameraBrightness)');
+    const contrastRow = dom.settingsPanel?.querySelector('.settings-slider-row:has(#cameraContrast)');
+    const brightnessInput = document.getElementById('cameraBrightness');
+    const contrastInput = document.getElementById('cameraContrast');
+
+    const disabled = !state.isCameraOpen;
+
+    if (brightnessRow) {
+        brightnessRow.classList.toggle('settings-controls-disabled', disabled);
+    }
+    if (contrastRow) {
+        contrastRow.classList.toggle('settings-controls-disabled', disabled);
+    }
+    if (brightnessInput) {
+        brightnessInput.disabled = disabled;
+    }
+    if (contrastInput) {
+        contrastInput.disabled = disabled;
+    }
 }
 
 function main_show_settings_window() {
@@ -4760,6 +4849,8 @@ async function main_update_camera_state(open, options = {}) {
             
             state.isCameraOpen = true;
             state.cameraAvailable = true;
+
+            main_update_settings_controls_state();
             
             await main_update_source('cam');
             
@@ -4804,8 +4895,8 @@ async function main_update_camera_state(open, options = {}) {
         
         state.isCameraOpen = false;
         state.isCameraReady = false;
-        
-        // 隐藏 video 元素
+
+        main_update_settings_controls_state();
         if (dom.cameraVideo) {
             dom.cameraVideo.style.display = 'none';
             dom.cameraVideo.srcObject = null;
@@ -4863,6 +4954,8 @@ async function main_init_without_camera(message) {
         state.isCameraReady = false;
         state.cameraAvailable = false;
         state.cameraStream = null;
+
+        main_update_settings_controls_state();
         
         if (dom.cameraVideo) {
             dom.cameraVideo.style.display = 'none';
@@ -5066,15 +5159,36 @@ function main_update_camera_video_style() {
     
     const transformStr = transforms.join(' ');
     
-    video.style.cssText = `
-        width: ${drawW}px;
-        height: ${drawH}px;
-        left: ${offsetX}px;
-        top: ${offsetY}px;
-        transform: ${transformStr};
-        transform-origin: center center;
-        display: block;
-    `;
+    // Apply transform and display
+    video.style.width = `${drawW}px`;
+    video.style.height = `${drawH}px`;
+    video.style.left = `${offsetX}px`;
+    video.style.top = `${offsetY}px`;
+    video.style.transform = transformStr;
+    video.style.transformOrigin = 'center center';
+    video.style.display = 'block';
+
+    // Apply brightness / contrast via CSS filter for preview
+    main_apply_camera_filters();
+}
+
+function main_apply_camera_filters() {
+    const video = dom.cameraVideo;
+    const img = dom.imageElement;
+    if (!video && !img) return;
+
+    const b = state.camera_brightness ?? 0; // -100 .. 100 (linear adjust)
+    const c = state.camera_contrast ?? 1.0; // multiplier
+    const g = state.camera_grayscale ?? 0; // 0 or 1
+
+    // CSS filter: brightness() expects a multiplier where 1 is normal. We'll map brightness value to a multiplier.
+    const brightnessMultiplier = Math.max(0, 1 + b / 100);
+    const contrastMultiplier = Math.max(0, c);
+    const grayscaleFraction = Math.max(0, Math.min(1, g));
+
+    const filterStr = `brightness(${brightnessMultiplier}) contrast(${contrastMultiplier}) grayscale(${grayscaleFraction})`;
+    if (video) video.style.filter = filterStr;
+    if (img) img.style.filter = filterStr;
 }
 
 function main_start_camera_preview() {
@@ -5161,9 +5275,22 @@ async function main_save_camera_image() {
         try {
             const { invoke } = window.__TAURI__.core;
             const dataUrl = await main_format_blob_to_data_url(blob);
-            
+
+            // Try to apply server-side adjustments (brightness/contrast) if available
+            let adjustedDataUrl = dataUrl;
+            try {
+                adjustedDataUrl = await invoke('image_update_adjustments', {
+                    imageData: dataUrl,
+                    brightness: state.camera_brightness,
+                    contrast: state.camera_contrast
+                });
+            } catch (e) {
+                // If the backend command doesn't exist or fails, continue with original dataUrl
+                console.warn('image_update_adjustments failed, falling back to original image data', e);
+            }
+
             const result = await invoke('image_save_file', { 
-                imageData: dataUrl,
+                imageData: adjustedDataUrl,
                 prefix: 'photo'
             });
             console.log('图片已保存:', result.path);

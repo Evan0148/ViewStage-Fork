@@ -208,7 +208,7 @@
     "copyright": "© {year} ViewStage. All rights reserved."
   },
   "rotation": {
-    "rotateLeft": "向左旋轉",
+    "rotateLeft": "旋轉",
     "rotateRight": "向右旋轉"
   },
   "camera": {

@@ -211,7 +211,7 @@
     "copyright": "© {year} ViewStage. All rights reserved."
   },
   "rotation": {
-    "rotateLeft": "Rotate Left",
+    "rotateLeft": "Rotate",
     "rotateRight": "Rotate Right"
   },
   "camera": {

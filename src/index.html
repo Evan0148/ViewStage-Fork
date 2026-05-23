@@ -83,13 +83,39 @@
             
             <div class="settings-panel" id="settingsPanel">
                 <div class="settings-row">
-                    <span class="settings-label" data-i18n="rotation.rotateLeft">旋转：</span>
-                    <button class="settings-btn" id="btnRotateLeft" data-i18n-title="rotation.rotateLeft">
-                        ↺
-                    </button>
-                    <button class="settings-btn" id="btnRotateRight" data-i18n-title="rotation.rotateRight">
-                        ↻
-                    </button>
+                    <span class="settings-label" data-i18n="rotation.rotateLeft">旋转</span>
+                    <div class="settings-btn-group">
+                        <button class="settings-btn" id="btnRotateLeft" data-i18n-title="rotation.rotateLeft">
+                            ↺
+                        </button>
+                        <button class="settings-btn" id="btnRotateRight" data-i18n-title="rotation.rotateRight">
+                            ↻
+                        </button>
+                    </div>
+                </div>
+                <div class="settings-row settings-slider-row">
+                    <span class="settings-label">亮度</span>
+                    <div class="slider-wrapper">
+                        <input id="cameraBrightness" type="range" min="-100" max="100" value="10">
+                        <span class="settings-slider-val" id="cameraBrightnessValue">10</span>
+                    </div>
+                </div>
+                <div class="settings-row settings-slider-row">
+                    <span class="settings-label">对比度</span>
+                    <div class="slider-wrapper">
+                        <input id="cameraContrast" type="range" min="0" max="300" value="140">
+                        <span class="settings-slider-val" id="cameraContrastValue">1.40</span>
+                    </div>
+                </div>
+                <div class="settings-row settings-slider-row">
+                    <span class="settings-label">黑白</span>
+                    <div class="option-group" id="cameraGrayscaleGroup" data-active="off">
+                        <button class="option-btn active" data-value="off">关闭</button>
+                        <button class="option-btn" data-value="on">开启</button>
+                    </div>
+                </div>
+                <div class="settings-row settings-reset-row">
+                    <button class="settings-btn settings-reset-btn" id="btnResetSliders">重置图片设置</button>
                 </div>
             </div>
             
