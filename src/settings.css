@@ -1172,49 +1172,218 @@ button {
     flex-direction: column;
     align-items: flex-start;
     justify-content: flex-start;
-    padding: 20px;
-}
-
-.update-header {
-    width: 100%;
-    display: flex;
-    justify-content: flex-start;
-    align-items: center;
-    margin-bottom: 20px;
+    padding: var(--spacing-lg, 24px);
 }
 
 .update-container {
     display: flex;
     flex-direction: column;
-    align-items: center;
-    text-align: center;
     width: 100%;
     max-width: 600px;
+    gap: var(--spacing-md, 16px);
 }
 
-.update-version-info {
-    width: 100%;
-    padding: var(--spacing-md, 16px);
-    background: var(--color-surface-card, rgba(255, 255, 255, 0.05));
-    border-radius: var(--rounded-md, 8px);
-    margin-bottom: 20px;
+/* Shadow-as-border: 所有卡片统一使用 box-shadow 代替 CSS border */
+@keyframes update_banner_fade_in {
+    from { opacity: 0; transform: translateY(-6px); }
+    to   { opacity: 1; transform: translateY(0); }
+}
+
+/* 应用信息区 */
+.update-app-info {
     display: flex;
-    justify-content: center;
     align-items: center;
-    gap: var(--spacing-sm, 12px);
+    gap: var(--spacing-md, 16px);
+    padding: var(--spacing-lg, 24px);
+    background: var(--color-surface-card);
+    border-radius: 8px;
+    box-shadow:
+        0px 0px 0px 1px var(--color-hairline, rgba(255, 255, 255, 0.1)),
+        0px 2px 4px rgba(0, 0, 0, 0.2);
 }
 
-.version-value {
+.update-logo {
+    width: 52px;
+    height: 52px;
+    border-radius: 8px;
+    object-fit: contain;
+    box-shadow:
+        0px 0px 0px 1px var(--color-hairline, rgba(255, 255, 255, 0.08));
+}
+
+.update-app-meta {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.update-app-name {
     font-size: 18px;
     font-weight: 600;
-    color: var(--color-ink, #fff);
-    font-family: 'Courier New', monospace;
+    color: var(--color-ink);
+    line-height: 1.3;
+    letter-spacing: -0.3px;
 }
 
-.update-settings {
+.update-app-version {
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--color-muted);
+    font-family: var(--font-body, 'Courier New', monospace);
+    background: color-mix(in srgb, var(--color-brand-accent) 10%, var(--color-surface-card));
+    padding: 2px 10px;
+    border-radius: 9999px;
+    display: inline-block;
+    width: fit-content;
+    letter-spacing: 0.3px;
+}
+
+.update-app-status {
+    font-size: 11px;
+    font-weight: 500;
+    display: inline-block;
+    width: fit-content;
+    padding: 0 10px;
+    border-radius: 9999px;
+    line-height: 20px;
+}
+
+.update-app-status.status-latest {
+    background: color-mix(in srgb, var(--color-success) 10%, var(--color-surface-card));
+    color: var(--color-success);
+    box-shadow: 0px 0px 0px 1px color-mix(in srgb, var(--color-success) 20%, transparent);
+}
+
+/* 更新横幅 — 无 CSS border，使用 tinted 背景 */
+.update-banner {
+    padding: var(--spacing-sm, 12px) var(--spacing-md, 16px);
+    border-radius: 6px;
+    font-size: 14px;
+    font-weight: 500;
+    text-align: center;
+    line-height: 1.5;
+    animation: update_banner_fade_in 0.25s ease-out;
+    box-shadow:
+        0px 0px 0px 1px rgba(255, 255, 255, 0.06);
+}
+
+.update-banner.banner-available {
+    background: color-mix(in srgb, var(--color-brand-accent) 10%, var(--color-surface-card));
+    color: var(--color-brand-accent);
+}
+
+.update-banner.banner-latest {
+    background: color-mix(in srgb, var(--color-success) 8%, var(--color-surface-card));
+    color: var(--color-success);
+}
+
+.update-banner.banner-error {
+    background: color-mix(in srgb, var(--color-error) 8%, var(--color-surface-card));
+    color: var(--color-error);
+}
+
+.update-banner.banner-success {
+    background: color-mix(in srgb, var(--color-success) 8%, var(--color-surface-card));
+    color: var(--color-success);
+}
+
+/* 更新日志 */
+.update-release-notes {
     width: 100%;
-    margin-bottom: 20px;
-    text-align: left;
+    display: flex;
+    flex-direction: column;
+    gap: var(--spacing-xs, 8px);
+}
+
+.release-notes-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+}
+
+.release-notes-title {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--color-ink);
+    letter-spacing: 0.3px;
+    text-transform: uppercase;
+}
+
+.release-notes-content {
+    background: var(--color-surface-card);
+    border-radius: 8px;
+    box-shadow:
+        0px 0px 0px 1px var(--color-hairline, rgba(255, 255, 255, 0.1)),
+        0px 2px 4px rgba(0, 0, 0, 0.2);
+    padding: var(--spacing-md, 16px);
+    max-height: 260px;
+    overflow-y: auto;
+    font-size: 13px;
+    color: var(--color-muted);
+    line-height: 1.7;
+    white-space: pre-wrap;
+}
+
+.release-notes-placeholder {
+    color: var(--color-muted-soft);
+    font-style: italic;
+}
+
+.release-notes-content h3,
+.release-notes-content h4,
+.release-notes-content h5 {
+    color: var(--color-ink);
+    margin: var(--spacing-sm, 12px) 0 var(--spacing-xs, 8px) 0;
+}
+
+.release-notes-content h3 { font-size: 14px; }
+.release-notes-content h4 { font-size: 13px; }
+.release-notes-content h5 { font-size: 12px; }
+
+.release-notes-content ul,
+.release-notes-content ol {
+    padding-left: 20px;
+    margin: var(--spacing-xs, 8px) 0;
+}
+
+.release-notes-content li {
+    margin-bottom: 4px;
+}
+
+.release-notes-content p {
+    margin: var(--spacing-xs, 8px) 0;
+}
+
+.release-notes-content code {
+    background: var(--color-surface-strong);
+    padding: 2px 6px;
+    border-radius: 3px;
+    font-family: 'Courier New', monospace;
+    font-size: 12px;
+    color: var(--color-brand-accent);
+}
+
+/* 选项区 */
+.update-options {
+    width: 100%;
+}
+
+.option-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: var(--spacing-sm, 12px) var(--spacing-md, 16px);
+    background: var(--color-surface-card);
+    border-radius: 8px;
+    box-shadow:
+        0px 0px 0px 1px var(--color-hairline, rgba(255, 255, 255, 0.1)),
+        0px 2px 4px rgba(0, 0, 0, 0.2);
+}
+
+.option-label {
+    font-size: 13px;
+    color: var(--color-muted);
+    font-weight: 500;
 }
 
 /* ===== 开关/选项组 ===== */
@@ -1268,6 +1437,19 @@ button {
 }
 
 .option-group#penEffectModeGroup[data-active="full"]::before {
+    transform: translateX(200%);
+}
+
+#mirrorGroup[data-active=""]::before,
+#mirrorGroup[data-active="none"]::before {
+    transform: translateX(0);
+}
+
+#mirrorGroup[data-active="https://gh-proxy.com/"]::before {
+    transform: translateX(100%);
+}
+
+#mirrorGroup[data-active="https://ghproxy.sectl.cn/"]::before {
     transform: translateX(200%);
 }
 
@@ -1335,158 +1517,254 @@ button {
     transform: translateX(20px);
 }
 
-.update-release-notes {
-    margin-bottom: var(--spacing-lg, 24px);
-    width: 100%;
-    text-align: left;
-}
-
-.release-notes-content {
-    background: rgba(0, 0, 0, 0.2);
-    border-radius: var(--rounded-sm, 6px);
-    padding: var(--spacing-md, 16px);
-    max-height: 250px;
-    overflow-y: auto;
-    font-size: 13px;
-    color: var(--color-muted, #aaa);
-    line-height: 1.6;
-    white-space: pre-wrap;
-}
-
-.release-notes-content h3,
-.release-notes-content h4,
-.release-notes-content h5 {
-    color: var(--color-ink, #fff);
-    margin: var(--spacing-sm, 12px) 0 var(--spacing-xs, 8px) 0;
-}
-
-.release-notes-content h3 {
-    font-size: 14px;
-}
-
-.release-notes-content h4 {
-    font-size: 13px;
-}
-
-.release-notes-content h5 {
-    font-size: 12px;
-}
-
-.release-notes-content ul,
-.release-notes-content ol {
-    padding-left: 20px;
-    margin: var(--spacing-xs, 8px) 0;
-}
-
-.release-notes-content li {
-    margin-bottom: 4px;
-}
-
-.release-notes-content p {
-    margin: var(--spacing-xs, 8px) 0;
-}
-
-.release-notes-content code {
-    background: var(--color-surface-card, rgba(255, 255, 255, 0.1));
-    padding: 2px 6px;
-    border-radius: 3px;
-    font-family: 'Courier New', monospace;
-    font-size: 12px;
-    color: var(--color-brand-accent, #4a9eff);
-}
-
+/* 下载进度 */
 .update-download-progress {
-    margin-bottom: 20px;
     width: 100%;
+    animation: update_banner_fade_in 0.2s ease-out;
 }
 
 .progress-bar {
-    height: 2px;
-    background: var(--color-surface-strong, rgba(255, 255, 255, 0.08));
-    border-radius: 1px;
+    height: 4px;
+    background: var(--color-surface-strong);
+    border-radius: 9999px;
     overflow: hidden;
-    margin-bottom: 6px;
+    margin-bottom: var(--spacing-xs, 8px);
+    box-shadow:
+        0px 0px 0px 1px rgba(255, 255, 255, 0.04);
 }
 
 .progress-fill {
     height: 100%;
-    background: var(--color-brand-accent, #4a9eff);
+    background: linear-gradient(90deg, var(--color-brand-accent), var(--color-success));
+    border-radius: 9999px;
+    transition: width 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+    position: relative;
+    overflow: hidden;
+}
+
+/* 进度条流光动画 */
+.progress-fill::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(
+        90deg,
+        transparent 0%,
+        rgba(255, 255, 255, 0.15) 50%,
+        transparent 100%
+    );
+    animation: progress_shimmer 1.5s ease-in-out infinite;
+}
+
+@keyframes progress_shimmer {
+    0%   { transform: translateX(-100%); }
+    100% { transform: translateX(100%); }
 }
 
 .progress-text {
-    font-size: 11px;
-    color: var(--color-muted-soft, #666);
+    font-size: 12px;
+    color: var(--color-muted-soft);
     text-align: center;
+    font-weight: 500;
+    font-variant-numeric: tabular-nums;
 }
 
+.progress-info {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+}
+
+.btn-cancel-download {
+    font-size: 11px;
+    padding: 2px 10px;
+    height: 22px;
+    background: transparent;
+    border: none;
+    border-radius: 9999px;
+    color: var(--color-muted);
+    cursor: pointer;
+    font-weight: 500;
+    box-shadow: 0px 0px 0px 1px var(--color-hairline);
+    transition: all 0.15s ease;
+}
+
+.btn-cancel-download:hover {
+    color: var(--color-danger, #ef4444);
+    box-shadow: 0px 0px 0px 1px color-mix(in srgb, var(--color-danger, #ef4444) 40%, transparent);
+}
+
+/* 操作按钮区 */
 .update-actions {
     display: flex;
     gap: var(--spacing-sm, 12px);
-    margin-bottom: var(--spacing-md, 16px);
+    width: 100%;
 }
 
+/* 主按钮（检查更新） — Vercel 风格暗色 CTA */
 .btn-update {
+    flex: 1;
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    gap: 6px;
+    gap: var(--spacing-xs, 8px);
     padding: var(--spacing-xs, 8px) var(--spacing-lg, 24px);
     height: var(--btn-height, 40px);
-    background: rgba(59, 130, 246, 0.1);
-    border: 1px solid rgba(59, 130, 246, 0.2);
-    border-radius: var(--rounded-md, 8px);
-    color: var(--color-brand-accent, #3b82f6);
+    background: var(--color-ink);
+    border: none;
+    border-radius: 6px;
+    color: var(--color-canvas);
     font-size: 14px;
-    font-weight: 600;
+    font-weight: 500;
     cursor: pointer;
-    transition: all 0.15s ease;
-    text-decoration: none;
+    transition: opacity 0.15s ease, transform 0.15s ease, box-shadow 0.15s ease;
     white-space: nowrap;
+    letter-spacing: normal;
 }
 
 .btn-update:hover:not(:disabled) {
-    background: rgba(59, 130, 246, 0.15);
-    border-color: rgba(59, 130, 246, 0.3);
+    opacity: 0.85;
+    transform: translateY(-1px);
+    box-shadow:
+        0px 0px 0px 1px var(--color-hairline),
+        0px 4px 12px rgba(0, 0, 0, 0.3);
 }
 
 .btn-update:active:not(:disabled) {
-    background: rgba(59, 130, 246, 0.2);
+    opacity: 0.7;
+    transform: translateY(0);
+    box-shadow: none;
 }
 
 .btn-update:disabled {
-    opacity: 0.5;
+    opacity: 0.3;
     cursor: not-allowed;
     pointer-events: none;
 }
 
+.btn-update:focus-visible {
+    outline: 2px solid hsla(212, 100%, 48%, 1);
+    outline-offset: 2px;
+}
+
+/* 次要按钮（下载更新） — Vercel ghost 风格，shadow-as-border */
 .btn-update-download {
+    flex: 1;
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    gap: 6px;
+    gap: var(--spacing-xs, 8px);
     padding: var(--spacing-xs, 8px) var(--spacing-lg, 24px);
     height: var(--btn-height, 40px);
-    background: rgba(59, 130, 246, 0.15);
-    border: 1px solid rgba(59, 130, 246, 0.25);
-    border-radius: var(--rounded-md, 8px);
-    color: var(--color-brand-accent, #3b82f6);
+    background: transparent;
+    border: none;
+    border-radius: 6px;
+    color: var(--color-ink);
     font-size: 14px;
-    font-weight: 600;
+    font-weight: 500;
     cursor: pointer;
-    transition: all 0.15s ease;
-    text-decoration: none;
+    transition: background 0.15s ease, box-shadow 0.15s ease, transform 0.15s ease;
+    white-space: nowrap;
+    box-shadow:
+        0px 0px 0px 1px var(--color-hairline, rgba(255, 255, 255, 0.1));
+}
+
+.btn-update-download:hover:not(:disabled) {
+    background: var(--color-surface-strong);
+    box-shadow:
+        0px 0px 0px 1px var(--color-hairline, rgba(255, 255, 255, 0.15)),
+        0px 2px 4px rgba(0, 0, 0, 0.2);
+    transform: translateY(-1px);
+}
+
+.btn-update-download:active:not(:disabled) {
+    background: var(--color-surface-elevated);
+    transform: translateY(0);
+}
+
+.btn-update-download:disabled {
+    opacity: 0.3;
+    cursor: not-allowed;
+    pointer-events: none;
+}
+
+.btn-update-download:focus-visible {
+    outline: 2px solid hsla(212, 100%, 48%, 1);
+    outline-offset: 2px;
+}
+
+/* 强调按钮（立即安装） — Vercel 风格 success CTA */
+.btn-update-install {
+    flex: 1;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: var(--spacing-xs, 8px);
+    padding: var(--spacing-xs, 8px) var(--spacing-lg, 24px);
+    height: var(--btn-height, 40px);
+    background: var(--color-success);
+    border: none;
+    border-radius: 6px;
+    color: #fff;
+    font-size: 14px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: opacity 0.15s ease, transform 0.15s ease, box-shadow 0.15s ease;
     white-space: nowrap;
 }
 
-.btn-update-download:hover {
-    background: rgba(59, 130, 246, 0.2);
-    border-color: rgba(59, 130, 246, 0.35);
+.btn-update-install:hover:not(:disabled) {
+    opacity: 0.85;
+    transform: translateY(-1px);
+    box-shadow:
+        0px 0px 0px 1px rgba(255, 255, 255, 0.1),
+        0px 4px 12px rgba(0, 0, 0, 0.3);
 }
 
-.btn-update-download:active {
-    background: rgba(59, 130, 246, 0.25);
+.btn-update-install:active:not(:disabled) {
+    opacity: 0.7;
+    transform: translateY(0);
+    box-shadow: none;
 }
 
+.btn-update-install:disabled {
+    opacity: 0.3;
+    cursor: not-allowed;
+    pointer-events: none;
+}
+
+.btn-update-install:focus-visible {
+    outline: 2px solid hsla(212, 100%, 48%, 1);
+    outline-offset: 2px;
+}
+
+/* 状态信息 */
+.update-status {
+    font-size: 13px;
+    color: var(--color-muted);
+    text-align: center;
+    min-height: 20px;
+    font-weight: 500;
+}
+
+.status-latest {
+    color: var(--color-success);
+}
+
+.status-available {
+    color: var(--color-brand-accent);
+}
+
+.status-success {
+    color: var(--color-success);
+}
+
+.status-error {
+    color: var(--color-error);
+}
+
+/* 返回按钮 */
 .btn-back {
     display: inline-flex;
     align-items: center;
@@ -1827,29 +2105,6 @@ button {
     border-radius: 3px;
     font-family: 'Courier New', monospace;
     font-size: 11px;
-}
-
-.update-status {
-    font-size: 13px;
-    margin-bottom: var(--spacing-md, 16px);
-    min-height: 20px;
-    font-weight: 500;
-}
-
-.status-latest {
-    color: var(--color-success, #4caf50);
-}
-
-.status-available {
-    color: var(--color-brand-accent, #4a9eff);
-}
-
-.status-success {
-    color: var(--color-success, #4caf50);
-}
-
-.status-error {
-    color: var(--color-error, #f44336);
 }
 
 /* ===== 主题卡片 ===== */

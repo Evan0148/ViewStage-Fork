@@ -1024,6 +1024,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 static MIRROR_STATE: AtomicBool = AtomicBool::new(false);
 static OOBE_ACTIVE: AtomicBool = AtomicBool::new(false);
 static MAIN_SCRIPT_LOADED: AtomicBool = AtomicBool::new(false);
+static DOWNLOAD_CANCELLED: AtomicBool = AtomicBool::new(false);
 
 // ==================== 设置窗口 ====================
 
@@ -1074,6 +1075,19 @@ async fn mirror_fetch_state() -> Result<bool, String> {
 #[tauri::command]
 fn app_fetch_version() -> String {
     env!("CARGO_PKG_VERSION").to_string()
+}
+
+/// Tauri IPC 命令：获取当前操作系统平台标识
+#[tauri::command]
+fn app_fetch_platform() -> String {
+    #[cfg(target_os = "windows")]
+    { "windows".to_string() }
+    #[cfg(target_os = "linux")]
+    { "linux".to_string() }
+    #[cfg(target_os = "macos")]
+    { "macos".to_string() }
+    #[cfg(not(any(target_os = "windows", target_os = "linux", target_os = "macos")))]
+    { "unknown".to_string() }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1592,6 +1606,14 @@ async fn app_restart_process(app: tauri::AppHandle) -> Result<(), String> {
     Ok(())
 }
 
+/// Tauri IPC 命令：取消正在进行的更新下载
+#[tauri::command]
+async fn update_download_cancel() -> Result<(), String> {
+    DOWNLOAD_CANCELLED.store(true, Ordering::SeqCst);
+    log::info!("已发送下载取消信号");
+    Ok(())
+}
+
 /// Tauri IPC 命令：从 GitHub Release 下载更新文件，支持镜像加速
 ///
 /// 自动校验 URL 合法性，流式下载并向前端推送进度事件 "update-download-progress"
@@ -1600,17 +1622,23 @@ async fn update_download_file(
     app: tauri::AppHandle,
     url: String,
     file_name: String,
-    use_mirror: Option<bool>,
+    mirror_url: Option<String>,
 ) -> Result<String, String> {
-    let use_mirror = use_mirror.unwrap_or(false);
-    log::info!("开始下载更新，文件: {}, 镜像: {}", file_name, use_mirror);
+    // 重置取消标志
+    DOWNLOAD_CANCELLED.store(false, Ordering::SeqCst);
+    log::info!("开始下载更新，文件: {}, 镜像: {:?}", file_name, mirror_url);
 
     url_validate_github(&url)?;
 
-    let download_url = if use_mirror {
-        let proxy_url = format!("https://gh-proxy.com/{}", url);
-        log::info!("使用镜像下载: {}", proxy_url);
-        proxy_url
+    let download_url = if let Some(ref mirror) = mirror_url {
+        if mirror.is_empty() {
+            log::info!("使用原始地址下载: {}", url);
+            url
+        } else {
+            let proxy_url = format!("{}{}", mirror.trim_end_matches('/'), url);
+            log::info!("使用镜像下载: {}", proxy_url);
+            proxy_url
+        }
     } else {
         log::info!("使用原始地址下载: {}", url);
         url
@@ -1665,8 +1693,17 @@ async fn update_download_file(
     let mut stream = response.bytes_stream();
     use futures::stream::StreamExt;
 
+    let mut last_reported_progress: u32 = 0;
+
     log::info!("开始接收数据...");
     while let Some(chunk) = stream.next().await {
+        // 检查是否被取消
+        if DOWNLOAD_CANCELLED.load(Ordering::SeqCst) {
+            let _ = std::fs::remove_file(&file_path);
+            log::info!("下载已被用户取消");
+            return Err("Download cancelled".to_string());
+        }
+
         let chunk = chunk.map_err(|e| {
             log::error!("读取数据块失败: {}", e);
             format!("Failed to read chunk: {}", e)
@@ -1681,15 +1718,22 @@ async fn update_download_file(
         
         if total_size > 0 {
             let progress = (downloaded as f64 / total_size as f64) * 100.0;
-            let progress_rounded = (progress * 100.0).round() / 100.0;
+            let current_progress = progress as u32;
             
-            if (progress_rounded as u64) % 10 == 0 && progress_rounded > 0.01 {
-                log::debug!("下载进度: {:.1}%", progress_rounded);
+            // 仅在整数百分比变化时推送事件，避免高频刷新
+            if current_progress != last_reported_progress {
+                last_reported_progress = current_progress;
+                log::debug!("下载进度: {}%", current_progress);
+                app.emit("update-download-progress", current_progress)
+                    .unwrap_or(());
             }
-            
-            app.emit("update-download-progress", progress_rounded)
-                .unwrap_or(());
         }
+    }
+
+    // 确保最终到达 100%（无论 total_size 是否为 0）
+    if total_size == 0 || last_reported_progress < 100 {
+        app.emit("update-download-progress", 100)
+            .unwrap_or(());
     }
 
     file.flush().map_err(|e| {
@@ -1700,6 +1744,55 @@ async fn update_download_file(
     log::info!("下载完成，已保存到: {:?}", file_path);
 
     Ok(file_path.to_string_lossy().to_string())
+}
+
+/// Tauri IPC 命令：启动已下载的更新安装包并退出应用
+///
+/// 启动安装程序后自动退出当前应用，由安装程序接管后续流程
+#[tauri::command]
+async fn update_install_release(app: tauri::AppHandle, file_path: String) -> Result<(), String> {
+    let path = std::path::Path::new(&file_path);
+    if !path.exists() {
+        log::error!("安装文件不存在: {}", file_path);
+        return Err(format!("安装文件不存在: {}", file_path));
+    }
+
+    log::info!("启动安装程序: {:?}", path);
+
+    #[cfg(target_os = "windows")]
+    {
+        let exe_path = path.to_string_lossy().to_string();
+        std::process::Command::new("cmd")
+            .arg("/c")
+            .arg("start")
+            .arg("")
+            .arg(&exe_path)
+            .spawn()
+            .map_err(|e| {
+                log::error!("启动安装程序失败: {}", e);
+                format!("启动安装程序失败: {}", e)
+            })?;
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        std::process::Command::new("open")
+            .arg(path)
+            .spawn()
+            .map_err(|e| {
+                log::error!("启动安装程序失败: {}", e);
+                format!("启动安装程序失败: {}", e)
+            })?;
+    }
+
+    // 延迟退出以确保 IPC 响应返回前端
+    let app_clone = app.clone();
+    tokio::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+        app_clone.exit(0);
+    });
+
+    Ok(())
 }
 
 /// Tauri IPC 命令：获取主显示器支持的分辨率列表
@@ -3319,8 +3412,11 @@ pub fn app_init_run() {
             mirror_update_state,
             mirror_fetch_state,
             app_fetch_version,
+            app_fetch_platform,
             update_fetch_check,
             update_download_file,
+            update_download_cancel,
+            update_install_release,
             settings_fetch_all,
             settings_save_all,
             settings_delete_all,

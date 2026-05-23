@@ -1970,6 +1970,24 @@ document.addEventListener('DOMContentLoaded', async () => {
                 settings_hide_aurora();
             }
         }
+
+        const btnAbout = document.getElementById('btnAbout');
+        if (btnAbout) {
+            if (pageId === 'pageUpdate') {
+                const icon = btnAbout.querySelector('.btn-icon img');
+                if (icon) icon.setAttribute('data-icon', 'arrow-left-short');
+                const text = btnAbout.querySelector('.btn-text');
+                if (text) text.textContent = '返回';
+            } else {
+                const icon = btnAbout.querySelector('.btn-icon img');
+                if (icon) icon.setAttribute('data-icon', 'about');
+                const text = btnAbout.querySelector('.btn-text');
+                if (text) {
+                    text.textContent = window.i18n?.format_translate('settings.about') || '关于';
+                }
+            }
+            window.ThemeManager?.theme_load_icons?.();
+        }
     }
 
     sidebarBtns.forEach(btn => {
@@ -2001,101 +2019,150 @@ document.addEventListener('DOMContentLoaded', async () => {
         });
     }
 
-    const btnBackToAbout = document.getElementById('btnBackToAbout');
-    if (btnBackToAbout) {
-        btnBackToAbout.addEventListener('click', () => {
-            settings_show_page('pageAbout');
-            sidebarBtns.forEach(b => b.classList.remove('active'));
-            document.getElementById('btnAbout')?.classList.add('active');
-        });
-    }
+    // ==================== 更新功能 ====================
 
-    // 更新页面元素
-    const updateCurrentVersion = document.getElementById('updateCurrentVersion');
-    const updateReleaseNotesContent = document.getElementById('updateReleaseNotesContent');
-    const updateDownloadProgress = document.getElementById('updateDownloadProgress');
-    const updateProgressBar = document.getElementById('updateProgressBar');
-    const updateProgressText = document.getElementById('updateProgressText');
-    const btnCheckUpdate = document.getElementById('btnCheckUpdate');
-    const btnUpdateDownload = document.getElementById('btnUpdateDownload');
-    const updateStatus = document.getElementById('updateStatus');
-    const useMirrorToggle = document.getElementById('useMirrorToggle');
+    // DOM 元素引用
+    const update_els = {
+        currentVersion: document.getElementById('updateCurrentVersion'),
+        appStatus: document.getElementById('updateAppStatus'),
+        options: document.getElementById('updateOptions'),
+        banner: document.getElementById('updateBanner'),
+        releaseNotes: document.getElementById('updateReleaseNotesContent'),
+        progress: document.getElementById('updateDownloadProgress'),
+        progressBar: document.getElementById('updateProgressBar'),
+        progressText: document.getElementById('updateProgressText'),
+        status: document.getElementById('updateStatus'),
+        btnCheck: document.getElementById('btnCheckUpdate'),
+        btnDownload: document.getElementById('btnUpdateDownload'),
+        mirrorGroup: document.getElementById('mirrorGroup'),
+    };
 
-    let latestReleaseData = null;
-    let useMirror = false;
+    let latest_release_data = null;
+    let download_file_path = null;
+    let mirror_url = '';
+    let download_cancelled = false;
 
-    if (useMirrorToggle) {
-        const savedMirror = localStorage.getItem('useMirror');
-        if (savedMirror === 'true') {
-            useMirror = true;
-            useMirrorToggle.checked = true;
+    // 镜像选择初始化（含旧版 useMirror 兼容迁移）
+    if (update_els.mirrorGroup) {
+        let saved_mirror = localStorage.getItem('mirrorUrl');
+        if (!saved_mirror && localStorage.getItem('useMirror') === 'true') {
+            saved_mirror = 'https://gh-proxy.com/';
+            localStorage.removeItem('useMirror');
+            localStorage.setItem('mirrorUrl', saved_mirror);
         }
-
-        useMirrorToggle.addEventListener('change', () => {
-            useMirror = useMirrorToggle.checked;
-            localStorage.setItem('useMirror', useMirror.toString());
+        saved_mirror = saved_mirror || '';
+        mirror_url = saved_mirror;
+        update_els.mirrorGroup.dataset.active = saved_mirror;
+        const buttons = update_els.mirrorGroup.querySelectorAll('.option-btn');
+        buttons.forEach(btn => {
+            if (btn.dataset.value === saved_mirror) {
+                btn.classList.add('active');
+            }
+            btn.addEventListener('click', () => {
+                const value = btn.dataset.value;
+                mirror_url = value;
+                update_els.mirrorGroup.dataset.active = value;
+                buttons.forEach(b => b.classList.remove('active'));
+                btn.classList.add('active');
+                localStorage.setItem('mirrorUrl', value);
+            });
         });
     }
 
+    /**
+     * 加载更新页面：获取当前版本、检查更新
+     */
     async function settings_load_update_page() {
         if (!window.__TAURI__) return;
-
         const { invoke } = window.__TAURI__.core;
-        const currentVersion = await invoke('app_fetch_version');
-        updateCurrentVersion.textContent = currentVersion;
 
-        updateReleaseNotesContent.textContent = i18n.format_translate('settings.checkingForUpdates') || '正在检查更新...';
-        btnCheckUpdate.disabled = true;
-        btnUpdateDownload.style.display = 'none';
-        updateStatus.textContent = '';
+        const current_version = await invoke('app_fetch_version');
+        update_els.currentVersion.textContent = `v${current_version}`;
+        reset_update_ui();
+
+        update_els.releaseNotes.textContent = i18n.format_translate('settings.checkingForUpdates') || '正在检查更新...';
+        update_els.btnCheck.disabled = true;
 
         try {
             const result = await invoke('update_fetch_check');
-            const release = result.release;
-            const currentRelease = result.current_release;
+            update_els.btnCheck.disabled = false;
 
-            btnCheckUpdate.disabled = false;
-
-            let releaseNotes = '';
-
-            if (currentRelease) {
-                const currentNotes = currentRelease.body || `版本 ${currentVersion}`;
-                releaseNotes += `【当前版本: v${currentVersion}】\n${currentNotes}\n\n`;
-            }
-
-            if (!release) {
-                releaseNotes += i18n.format_translate('settings.alreadyLatest') || '当前已是最新版本';
-                updateStatus.textContent = i18n.format_translate('settings.alreadyLatest') || '当前已是最新版本';
-                updateStatus.className = 'update-status status-latest';
-                latestReleaseData = null;
+            if (result.has_update && result.release) {
+                latest_release_data = result.release;
+                show_update_available(result.release);
             } else {
-                latestReleaseData = release;
-                
-                const latestNotes = release.body || '暂无更新日志';
-                releaseNotes += `【最新版本: v${latestReleaseData.tag_name.replace(/^v/, '')}】\n${latestNotes}`;
-
-                const size = release.assets && release.assets.length > 0 ? release.assets[0].size : 0;
-                const sizeText = size > 0 ? settings_format_file_size(size) : '';
-                if (sizeText) {
-                    releaseNotes += `\n\n${i18n.format_translate('settings.fileSize') || '文件大小'}: ${sizeText}`;
-                }
-
-                updateStatus.textContent = i18n.format_translate('settings.updateAvailable') || '发现新版本';
-                updateStatus.className = 'update-status status-available';
-                btnUpdateDownload.style.display = 'inline-block';
+                show_already_latest(result.current_release, current_version);
             }
-
-            updateReleaseNotesContent.textContent = releaseNotes;
         } catch (error) {
             console.error('检查更新失败:', error);
-            updateReleaseNotesContent.textContent = i18n.format_translate('settings.updateCheckFailedDetail') || '检查更新失败，请稍后重试';
-            updateStatus.textContent = i18n.format_translate('settings.updateCheckFailedDetail') || '检查更新失败，请稍后重试';
-            updateStatus.className = 'update-status status-error';
-            btnCheckUpdate.disabled = false;
-            latestReleaseData = null;
+            update_els.releaseNotes.textContent = i18n.format_translate('settings.updateCheckFailedDetail') || '检查更新失败，请稍后重试';
+            show_banner('error', i18n.format_translate('settings.updateCheckFailedDetail') || '检查更新失败，请稍后重试');
+            update_els.btnCheck.disabled = false;
+            update_els.options.style.display = 'none';
+            latest_release_data = null;
         }
     }
 
+    /** 重置更新页面 UI 状态 */
+    function reset_update_ui() {
+        update_els.appStatus.textContent = '';
+        update_els.appStatus.className = 'update-app-status';
+        update_els.banner.style.display = 'none';
+        update_els.banner.className = 'update-banner';
+        update_els.progress.style.display = 'none';
+        update_els.btnDownload.style.display = 'none';
+        update_els.status.textContent = '';
+        update_els.status.className = '';
+        update_els.options.style.display = '';
+        download_cancelled = false;
+        latest_release_data = null;
+        download_file_path = null;
+        update_els.btnDownload.onclick = settings_start_download;
+        const btnCancel = document.getElementById('btnCancelDownload');
+        if (btnCancel) {
+            btnCancel.style.display = 'none';
+            btnCancel.disabled = false;
+        }
+    }
+
+    /** 显示有可用更新 */
+    function show_update_available(release) {
+        const latest_notes = release.body || '';
+        update_els.releaseNotes.textContent = latest_notes || (i18n.format_translate('common.noContent') || '暂无内容');
+
+        const size = release.assets && release.assets.length > 0 ? release.assets[0].size : 0;
+        const size_text = size > 0 ? settings_format_file_size(size) : '';
+        const release_tag = release.tag_name.replace(/^v/, '');
+        const banner_msg = size_text
+            ? `${i18n.format_translate('settings.updateAvailable') || '发现新版本'} v${release_tag}（${size_text}）`
+            : `${i18n.format_translate('settings.updateAvailable') || '发现新版本'} v${release_tag}`;
+
+        show_banner('available', banner_msg);
+        update_els.btnDownload.style.display = 'inline-flex';
+        update_els.options.style.display = '';
+    }
+
+    /** 显示已是最新版本 */
+    function show_already_latest(current_release, current_version) {
+        let notes = i18n.format_translate('settings.alreadyLatest') || '当前已是最新版本';
+        if (current_release && current_release.body) {
+            notes = current_release.body;
+        }
+        update_els.releaseNotes.textContent = notes;
+
+        update_els.appStatus.textContent = i18n.format_translate('settings.alreadyLatest') || '已是最新版本';
+        update_els.appStatus.className = 'update-app-status status-latest';
+        update_els.options.style.display = 'none';
+    }
+
+    /** 显示更新横幅 */
+    function show_banner(type, message) {
+        update_els.banner.className = `update-banner banner-${type}`;
+        update_els.banner.textContent = message;
+        update_els.banner.style.display = 'block';
+    }
+
+    /** 格式化文件大小 */
     function settings_format_file_size(bytes) {
         if (bytes === 0) return '0 B';
         const k = 1024;
@@ -2104,62 +2171,119 @@ document.addEventListener('DOMContentLoaded', async () => {
         return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
     }
 
-    if (btnCheckUpdate) {
-        btnCheckUpdate.addEventListener('click', async () => {
+    // 检查更新按钮
+    if (update_els.btnCheck) {
+        update_els.btnCheck.addEventListener('click', async () => {
             await settings_load_update_page();
         });
     }
 
-    if (btnUpdateDownload) {
-        btnUpdateDownload.addEventListener('click', async () => {
-            if (!latestReleaseData || !latestReleaseData.assets || latestReleaseData.assets.length === 0) return;
+    /** 下载更新 */
+    async function settings_start_download() {
+        if (!latest_release_data || !latest_release_data.assets || latest_release_data.assets.length === 0) return;
 
-            const { invoke } = window.__TAURI__.core;
-            const { getCurrentWindow } = window.__TAURI__.window;
+        const { invoke } = window.__TAURI__.core;
 
-            const asset = latestReleaseData.assets[0];
-            const downloadUrl = asset.browser_download_url;
-            const fileName = asset.name;
+        const platform = await invoke('app_fetch_platform');
+        const platform_map = { windows: /\.(exe|msi)$/i, linux: /\.(deb|AppImage)$/i, macos: /\.dmg$/i };
+        const pattern = platform_map[platform] || /\.(exe|msi|deb|AppImage|dmg)$/i;
+        const asset = latest_release_data.assets.find(a => pattern.test(a.name)) || latest_release_data.assets[0];
+        const download_url = asset.browser_download_url;
+        const file_name = asset.name;
 
-            btnUpdateDownload.disabled = true;
-            btnUpdateDownload.textContent = i18n.format_translate('settings.downloading') || '正在下载...';
-            updateDownloadProgress.style.display = 'block';
-            updateProgressBar.style.width = '0%';
-            updateProgressText.textContent = '0%';
+        download_cancelled = false;
+        update_els.btnDownload.disabled = true;
+        update_els.btnDownload.textContent = i18n.format_translate('settings.downloading') || '正在下载...';
+        update_els.progress.style.display = 'block';
+        update_els.progressBar.style.width = '0%';
+        update_els.progressText.textContent = '0%';
+        update_els.banner.style.display = 'none';
 
-            try {
-                const currentWindow = getCurrentWindow();
+        const btnCancel = document.getElementById('btnCancelDownload');
+        if (btnCancel) {
+            btnCancel.style.display = '';
+            btnCancel.disabled = false;
+        }
 
-                const unlisten = await currentWindow.listen('update-download-progress', (event) => {
-                    const progress = event.payload;
-                    updateProgressBar.style.width = progress + '%';
-                    updateProgressText.textContent = i18n.format_translate('settings.downloadingUpdate', { percent: Math.round(progress) }) || `正在下载 ${Math.round(progress)}%`;
-                });
+        let unlisten = null;
 
-                const downloadPath = await invoke('update_download_file', { url: downloadUrl, fileName: fileName, useMirror: useMirror });
+        try {
+            const { listen } = window.__TAURI__.event;
+            unlisten = await listen('update-download-progress', (event) => {
+                if (download_cancelled) return;
+                const progress = event.payload;
+                update_els.progressBar.style.width = progress + '%';
+                update_els.progressText.textContent = i18n.format_translate('settings.downloadingUpdate', { percent: Math.round(progress) }) || `正在下载 ${Math.round(progress)}%`;
+            });
 
-                unlisten();
+            download_file_path = await invoke('update_download_file', {
+                url: download_url,
+                fileName: file_name,
+                mirrorUrl: mirror_url,
+            });
 
-                updateDownloadProgress.style.display = 'none';
-                btnUpdateDownload.style.display = 'none';
-                updateStatus.textContent = i18n.format_translate('settings.downloadComplete') || '下载完成';
-                updateStatus.className = 'update-status status-success';
+            if (download_cancelled) return;
 
-                const restartModal = document.getElementById('restartModal');
-                const restartModalMessage = restartModal?.querySelector('.modal-message');
-                if (restartModalMessage) {
-                    restartModalMessage.textContent = i18n.format_translate('settings.restartToUpdate') || '更新包已下载完成，请重启应用以完成更新。';
-                }
-                if (restartModal) {
-                    restartModal.classList.add('active');
-                }
-            } catch (error) {
+            update_els.progressBar.style.width = '100%';
+            update_els.progressText.textContent = i18n.format_translate('settings.downloadComplete') || '下载完成';
+            if (btnCancel) btnCancel.style.display = 'none';
+
+            setTimeout(() => {
+                update_els.progress.style.display = 'none';
+                update_els.btnDownload.textContent = i18n.format_translate('settings.installNow') || '立即安装';
+                update_els.btnDownload.disabled = false;
+                update_els.btnDownload.onclick = settings_start_install;
+                show_banner('success', i18n.format_translate('settings.downloadComplete') || '下载完成，点击"立即安装"以完成更新');
+            }, 800);
+
+        } catch (error) {
+            const errorStr = String(error);
+            if (download_cancelled || errorStr.includes('cancelled') || errorStr.includes('canceled')) {
+                console.log('下载已取消');
+            } else {
                 console.error('下载更新失败:', error);
-                updateDownloadProgress.style.display = 'none';
-                btnUpdateDownload.disabled = false;
-                btnUpdateDownload.textContent = i18n.format_translate('settings.downloadUpdate') || '下载更新';
-                settings_show_dialog(i18n.format_translate('settings.downloadFailed') || '下载失败', String(error), 'error');
+                settings_show_dialog(i18n.format_translate('settings.downloadFailed') || '下载失败', errorStr, 'error');
             }
+            update_els.progress.style.display = 'none';
+            update_els.btnDownload.disabled = false;
+            update_els.btnDownload.textContent = i18n.format_translate('settings.downloadUpdate') || '下载更新';
+            if (btnCancel) btnCancel.style.display = 'none';
+        } finally {
+            if (unlisten) unlisten();
+        }
+    }
+
+    /** 安装更新 */
+    async function settings_start_install() {
+        if (!download_file_path) return;
+        const { invoke } = window.__TAURI__.core;
+        try {
+            update_els.btnDownload.disabled = true;
+            update_els.btnDownload.textContent = i18n.format_translate('settings.installing') || '正在安装...';
+            await invoke('update_install_release', { filePath: download_file_path });
+        } catch (error) {
+            console.error('安装更新失败:', error);
+            update_els.btnDownload.disabled = false;
+            update_els.btnDownload.textContent = i18n.format_translate('settings.installNow') || '立即安装';
+            settings_show_dialog(i18n.format_translate('settings.installFailed') || '安装失败', String(error), 'error');
+        }
+    }
+
+    update_els.btnDownload.onclick = settings_start_download;
+
+    // 取消下载按钮
+    const btnCancel = document.getElementById('btnCancelDownload');
+    if (btnCancel) {
+        btnCancel.addEventListener('click', async () => {
+            download_cancelled = true;
+            const { invoke } = window.__TAURI__.core;
+            try {
+                await invoke('update_download_cancel');
+            } catch (e) {
+                console.error('取消下载失败:', e);
+            }
+            update_els.progressText.textContent = '已取消';
+            btnCancel.disabled = true;
         });
     }
 

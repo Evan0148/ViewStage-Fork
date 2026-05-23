@@ -202,12 +202,8 @@ body {
     color: var(--color-muted);
 }
 
-.update-version-info {
+.update-app-info {
     background: var(--color-surface-card);
-}
-
-.version-value {
-    color: var(--color-ink);
 }
 
 .release-notes-content {
@@ -295,28 +291,6 @@ body {
 
 .color-picker-btns {
     gap: 6px;
-}
-
-.btn-update {
-    background: rgba(59, 130, 246, 0.1);
-    border-color: rgba(59, 130, 246, 0.2);
-    color: var(--color-brand-accent);
-}
-
-.btn-update:hover:not(:disabled) {
-    background: rgba(59, 130, 246, 0.2);
-    border-color: rgba(59, 130, 246, 0.4);
-}
-
-.btn-update-download {
-    background: rgba(59, 130, 246, 0.15);
-    border-color: rgba(59, 130, 246, 0.25);
-    color: var(--color-brand-accent);
-}
-
-.btn-update-download:hover {
-    background: rgba(59, 130, 246, 0.25);
-    border-color: rgba(59, 130, 246, 0.45);
 }
 
 .btn-back {
