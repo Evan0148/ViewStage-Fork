@@ -217,12 +217,6 @@ class RealtimeBatchDrawManager {
      * @returns {number} 最终线宽
      */
     _calc_pen_line_width(speed, baseWidth, lastLineWidth, dist) {
-        // 当钢笔效果开启时，基础笔宽增加5px
-        const penEffectActive = window.get_pen_effect_mode() !== 'off';
-        if (penEffectActive) {
-            baseWidth += 5;
-        }
-
         const speedScale = Math.max(0.4, Math.min(2.5, baseWidth / 4));
         const maxSpeed = 2.5 * speedScale;
         const minSpeed = 0.2 * speedScale;
@@ -471,6 +465,20 @@ class RealtimeBatchDrawManager {
             ctx.moveTo(this._lastMidX, this._lastMidY);
             ctx.lineTo(this._lastToX, this._lastToY);
             ctx.stroke();
+        }
+
+        if (ctx) {
+            const updateCtx = window.main_update_context_state;
+            if (updateCtx) {
+                const cfg = window.DRAW_CONFIG || {};
+                updateCtx(ctx, {
+                    globalCompositeOperation: 'source-over',
+                    strokeStyle: cfg.penColor || '#3498db',
+                    lineWidth: cfg.penWidth || 5,
+                    lineCap: 'round',
+                    lineJoin: 'round'
+                });
+            }
         }
 
         if (this.is_adaptive) {

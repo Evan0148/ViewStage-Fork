@@ -28,12 +28,6 @@ class PenTessellator {
     _tessellator_build_segments(points, base_width, density = 1, noStartTaper = false, storedWidths = null) {
         if (points.length < 1) return null;
 
-        // 当钢笔效果开启时，基础笔宽增加5px
-        const penEffectActive = window.get_pen_effect_mode() !== 'off';
-        if (penEffectActive) {
-            base_width += 5;
-        }
-
         const raw = [{ x: points[0].fromX, y: points[0].fromY }];
         for (let i = 0; i < points.length; i++) {
             raw.push({ x: points[i].toX, y: points[i].toY });
