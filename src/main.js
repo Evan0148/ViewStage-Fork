@@ -87,8 +87,6 @@ const DRAW_CONFIG = {
     canvasH: 600,
     screenW: 0,
     screenH: 0,
-    renderW: 1920,
-    renderH: 1080,
     dprLimit: 2,
     dpr: 1,
     pdfScale: 2,

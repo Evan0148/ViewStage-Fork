@@ -8,9 +8,6 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title data-i18n="oobe.welcome">欢迎使用 ViewStage</title>
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="oobe.css">
     <script src="i18n.js"></script>
     <script src="themes/theme.js"></script>
@@ -72,39 +69,6 @@
         </div>
 
         <button class="btn-back" id="btnBack2" data-i18n="common.back">返回</button>
-    </div>
-
-    <div class="oobe-container" id="page3" style="display: none;">
-        <div class="logo-section">
-            <img class="logo-icon" src="assets/Square1024x1024Logo.png" alt="ViewStage">
-            <h1 class="welcome-title" data-i18n="oobe.quickSetup">快速设置</h1>
-            <p class="welcome-subtitle" data-i18n="oobe.basicSettings">基本设置</p>
-        </div>
-
-        <div class="settings-section">
-            <div class="setting-item">
-                <span class="setting-label" data-i18n="settings.resolution">分辨率</span>
-                <div class="custom-select" id="resolutionSelect">
-                    <div class="select-selected" id="resolutionSelected" data-i18n="common.loading">加载中...</div>
-                    <div class="select-options" id="resolutionOptions"></div>
-                </div>
-            </div>
-            <div class="setting-item">
-                <span class="setting-label" data-i18n="settings.theme">主题</span>
-                <div class="custom-select" id="themeSelect">
-                    <div class="select-selected" id="themeSelected">简化</div>
-                    <div class="select-options" id="themeOptions">
-                        <div class="select-option" data-value="com.viewstage.theme.dark" data-i18n="settings.themeDark">深色</div>
-                        <div class="select-option selected" data-value="com.viewstage.theme.simplify" data-i18n="settings.themeSimplify">浅色</div>
-                    </div>
-                </div>
-            </div>
-        </div>
-
-        <div class="page-nav">
-            <button class="btn-back" id="btnBack3" data-i18n="common.back">返回</button>
-            <button class="btn-start" id="btnNext3" data-i18n="common.next">下一步</button>
-        </div>
     </div>
 
     <div class="oobe-container" id="page4" style="display: none;">

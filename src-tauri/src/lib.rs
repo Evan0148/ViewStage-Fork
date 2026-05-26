@@ -1252,8 +1252,6 @@ fn config_backup_corrupted(config_path: &std::path::Path) {
 /// 生成默认配置（各字段均设初始值）
 fn config_fetch_default() -> serde_json::Value {
     serde_json::json!({
-        "width": 1920,
-        "height": 1080,
         "language": "zh-CN",
         "defaultCamera": "",
         "cameraWidth": 1280,
@@ -1758,37 +1756,6 @@ async fn update_install_release(app: tauri::AppHandle, file_path: String) -> Res
     });
 
     Ok(())
-}
-
-/// Tauri IPC 命令：获取主显示器支持的分辨率列表
-#[tauri::command]
-async fn resolution_fetch_available(app: tauri::AppHandle) -> Result<Vec<(u32, u32, String)>, String> {
-    let primary_monitor = app.primary_monitor()
-        .map_err(|e| e.to_string())?
-        .ok_or("无法获取主显示器".to_string())?;
-    
-    let max_width = primary_monitor.size().width;
-    let max_height = primary_monitor.size().height;
-    
-    let mut resolutions = Vec::new();
-    
-    let base_resolutions: Vec<(u32, u32)> = vec![
-        (1920, 1080),
-        (1600, 900),
-        (1366, 768),
-        (1280, 720),
-        (1024, 576),
-    ];
-    
-    for (base_width, base_height) in base_resolutions {
-        if base_width <= max_width && base_height <= max_height {
-            resolutions.push((base_width, base_height, format!("{} x {}", base_width, base_height)));
-        }
-    }
-    
-    resolutions.push((max_width, max_height, format!("{} x {}", max_width, max_height)));
-    
-    Ok(resolutions)
 }
 
 /// Tauri IPC 命令：隐藏启动画面，显示并聚焦主窗口
@@ -3319,21 +3286,7 @@ pub fn app_init_run() {
                     let _ = splashscreen.close();
                 }
             } else {
-                if let Ok(config_content) = std::fs::read_to_string(&config_path) {
-                    if let Ok(config) = serde_json::from_str::<serde_json::Value>(&config_content) {
-                        if let (Some(width), Some(height)) = (
-                            config.get("width").and_then(serde_json::Value::as_u64),
-                            config.get("height").and_then(serde_json::Value::as_u64)
-                        ) {
-                            let _ = window.set_size(tauri::Size::Physical(tauri::PhysicalSize {
-                                width: width as u32,
-                                height: height as u32,
-                            }));
-                        }
-                        
-                        let _ = window.set_fullscreen(true);
-                    }
-                }
+                let _ = window.set_fullscreen(true);
                 
                 let args: Vec<String> = std::env::args().collect();
                 println!("启动参数: {:?}", args);
@@ -3387,7 +3340,6 @@ pub fn app_init_run() {
             settings_save_all,
             settings_delete_all,
             app_restart_process,
-            resolution_fetch_available,
             filetype_validate_pdf_default,
             window_hide_splashscreen,
             oobe_submit_complete,

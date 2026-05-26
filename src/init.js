@@ -169,11 +169,6 @@ async function settings_load_camera_config() {
 
             // Do not load brightness/contrast from saved settings — session-only controls
 
-            if (settings.width && settings.height) {
-                DRAW_CONFIG.renderW = settings.width;
-                DRAW_CONFIG.renderH = settings.height;
-            }
-
             if (settings.dprLimit !== undefined) {
                 DRAW_CONFIG.dprLimit = settings.dprLimit;
                 DRAW_CONFIG.baseDpr = window.devicePixelRatio || 1;

@@ -111,39 +111,6 @@ document.addEventListener('DOMContentLoaded', async () => {
                     });
                 }
                 
-                const resolutionSelected = document.getElementById('resolutionSelected');
-                const resolutionOptionsContainer = document.getElementById('resolutionOptions');
-                
-                if (resolutionSelected && resolutionOptionsContainer) {
-                    const availableResolutions = await invoke('resolution_fetch_available');
-                    
-                    resolutionOptionsContainer.innerHTML = '';
-                    
-                    availableResolutions.forEach(res => {
-                        const [width, height, label] = res;
-                        const option = document.createElement('div');
-                        option.className = 'select-option';
-                        option.dataset.value = `${width}x${height}`;
-                        option.dataset.width = width;
-                        option.dataset.height = height;
-                        option.textContent = label;
-                        resolutionOptionsContainer.appendChild(option);
-                    });
-                    
-                    if (settings.width && settings.height) {
-                        const resolution = `${settings.width}x${settings.height}`;
-                        const resolutionOptions = document.querySelectorAll('#resolutionOptions .select-option');
-                        resolutionOptions.forEach(option => {
-                            if (option.dataset.value === resolution) {
-                                resolutionSelected.textContent = option.textContent;
-                                option.classList.add('selected');
-                            } else {
-                                option.classList.remove('selected');
-                            }
-                        });
-                    }
-                }
-                
                 const cameraSelected = document.getElementById('cameraSelected');
                 const cameraOptionsContainer = document.getElementById('cameraOptions');
                 const cameraResolutionSelected = document.getElementById('cameraResolutionSelected');
@@ -695,9 +662,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
     
     settings_load_version();
-    settings_load_all().then(() => {
-        settings_setup_resolution_options();
-    });
+    settings_load_all();
     
     const languageSelect = document.getElementById('languageSelect');
     const selectSelected = document.getElementById('selectSelected');
@@ -735,54 +700,6 @@ document.addEventListener('DOMContentLoaded', async () => {
             if (!languageSelect.contains(e.target)) {
                 languageSelect.classList.remove('open');
             }
-        });
-    }
-    
-    const resolutionSelect = document.getElementById('resolutionSelect');
-    const resolutionSelected = document.getElementById('resolutionSelected');
-    
-    if (resolutionSelect && resolutionSelected) {
-        resolutionSelected.addEventListener('click', () => {
-            resolutionSelect.classList.toggle('open');
-        });
-        
-        document.addEventListener('click', (e) => {
-            if (!resolutionSelect.contains(e.target)) {
-                resolutionSelect.classList.remove('open');
-            }
-        });
-    }
-    
-    function settings_setup_resolution_options() {
-        const resolutionOptions = document.querySelectorAll('#resolutionOptions .select-option');
-        
-        resolutionOptions.forEach(option => {
-            option.addEventListener('click', async () => {
-                const width = parseInt(option.dataset.width);
-                const height = parseInt(option.dataset.height);
-                resolutionSelected.textContent = option.textContent;
-                
-                resolutionOptions.forEach(opt => opt.classList.remove('selected'));
-                option.classList.add('selected');
-                
-                resolutionSelect.classList.remove('open');
-                
-                const saved = await settings_save_all_local({ width, height });
-                
-                if (saved) {
-                    // 显示重启提示
-                    const restartModal = document.getElementById('restartModal');
-                    const modalMessage = restartModal?.querySelector('.modal-message');
-                    if (modalMessage) {
-                        modalMessage.textContent = window.i18n?.format_translate('settings.resolutionChanged') || '分辨率设置已更改，需要重启应用才能生效。';
-                    }
-                    if (restartModal) {
-                        restartModal.classList.add('active');
-                    }
-                } else {
-                    settings_show_dialog(window.i18n?.format_translate('settings.saveFailed') || '保存失败', window.i18n?.format_translate('settings.saveFailedRetry') || '保存设置失败，请重试', 'error');
-                }
-            });
         });
     }
     

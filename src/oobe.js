@@ -2,9 +2,8 @@
  * ViewStage 首次引导设置脚本
  *
  * OOBE 向导流程：
- * - 轮播展示 → 语言/主题选择（page1）
+ * - 轮播展示 → 语言选择（page1）
  * - 快速设置 / 导入配置选择（page2）
- * - 分辨率/主题配置（page3）
  * - 摄像头选择与预览（page4）
  * - 完成页（page5）
  */
@@ -51,8 +50,6 @@ let oobe_last_frame_time = 0;
 const oobe_frame_interval = 33;
 
 const oobe_default_config = {
-    width: 1920,
-    height: 1080,
     language: "zh-CN",
     theme: "com.viewstage.theme.simplify",
     defaultCamera: "",
@@ -250,62 +247,6 @@ function oobe_show_page1_from_page2() {
     }, 250);
 }
 
-async function oobe_show_page3() {
-    const page2 = document.getElementById('page2');
-    const page3 = document.getElementById('page3');
-    
-    page2.classList.remove('visible');
-    
-    setTimeout(() => {
-        page2.style.display = 'none';
-        page3.style.display = 'flex';
-        
-        setTimeout(() => {
-            page3.classList.add('visible');
-        }, 10);
-        
-        oobe_init_resolution_select();
-        oobe_setup_page3_buttons();
-    }, 250);
-}
-
-function oobe_show_page2_from_page3() {
-    const page2 = document.getElementById('page2');
-    const page3 = document.getElementById('page3');
-    
-    page3.classList.remove('visible');
-    
-    setTimeout(() => {
-        page3.style.display = 'none';
-        page2.style.display = 'flex';
-        
-        setTimeout(() => {
-            page2.classList.add('visible');
-        }, 10);
-    }, 250);
-}
-
-async function oobe_init_resolution_select() {
-    const resolutions = await invoke('resolution_fetch_available');
-    const resolutionOptions = document.getElementById('resolutionOptions');
-    const resolutionSelected = document.getElementById('resolutionSelected');
-
-    resolutionOptions.innerHTML = '';
-    resolutions.forEach((res, index) => {
-        const option = document.createElement('div');
-        option.className = 'select-option' + (index === 0 ? ' selected' : '');
-        option.dataset.value = `${res[0]}x${res[1]}`;
-        option.textContent = res[2];
-        resolutionOptions.appendChild(option);
-    });
-
-    if (resolutions.length > 0) {
-        resolutionSelected.textContent = resolutions[0][2];
-    }
-    
-    oobe_setup_custom_selects();
-}
-
 /**
  * 初始化所有自定义下拉选择框的点击交互和选项切换
  * 特殊处理：语言切换触发布局更新，主题切换触发实时应用
@@ -337,11 +278,6 @@ function oobe_setup_custom_selects() {
                     const newLocale = option.dataset.value;
                     await window.i18n.update_locale(newLocale);
                     oobe_update_page_texts();
-                }
-                
-                if (select.id === 'themeSelect' && window.ThemeManager) {
-                    const themeName = option.dataset.value;
-                    await window.ThemeManager.theme_update_active(themeName);
                 }
                 
                 if (select.id === 'cameraSelect') {
@@ -378,13 +314,10 @@ function oobe_init_document_click_handler() {
 function oobe_setup_page1_buttons() {
     document.getElementById('btnNext1').addEventListener('click', async () => {
         const languageSelect = document.getElementById('languageSelect');
-        const themeSelect = document.getElementById('themeSelect');
         
         const language = languageSelect.querySelector('.select-option.selected').dataset.value;
-        const theme = themeSelect.querySelector('.select-option.selected').dataset.value;
 
         oobe_cached_settings.language = language;
-        oobe_cached_settings.theme = theme;
         oobe_show_page2();
     });
 }
@@ -397,7 +330,7 @@ function oobe_setup_close_button() {
 
 function oobe_setup_page2_buttons() {
     document.getElementById('quickSetup').addEventListener('click', async () => {
-        oobe_show_page3();
+        oobe_show_page4();
     });
 
     document.getElementById('importConfig').addEventListener('click', async () => {
@@ -440,7 +373,7 @@ function oobe_setup_page2_buttons() {
 function oobe_validate_config(config) {
     if (!config || typeof config !== 'object') return false;
     
-    const requiredFields = ['width', 'height', 'language'];
+    const requiredFields = ['language'];
     for (const field of requiredFields) {
         if (config[field] === undefined) {
             return false;
@@ -450,32 +383,14 @@ function oobe_validate_config(config) {
     return true;
 }
 
-function oobe_setup_page3_buttons() {
-    document.getElementById('btnBack3').addEventListener('click', () => {
-        oobe_show_page2_from_page3();
-    });
-
-    document.getElementById('btnNext3').addEventListener('click', async () => {
-        const resolutionSelect = document.getElementById('resolutionSelect');
-        
-        const resolution = resolutionSelect.querySelector('.select-option.selected').dataset.value;
-        const [width, height] = resolution.split('x').map(Number);
-        
-        oobe_cached_settings.width = width;
-        oobe_cached_settings.height = height;
-        
-        oobe_show_page4();
-    });
-}
-
 async function oobe_show_page4() {
-    const page3 = document.getElementById('page3');
+    const page2 = document.getElementById('page2');
     const page4 = document.getElementById('page4');
     
-    page3.classList.remove('visible');
+    page2.classList.remove('visible');
     
     setTimeout(() => {
-        page3.style.display = 'none';
+        page2.style.display = 'none';
         page4.style.display = 'flex';
         
         setTimeout(() => {
@@ -487,8 +402,8 @@ async function oobe_show_page4() {
     }, 250);
 }
 
-function oobe_show_page3_from_page4() {
-    const page3 = document.getElementById('page3');
+function oobe_show_page2_from_page4() {
+    const page2 = document.getElementById('page2');
     const page4 = document.getElementById('page4');
     
     oobe_hide_camera_preview();
@@ -497,10 +412,10 @@ function oobe_show_page3_from_page4() {
     
     setTimeout(() => {
         page4.style.display = 'none';
-        page3.style.display = 'flex';
+        page2.style.display = 'flex';
         
         setTimeout(() => {
-            page3.classList.add('visible');
+            page2.classList.add('visible');
         }, 10);
     }, 250);
 }
@@ -756,7 +671,7 @@ async function oobe_init_camera_resolution_select(deviceId) {
 
 function oobe_setup_page4_buttons() {
     document.getElementById('btnBack4').addEventListener('click', () => {
-        oobe_show_page3_from_page4();
+        oobe_show_page2_from_page4();
     });
 
     document.getElementById('btnNext4').addEventListener('click', async () => {
