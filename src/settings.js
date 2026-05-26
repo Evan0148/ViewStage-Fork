@@ -94,7 +94,8 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (window.__TAURI__) {
             try {
                 const { invoke } = window.__TAURI__.core;
-                const settings = await invoke('settings_fetch_all');
+                const result = await invoke('settings_fetch_all');
+                const settings = result.settings;
                 
                 const selectSelected = document.getElementById('selectSelected');
                 const languageOptions = document.querySelectorAll('#selectOptions .select-option');
@@ -394,6 +395,9 @@ document.addEventListener('DOMContentLoaded', async () => {
                 // 主题设置 — 卡片模式
                 const savedTheme = settings.theme || 'com.viewstage.theme.simplify';
                 settings_load_user_themes(savedTheme);
+                if (window.ThemeManager) {
+                    window.ThemeManager.theme_update_active(savedTheme);
+                }
                 
                 const defaultRotationSelected = document.getElementById('defaultRotationSelected');
                 const defaultRotationOptionsContainer = document.getElementById('defaultRotationOptions');
@@ -510,10 +514,6 @@ document.addEventListener('DOMContentLoaded', async () => {
         grid.innerHTML = '';
 
         const builtinNames = ['com.viewstage.theme.dark', 'com.viewstage.theme.simplify'];
-        const builtinDirs = {
-            'com.viewstage.theme.dark': 'dark',
-            'com.viewstage.theme.simplify': 'simplify'
-        };
         const userThemes = [];
 
         themes.forEach(({ name, display_name, canvas_bg, text_color }) => {
@@ -525,9 +525,8 @@ document.addEventListener('DOMContentLoaded', async () => {
             const dotColor = isLight ? '#1a1a1a' : canvas_bg;
 
             const isBuiltin = builtinNames.includes(name);
-            const dir = builtinDirs[name] || name;
             const previewImg = isBuiltin
-                ? `<img class="theme-card-preview-img" src="themes/${dir}/preview.png" alt="${display_name}" loading="lazy">`
+                ? `<img class="theme-card-preview-img" src="themes/${name}/preview.png" alt="${display_name}" loading="lazy">`
                 : '';
 
             const fallbackHtml = !previewImg ? `
@@ -1514,8 +1513,8 @@ document.addEventListener('DOMContentLoaded', async () => {
                 const { save } = window.__TAURI__.dialog;
                 const { writeTextFile } = window.__TAURI__.fs;
                 
-                const settings = await invoke('settings_fetch_all');
-                const jsonStr = JSON.stringify(settings, null, 2);
+                const result = await invoke('settings_fetch_all');
+                const jsonStr = JSON.stringify(result.settings, null, 2);
                 
                 const filePath = await save({
                     defaultPath: 'viewstage-settings.json',

@@ -248,5 +248,9 @@
     "importFailedDesc": "檔案匯入失敗，請確保檔案格式正確",
     "cameraNotReady": "攝影機未就緒",
     "cameraNotReadyDesc": "攝影機尚未就緒，請稍後再試"
+  },
+  "config": {
+    "recoveryTitle": "配置已恢復",
+    "recoveryMessage": "以下配置項存在異常，已自動恢復為預設值："
   }
 }

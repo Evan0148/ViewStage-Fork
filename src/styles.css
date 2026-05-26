@@ -325,6 +325,28 @@ body {
     word-break: break-word;
 }
 
+.recovery-list {
+    text-align: left;
+    margin: 16px 0;
+    padding: 12px;
+    background: rgba(255, 255, 255, 0.05);
+    border-radius: 8px;
+    max-height: 200px;
+    overflow-y: auto;
+}
+
+.recovery-item {
+    padding: 6px 8px;
+    font-size: 14px;
+    color: var(--color-muted);
+    border-left: 3px solid var(--color-primary, #4a9eff);
+    margin-bottom: 4px;
+}
+
+.recovery-item:last-child {
+    margin-bottom: 0;
+}
+
 .error-buttons {
     display: flex;
     justify-content: center;

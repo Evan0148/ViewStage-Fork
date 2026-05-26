@@ -1399,24 +1399,61 @@ fn config_fetch_default() -> serde_json::Value {
     })
 }
 
-/// 用已有配置字段覆盖默认配置，确保新字段获得初始值
-fn config_merge_defaults(existing: &serde_json::Value, defaults: &serde_json::Value) -> serde_json::Value {
+/// JSON 值的类型名称（用于类型校验）
+fn json_type_name(v: &serde_json::Value) -> &'static str {
+    match v {
+        serde_json::Value::Null => "null",
+        serde_json::Value::Bool(_) => "bool",
+        serde_json::Value::Number(_) => "number",
+        serde_json::Value::String(_) => "string",
+        serde_json::Value::Array(_) => "array",
+        serde_json::Value::Object(_) => "object",
+    }
+}
+
+/// 校验并合并配置：类型不匹配的字段跳过现有值，保留默认值，并将字段名加入 recovered
+fn config_validate_and_merge(
+    existing: &serde_json::Value,
+    defaults: &serde_json::Value,
+    recovered: &mut Vec<String>,
+) -> serde_json::Value {
     let mut merged = defaults.clone();
     
     if let (Some(existing_obj), Some(merged_obj)) = (existing.as_object(), merged.as_object_mut()) {
         for (key, value) in existing_obj {
-            merged_obj.insert(key.clone(), value.clone());
+            if let Some(default_val) = defaults.get(key) {
+                if json_type_name(value) == json_type_name(default_val) {
+                    merged_obj.insert(key.clone(), value.clone());
+                } else {
+                    log::warn!(
+                        "配置项 '{}' 类型异常 (期望 {}, 实际 {})，已恢复默认值",
+                        key, json_type_name(default_val), json_type_name(value)
+                    );
+                    recovered.push(key.clone());
+                }
+            } else {
+                merged_obj.insert(key.clone(), value.clone());
+            }
         }
     }
     
     merged
 }
 
+/// settings_fetch_all 命令的返回结构
+#[derive(Serialize)]
+struct SettingsResult {
+    settings: serde_json::Value,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    recovered: Vec<String>,
+}
+
 /// Tauri IPC 命令：读取配置文件，按需执行版本迁移后返回完整配置
 ///
-/// 配置文件不存在时返回默认配置；版本过旧时先备份再逐级迁移
+/// 配置文件不存在时返回默认配置；版本过旧时先备份再逐级迁移；
+/// 字段类型异常时自动恢复为默认值并记录到 recovered 列表。
 #[tauri::command]
-async fn settings_fetch_all(app: tauri::AppHandle) -> Result<serde_json::Value, String> {
+async fn settings_fetch_all(app: tauri::AppHandle) -> Result<SettingsResult, String> {
     let paths = AppPaths::new(&app)?;
     let config_path = &paths.config_path;
     
@@ -1424,21 +1461,43 @@ async fn settings_fetch_all(app: tauri::AppHandle) -> Result<serde_json::Value, 
     
     if !config_path.exists() {
         log::info!("配置文件不存在，使用默认配置");
-        return Ok(default_config);
+        return Ok(SettingsResult { settings: default_config, recovered: Vec::new() });
     }
     
-    let config_content = std::fs::read_to_string(&config_path)
-        .map_err(|e| format!("读取配置文件失败: {}", e))?;
+    let config_content = match std::fs::read_to_string(&config_path) {
+        Ok(c) => c,
+        Err(e) => {
+            log::warn!("读取配置文件失败: {}，使用默认配置", e);
+            let timestamp = chrono::Local::now().format("%Y%m%d_%H%M%S");
+            let backup_name = format!("config.json.corrupted_{}", timestamp);
+            let backup_path = config_path.parent().unwrap().join(&backup_name);
+            let _ = std::fs::copy(&config_path, &backup_path);
+            log::info!("损坏的配置文件已备份到: {:?}", backup_path);
+            return Ok(SettingsResult { settings: default_config, recovered: Vec::new() });
+        }
+    };
     
-    let mut existing_config = serde_json::from_str::<serde_json::Value>(&config_content)
-        .map_err(|e| format!("解析配置文件失败: {}", e))?;
+    let mut existing_config = match serde_json::from_str::<serde_json::Value>(&config_content) {
+        Ok(v) => v,
+        Err(e) => {
+            log::warn!("解析配置文件失败: {}，使用默认配置", e);
+            let timestamp = chrono::Local::now().format("%Y%m%d_%H%M%S");
+            let backup_name = format!("config.json.corrupted_{}", timestamp);
+            let backup_path = config_path.parent().unwrap().join(&backup_name);
+            let _ = std::fs::copy(&config_path, &backup_path);
+            log::info!("损坏的配置文件已备份到: {:?}", backup_path);
+            return Ok(SettingsResult { settings: default_config, recovered: Vec::new() });
+        }
+    };
+    
+    let mut recovered: Vec<String> = Vec::new();
     
     let current_version = existing_config
         .get("config_version")
         .and_then(|v| v.as_u64())
         .unwrap_or(0) as u32;
     
-    if current_version < CURRENT_CONFIG_VERSION {
+    let merged_config = if current_version < CURRENT_CONFIG_VERSION {
         log::info!("检测到配置版本过旧: v{} < v{}", current_version, CURRENT_CONFIG_VERSION);
         
         let backup_path = config_backup_create(&config_path, current_version)?;
@@ -1447,9 +1506,9 @@ async fn settings_fetch_all(app: tauri::AppHandle) -> Result<serde_json::Value, 
         
         match config_migrate_run(&mut existing_config, &migrations) {
             Ok(_) => {
-                let merged_config = config_merge_defaults(&existing_config, &default_config);
+                let result = config_validate_and_merge(&existing_config, &default_config, &mut recovered);
                 
-                let merged_str = serde_json::to_string_pretty(&merged_config)
+                let merged_str = serde_json::to_string_pretty(&result)
                     .map_err(|e| format!("序列化配置失败: {}", e))?;
                 
                 std::fs::write(&config_path, merged_str)
@@ -1464,7 +1523,7 @@ async fn settings_fetch_all(app: tauri::AppHandle) -> Result<serde_json::Value, 
                 config_backup_cleanup_old(&paths.config_dir, 3);
                 
                 log::info!("配置迁移成功");
-                Ok(merged_config)
+                result
             }
             Err(e) => {
                 log::error!("配置迁移失败: {}", e);
@@ -1475,25 +1534,36 @@ async fn settings_fetch_all(app: tauri::AppHandle) -> Result<serde_json::Value, 
                 }
                 
                 log::info!("已回滚到迁移前的配置");
-                let merged_config = config_merge_defaults(&existing_config, &default_config);
-                Ok(merged_config)
+                config_validate_and_merge(&existing_config, &default_config, &mut recovered)
             }
         }
     } else {
-        let merged_config = config_merge_defaults(&existing_config, &default_config);
+        let result = config_validate_and_merge(&existing_config, &default_config, &mut recovered);
         
-        let merged_str = serde_json::to_string_pretty(&merged_config)
+        let merged_str = serde_json::to_string_pretty(&result)
             .map_err(|e| format!("序列化配置失败: {}", e))?;
         std::fs::write(&config_path, merged_str)
             .map_err(|e| format!("保存配置失败: {}", e))?;
         
-        Ok(merged_config)
+        result
+    };
+    
+    if !recovered.is_empty() {
+        // 备份异常配置
+        let timestamp = chrono::Local::now().format("%Y%m%d_%H%M%S");
+        let backup_name = format!("config.json.before_recovery_{}", timestamp);
+        let backup_path = config_path.parent().unwrap().join(&backup_name);
+        let _ = std::fs::write(&backup_path, &config_content);
+        log::info!("恢复前的配置已备份到: {:?}", backup_path);
     }
+    
+    Ok(SettingsResult { settings: merged_config, recovered })
 }
 
 /// Tauri IPC 命令：增量保存配置（用原子写入避免文件损坏）
 ///
-/// 现有配置与传入设置按 key 合并，先写临时文件再 rename 实现原子替换
+/// 现有配置与传入设置按 key 合并，先写临时文件再 rename 实现原子替换。
+/// 写入前校验传入值类型，类型不匹配的字段将被跳过。
 #[tauri::command]
 async fn settings_save_all(app: tauri::AppHandle, settings: serde_json::Value) -> Result<(), String> {
     let paths = AppPaths::new(&app)?;
@@ -1505,13 +1575,26 @@ async fn settings_save_all(app: tauri::AppHandle, settings: serde_json::Value) -
     let config_path = &paths.config_path;
     let temp_path = config_path.with_extension("json.tmp");
     
+    let default_config = config_fetch_default();
+    
     let existing_settings = if config_path.exists() {
         if let Ok(config_content) = std::fs::read_to_string(&config_path) {
             if let Ok(mut existing) = serde_json::from_str::<serde_json::Value>(&config_content) {
                 if let Some(obj) = existing.as_object_mut() {
                     if let Some(new_obj) = settings.as_object() {
                         for (key, value) in new_obj {
-                            obj.insert(key.clone(), value.clone());
+                            if let Some(default_val) = default_config.get(key) {
+                                if json_type_name(value) == json_type_name(default_val) {
+                                    obj.insert(key.clone(), value.clone());
+                                } else {
+                                    log::warn!(
+                                        "保存配置时跳过字段 '{}'：类型不匹配 (期望 {}, 实际 {})",
+                                        key, json_type_name(default_val), json_type_name(value)
+                                    );
+                                }
+                            } else {
+                                obj.insert(key.clone(), value.clone());
+                            }
                         }
                     }
                 }

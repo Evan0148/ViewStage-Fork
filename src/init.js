@@ -147,7 +147,12 @@ async function settings_load_camera_config() {
             const { invoke } = window.__TAURI__.core;
             const state = window.state;
             const DRAW_CONFIG = window.DRAW_CONFIG;
-            const settings = await invoke('settings_fetch_all');
+            const result = await invoke('settings_fetch_all');
+            const settings = result.settings;
+
+            if (result.recovered?.length) {
+                show_config_recovery_dialog(result.recovered);
+            }
 
             if (settings.defaultCamera) {
                 state.defaultCameraId = settings.defaultCamera;
@@ -355,6 +360,56 @@ async function main_init_all() {
             window.i18n?.format_translate('errors.initFailedDesc') || '应用初始化失败，请刷新页面重试'
         );
     }
+}
+
+// 配置恢复提示弹窗：当后端检测到配置异常并重置为默认值时显示
+function show_config_recovery_dialog(recoveredFields) {
+    const fieldLabels = {
+        theme: window.i18n?.format_translate('settings.theme') || '主题',
+        language: window.i18n?.format_translate('settings.language') || '语言',
+        width: window.i18n?.format_translate('settings.resolution') || '分辨率',
+        height: window.i18n?.format_translate('settings.resolution') || '分辨率',
+        contrast: window.i18n?.format_translate('settings.contrast') || '对比度',
+        brightness: window.i18n?.format_translate('settings.brightness') || '亮度',
+        saturation: window.i18n?.format_translate('settings.saturation') || '饱和度',
+        sharpen: window.i18n?.format_translate('settings.sharpen') || '锐化',
+        defaultCamera: window.i18n?.format_translate('settings.camera') || '摄像头',
+        penColors: window.i18n?.format_translate('settings.penColors') || '画笔颜色',
+        autoClearCacheDays: window.i18n?.format_translate('settings.autoClearCache') || '自动清理缓存',
+    };
+    const labels = recoveredFields.map(f => fieldLabels[f] || f);
+    const listHtml = labels.map(l => `<div class="recovery-item">${l}</div>`).join('');
+
+    const existing = document.getElementById('configRecoveryDialog');
+    if (existing) existing.remove();
+
+    const title = window.i18n?.format_translate('config.recoveryTitle');
+    const message = window.i18n?.format_translate('config.recoveryMessage');
+    const btnText = window.i18n?.format_translate('common.confirm') || '确认';
+    const finalTitle = (title && !title.includes('config.')) ? title : '配置已恢复';
+    const finalMessage = (message && !message.includes('config.')) ? message : '以下配置项存在异常，已自动恢复为默认值：';
+    const finalBtn = btnText || '知道了';
+
+    const dialog = document.createElement('div');
+    dialog.id = 'configRecoveryDialog';
+    dialog.className = 'error-dialog-overlay';
+    dialog.innerHTML = `
+        <div class="error-dialog">
+            <div class="error-icon">🛡️</div>
+            <div class="error-title">${finalTitle}</div>
+            <div class="error-message">${finalMessage}</div>
+            <div class="recovery-list">${listHtml}</div>
+            <div class="error-buttons">
+                <button class="error-btn error-btn-close" id="configRecoveryClose">${finalBtn}</button>
+            </div>
+        </div>
+    `;
+    document.body.appendChild(dialog);
+
+    document.getElementById('configRecoveryClose')?.addEventListener('click', () => dialog.remove());
+    dialog.addEventListener('click', (e) => {
+        if (e.target === dialog) dialog.remove();
+    });
 }
 
 if (document.readyState === 'loading') {

@@ -251,5 +251,9 @@
     "importFailedDesc": "文件导入失败，请确保文件格式正确",
     "cameraNotReady": "摄像头未就绪",
     "cameraNotReadyDesc": "摄像头尚未就绪，请稍后再试"
+  },
+  "config": {
+    "recoveryTitle": "配置已恢复",
+    "recoveryMessage": "以下配置项存在异常，已自动恢复为默认值："
   }
 }

@@ -251,5 +251,9 @@
     "importFailedDesc": "File import failed, please ensure the file format is correct",
     "cameraNotReady": "Camera Not Ready",
     "cameraNotReadyDesc": "Camera is not ready yet, please try again later"
+  },
+  "config": {
+    "recoveryTitle": "Settings Recovered",
+    "recoveryMessage": "The following settings were invalid and have been restored to defaults:"
   }
 }

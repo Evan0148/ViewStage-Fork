@@ -5,11 +5,6 @@ const ThemeManager = {
   userThemePath: null,
   isSettingsPage: false,
 
-  BUILTIN_PACKAGES: {
-    'com.viewstage.theme.dark': 'dark',
-    'com.viewstage.theme.simplify': 'simplify'
-  },
-
   /**
    * 初始化主题管理器，加载指定主题（默认从配置读取）
    * @param {string|null} themeName - 主题包名，不传则从后端配置读取
@@ -32,8 +27,8 @@ const ThemeManager = {
     if (window.__TAURI__) {
       try {
         const { invoke } = window.__TAURI__.core;
-        const settings = await invoke('settings_fetch_all');
-        return settings?.theme || 'com.viewstage.theme.simplify';
+        const result = await invoke('settings_fetch_all');
+        return result.settings?.theme || 'com.viewstage.theme.simplify';
       } catch (e) {
         console.warn('无法获取保存的主题设置:', e);
       }
@@ -48,12 +43,17 @@ const ThemeManager = {
   async theme_update_active(themeName) {
     try {
       let themeModule = null;
-      const builtinDir = this.BUILTIN_PACKAGES[themeName];
       
-      if (builtinDir) {
-        const module = await import(`./${builtinDir}/theme.js`);
-        themeModule = module.default;
-      } else if (window.__TAURI__) {
+      if (themeName) {
+        try {
+          const module = await import(`./${themeName}/theme.js`);
+          themeModule = module.default;
+        } catch (e) {
+          // not a built-in theme, try user theme below
+        }
+      }
+      
+      if (!themeModule && window.__TAURI__) {
         if (!this.userThemePath) {
           const { invoke } = window.__TAURI__.core;
           try {
@@ -75,6 +75,10 @@ const ThemeManager = {
       
       if (!themeModule) {
         console.error(`Theme not found: ${themeName}`);
+        if (themeName !== 'com.viewstage.theme.simplify') {
+          console.log('回退到默认主题');
+          return this.theme_update_active('com.viewstage.theme.simplify');
+        }
         return;
       }
       
@@ -88,6 +92,10 @@ const ThemeManager = {
       this.theme_load_icons();
     } catch (error) {
       console.error(`Failed to load theme: ${themeName}`, error);
+      if (themeName !== 'com.viewstage.theme.simplify') {
+        console.log('回退到默认主题');
+        return this.theme_update_active('com.viewstage.theme.simplify');
+      }
     }
   },
 
@@ -97,11 +105,7 @@ const ThemeManager = {
    * @returns {boolean}
    */
   theme_validate_builtin(themeName) {
-    return !!this.BUILTIN_PACKAGES[themeName];
-  },
-
-  theme_fetch_builtin_dir(themeName) {
-    return this.BUILTIN_PACKAGES[themeName] || null;
+    return typeof themeName === 'string' && themeName.startsWith('com.viewstage.theme.');
   },
 
   async theme_validate_user(themeDir) {
@@ -251,8 +255,7 @@ const ThemeManager = {
     if (this.currentThemeModule && this.currentThemeModule.fetch_icon_path) {
       return this.currentThemeModule.fetch_icon_path(iconName);
     }
-    const dir = this.BUILTIN_PACKAGES[this.currentTheme] || this.currentTheme;
-    return `themes/${dir}/icons/${iconName}.svg`;
+    return `themes/${this.currentTheme}/icons/${iconName}.svg`;
   },
 
   /**
@@ -284,9 +287,13 @@ const ThemeManager = {
 };
 
 if (document.readyState === 'loading') {
-  document.addEventListener('DOMContentLoaded', () => ThemeManager.init());
+  document.addEventListener('DOMContentLoaded', () => {
+    ThemeManager.isSettingsPage = window.location.pathname.includes('settings.html');
+    ThemeManager.theme_update_active('com.viewstage.theme.simplify');
+  });
 } else {
-  ThemeManager.init();
+  ThemeManager.isSettingsPage = window.location.pathname.includes('settings.html');
+  ThemeManager.theme_update_active('com.viewstage.theme.simplify');
 }
 
 export default ThemeManager;
