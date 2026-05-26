@@ -71,6 +71,42 @@
         <button class="btn-back" id="btnBack2" data-i18n="common.back">返回</button>
     </div>
 
+    <div class="oobe-container" id="page3" style="display: none;">
+        <div class="logo-section">
+            <img class="logo-icon" src="assets/Square1024x1024Logo.png" alt="ViewStage">
+            <h1 class="welcome-title" data-i18n="oobe.quickSetup">快速设置</h1>
+            <p class="welcome-subtitle" data-i18n="oobe.basicSettings">基本设置</p>
+        </div>
+
+        <div class="settings-section">
+            <div class="setting-item">
+                <span class="setting-label" data-i18n="settings.penEffect">钢笔效果</span>
+                <div class="option-group" id="penEffectModeGroup" data-active="limited">
+                    <button class="option-btn" data-value="off" data-i18n="settings.penEffectOff">关闭</button>
+                    <button class="option-btn active" data-value="limited" data-i18n="settings.penEffectLimited">限制</button>
+                    <button class="option-btn" data-value="full" data-i18n="settings.penEffectFull">完整</button>
+                </div>
+            </div>
+            <div class="setting-item">
+                <span class="setting-label" data-i18n="settings.dprLimit">画面精度</span>
+                <div class="custom-select" id="dprLimitSelect">
+                    <div class="select-selected" id="dprLimitSelected">2x</div>
+                    <div class="select-options" id="dprLimitOptions">
+                        <div class="select-option" data-value="0.5">0.5x</div>
+                        <div class="select-option" data-value="1">1x</div>
+                        <div class="select-option" data-value="1.5">1.5x</div>
+                        <div class="select-option selected" data-value="2">2x</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="page-nav">
+            <button class="btn-back" id="btnBack3" data-i18n="common.back">返回</button>
+            <button class="btn-start" id="btnNext3" data-i18n="common.next">下一步</button>
+        </div>
+    </div>
+
     <div class="oobe-container" id="page4" style="display: none;">
         <div class="camera-preview-section">
             <div class="camera-preview-container">

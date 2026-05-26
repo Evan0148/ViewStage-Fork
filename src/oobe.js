@@ -4,6 +4,7 @@
  * OOBE 向导流程：
  * - 轮播展示 → 语言选择（page1）
  * - 快速设置 / 导入配置选择（page2）
+ * - 钢笔模式（page3）
  * - 摄像头选择与预览（page4）
  * - 完成页（page5）
  */
@@ -283,16 +284,19 @@ function oobe_setup_custom_selects() {
                 if (select.id === 'cameraSelect') {
                     try {
                         const deviceId = option.dataset.value;
-                        await oobe_init_camera_resolution_select(deviceId);
-                        oobe_hide_camera_preview();
-                        oobe_init_camera_preview();
+                        if (oobe_camera_preview_stream) {
+                            oobe_camera_preview_stream.getTracks().forEach(t => t.stop());
+                            oobe_camera_preview_stream = null;
+                        }
+                        oobe_camera_preview_stream = await navigator.mediaDevices.getUserMedia({ video: { deviceId: { exact: deviceId } } });
+                        await oobe_init_camera_resolution_select(oobe_camera_preview_stream);
+                        document.getElementById('cameraPreview').srcObject = oobe_camera_preview_stream;
                     } catch (error) {
                         console.error('切换摄像头失败:', error);
                     }
                 }
                 
                 if (select.id === 'cameraResolutionSelect') {
-                    oobe_hide_camera_preview();
                     oobe_init_camera_preview();
                 }
             }
@@ -328,9 +332,91 @@ function oobe_setup_close_button() {
     });
 }
 
+async function oobe_show_page3() {
+    const page2 = document.getElementById('page2');
+    const page3 = document.getElementById('page3');
+    
+    page2.classList.remove('visible');
+    
+    setTimeout(() => {
+        page2.style.display = 'none';
+        page3.style.display = 'flex';
+        
+        setTimeout(() => {
+            page3.classList.add('visible');
+        }, 10);
+        
+        oobe_setup_page3_buttons();
+    }, 250);
+}
+
+function oobe_show_page2_from_page3() {
+    const page2 = document.getElementById('page2');
+    const page3 = document.getElementById('page3');
+    
+    page3.classList.remove('visible');
+    
+    setTimeout(() => {
+        page3.style.display = 'none';
+        page2.style.display = 'flex';
+        
+        setTimeout(() => {
+            page2.classList.add('visible');
+        }, 10);
+    }, 250);
+}
+
+function oobe_show_page3_from_page4() {
+    const page3 = document.getElementById('page3');
+    const page4 = document.getElementById('page4');
+    
+    oobe_hide_camera_preview();
+    
+    page4.classList.remove('visible');
+    
+    setTimeout(() => {
+        page4.style.display = 'none';
+        page3.style.display = 'flex';
+        
+        setTimeout(() => {
+            page3.classList.add('visible');
+        }, 10);
+    }, 250);
+}
+
+function oobe_setup_page3_buttons() {
+    const penEffectGroup = document.getElementById('penEffectModeGroup');
+    if (penEffectGroup) {
+        penEffectGroup.querySelectorAll('.option-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                penEffectGroup.querySelectorAll('.option-btn').forEach(b => b.classList.remove('active'));
+                btn.classList.add('active');
+                penEffectGroup.dataset.active = btn.dataset.value;
+            });
+        });
+    }
+
+    document.getElementById('btnBack3').addEventListener('click', () => {
+        oobe_show_page2_from_page3();
+    });
+
+    document.getElementById('btnNext3').addEventListener('click', async () => {
+        const penEffectGroup = document.getElementById('penEffectModeGroup');
+        const activeBtn = penEffectGroup?.querySelector('.option-btn.active');
+        oobe_cached_settings.penEffectMode = activeBtn?.dataset.value || 'limited';
+
+        const dprOption = document.querySelector('#dprLimitSelect .select-option.selected');
+        if (dprOption) {
+            oobe_cached_settings.dprLimit = parseFloat(dprOption.dataset.value);
+        }
+
+        oobe_show_page4();
+    });
+}
+
 function oobe_setup_page2_buttons() {
     document.getElementById('quickSetup').addEventListener('click', async () => {
-        oobe_show_page4();
+        oobe_show_page3();
     });
 
     document.getElementById('importConfig').addEventListener('click', async () => {
@@ -384,13 +470,13 @@ function oobe_validate_config(config) {
 }
 
 async function oobe_show_page4() {
-    const page2 = document.getElementById('page2');
+    const page3 = document.getElementById('page3');
     const page4 = document.getElementById('page4');
     
-    page2.classList.remove('visible');
+    page3.classList.remove('visible');
     
     setTimeout(() => {
-        page2.style.display = 'none';
+        page3.style.display = 'none';
         page4.style.display = 'flex';
         
         setTimeout(() => {
@@ -402,36 +488,19 @@ async function oobe_show_page4() {
     }, 250);
 }
 
-function oobe_show_page2_from_page4() {
-    const page2 = document.getElementById('page2');
-    const page4 = document.getElementById('page4');
-    
-    oobe_hide_camera_preview();
-    
-    page4.classList.remove('visible');
-    
-    setTimeout(() => {
-        page4.style.display = 'none';
-        page2.style.display = 'flex';
-        
-        setTimeout(() => {
-            page2.classList.add('visible');
-        }, 10);
-    }, 250);
-}
-
 /**
  * 枚举摄像头设备并初始化选择列表和预览
- * 处理无权限、无设备、获取失败三种异常场景
+ * 仅调用一次 getUserMedia，复用流做分辨率检测和预览
  */
 async function oobe_init_camera_select() {
     const cameraOptions = document.getElementById('cameraOptions');
     const cameraSelected = document.getElementById('cameraSelected');
     const cameraResolutionSelected = document.getElementById('cameraResolutionSelected');
+    const video = document.getElementById('cameraPreview');
+    const placeholder = document.getElementById('cameraPreviewPlaceholder');
 
     try {
-        const stream = await navigator.mediaDevices.getUserMedia({ video: true });
-        stream.getTracks().forEach(t => t.stop());
+        oobe_camera_preview_stream = await navigator.mediaDevices.getUserMedia({ video: true });
         
         const devices = await navigator.mediaDevices.enumerateDevices();
         const videoDevices = devices.filter(device => device.kind === 'videoinput');
@@ -457,14 +526,13 @@ async function oobe_init_camera_select() {
         const cameraText = window.i18n?.format_translate('camera.camera') || '摄像头';
         cameraSelected.textContent = videoDevices[0].label || `${cameraText} 1`;
         
-        try {
-            await oobe_init_camera_resolution_select(videoDevices[0].deviceId);
-        } catch (e) {
-            console.error('初始化分辨率选择失败:', e);
-        }
+        await oobe_init_camera_resolution_select(oobe_camera_preview_stream);
+        
+        video.srcObject = oobe_camera_preview_stream;
+        video.classList.add('active');
+        placeholder.classList.add('hidden');
         
         oobe_setup_custom_selects();
-        oobe_init_camera_preview();
     } catch (error) {
         console.error('摄像头检测失败:', error.name);
         
@@ -496,8 +564,7 @@ function oobe_hide_camera_settings() {
 }
 
 /**
- * 根据当前选中的摄像头和设备分辨率打开实时视频预览
- * 异常时显示占位提示文本
+ * 在现有流上切换摄像头或分辨率，避免重新创建流
  */
 async function oobe_init_camera_preview() {
     const video = document.getElementById('cameraPreview');
@@ -515,19 +582,20 @@ async function oobe_init_camera_preview() {
         const width = resolutionOption ? parseInt(resolutionOption.dataset.width) : 1280;
         const height = resolutionOption ? parseInt(resolutionOption.dataset.height) : 720;
         
-        const constraints = {
-            video: {
-                width: { ideal: width },
-                height: { ideal: height }
+        if (oobe_camera_preview_stream) {
+            const track = oobe_camera_preview_stream.getVideoTracks()[0];
+            if (track) {
+                await track.applyConstraints({
+                    width: { ideal: width },
+                    height: { ideal: height },
+                    deviceId: deviceId ? { exact: deviceId } : undefined
+                }).catch(() => {});
             }
-        };
-        
-        if (deviceId) {
-            constraints.video.deviceId = { exact: deviceId };
         }
         
-        oobe_camera_preview_stream = await navigator.mediaDevices.getUserMedia(constraints);
-        video.srcObject = oobe_camera_preview_stream;
+        if (!video.srcObject) {
+            video.srcObject = oobe_camera_preview_stream;
+        }
         video.classList.add('active');
         placeholder.classList.add('hidden');
     } catch (error) {
@@ -544,101 +612,45 @@ function oobe_hide_camera_preview() {
 }
 
 /**
- * 通过摄像头能力检测获取设备实际支持的分辨率列表
+ * 通过摄像头 getCapabilities 获取支持的常见分辨率列表
+ * 无需逐项 applyConstraints，避免摄像头闪烁和延迟
  *
- * @param {string} deviceId - 摄像头设备 ID
- * @returns {Promise<Array<{w:number, h:number, label:string}>>} 支持的分辨率数组（按面积降序）
+ * @param {MediaStream} stream - 已打开的摄像头流
+ * @returns {Array<{w:number, h:number, label:string}>} 支持的分辨率数组（按面积降序）
  */
-async function oobe_fetch_supported_resolutions(deviceId) {
+function oobe_fetch_supported_resolutions(stream) {
     const commonResolutions = [
-        { w: 640, h: 480, label: '640 x 480 (VGA)', aspectRatio: '4:3' },
-        { w: 800, h: 600, label: '800 x 600 (SVGA)', aspectRatio: '4:3' },
-        { w: 1280, h: 720, label: '1280 x 720 (720p)', aspectRatio: '16:9' },
-        { w: 1280, h: 960, label: '1280 x 960', aspectRatio: '4:3' },
-        { w: 1600, h: 1200, label: '1600 x 1200', aspectRatio: '4:3' },
-        { w: 1920, h: 1080, label: '1920 x 1080 (1080p)', aspectRatio: '16:9' },
-        { w: 2560, h: 1440, label: '2560 x 1440 (2K)', aspectRatio: '16:9' },
-        { w: 3840, h: 2160, label: '3840 x 2160 (4K)', aspectRatio: '16:9' }
+        { w: 640, h: 480, label: '640 x 480 (VGA)' },
+        { w: 800, h: 600, label: '800 x 600 (SVGA)' },
+        { w: 1280, h: 720, label: '1280 x 720 (720p)' },
+        { w: 1280, h: 960, label: '1280 x 960' },
+        { w: 1600, h: 1200, label: '1600 x 1200' },
+        { w: 1920, h: 1080, label: '1920 x 1080 (1080p)' },
+        { w: 2560, h: 1440, label: '2560 x 1440 (2K)' },
+        { w: 3840, h: 2160, label: '3840 x 2160 (4K)' }
     ];
     
-    let stream = null;
-    let track = null;
-    const supportedResolutions = [];
+    const track = stream.getVideoTracks()[0];
+    if (!track) return [];
     
-    try {
-        let constraints;
-        if (deviceId) {
-            constraints = { video: { deviceId: { exact: deviceId } } };
-        } else {
-            constraints = { video: true };
-        }
-        
-        stream = await navigator.mediaDevices.getUserMedia(constraints);
-        track = stream.getVideoTracks()[0];
-        
-        const capabilities = track.getCapabilities();
-        const maxWidth = capabilities.width?.max || 1920;
-        const maxHeight = capabilities.height?.max || 1080;
-        
-        const testedResolutions = new Set();
-        
-        for (const res of commonResolutions) {
-            if (res.w > maxWidth || res.h > maxHeight) continue;
-            
-            try {
-                await track.applyConstraints({
-                    width: { exact: res.w },
-                    height: { exact: res.h }
-                });
-                
-                const settings = track.getSettings();
-                if (settings.width === res.w && settings.height === res.h) {
-                    supportedResolutions.push({ ...res, actual: true });
-                    testedResolutions.add(`${res.w}x${res.h}`);
-                }
-            } catch (e) {
-                // 分辨率不支持，跳过
-            }
-        }
-        
-        try {
-            await track.applyConstraints({
-                width: { ideal: maxWidth },
-                height: { ideal: maxHeight }
-            });
-            
-            const maxSettings = track.getSettings();
-            const actualMaxW = maxSettings.width;
-            const actualMaxH = maxSettings.height;
-            const maxKey = `${actualMaxW}x${actualMaxH}`;
-            
-            if (!testedResolutions.has(maxKey) && actualMaxW && actualMaxH) {
-                const maxText = window.i18n?.format_translate('settings.maximum') || '最大';
-                supportedResolutions.push({
-                    w: actualMaxW,
-                    h: actualMaxH,
-                    label: `${actualMaxW} x ${actualMaxH} (${maxText})`,
-                    actual: true
-                });
-            }
-        } catch (e) {
-        }
-        
-    } catch (error) {
-        console.error('检测摄像头分辨率失败:', error);
-    } finally {
-        if (track) {
-            track.stop();
-        }
-        if (stream) {
-            stream.getTracks().forEach(t => t.stop());
-        }
+    const capabilities = track.getCapabilities();
+    const maxW = capabilities.width?.max || 1920;
+    const maxH = capabilities.height?.max || 1080;
+    
+    const maxText = window.i18n?.format_translate('settings.maximum') || '最大';
+    const resolutions = commonResolutions
+        .filter(r => r.w <= maxW && r.h <= maxH)
+        .map(r => ({ ...r }));
+    
+    const hasExactMax = resolutions.some(r => r.w === maxW && r.h === maxH);
+    if (!hasExactMax) {
+        resolutions.push({ w: maxW, h: maxH, label: `${maxW} x ${maxH} (${maxText})` });
     }
     
-    return supportedResolutions.sort((a, b) => (b.w * b.h) - (a.w * a.h));
+    return resolutions.sort((a, b) => (b.w * b.h) - (a.w * a.h));
 }
 
-async function oobe_init_camera_resolution_select(deviceId) {
+async function oobe_init_camera_resolution_select(stream) {
     const cameraResolutionOptions = document.getElementById('cameraResolutionOptions');
     const cameraResolutionSelected = document.getElementById('cameraResolutionSelected');
     
@@ -646,7 +658,7 @@ async function oobe_init_camera_resolution_select(deviceId) {
     
     cameraResolutionOptions.innerHTML = '';
     
-    const resolutions = await oobe_fetch_supported_resolutions(deviceId);
+    const resolutions = oobe_fetch_supported_resolutions(stream);
     
     if (resolutions.length === 0) {
         cameraResolutionSelected.textContent = window.i18n?.format_translate('settings.cannotGet') || '无法获取';
@@ -671,7 +683,7 @@ async function oobe_init_camera_resolution_select(deviceId) {
 
 function oobe_setup_page4_buttons() {
     document.getElementById('btnBack4').addEventListener('click', () => {
-        oobe_show_page2_from_page4();
+        oobe_show_page3_from_page4();
     });
 
     document.getElementById('btnNext4').addEventListener('click', async () => {
