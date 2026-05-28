@@ -1,11 +1,5 @@
-/**
- * 批量绘制管理器 - 实时笔迹批量渲染
- * 待绘制命令按批次聚合，通过 requestAnimationFrame 调度刷新；
- * 支持自适应帧率调节和钢笔效果笔锋模拟
- */
 class RealtimeBatchDrawManager {
     constructor() {
-        this.ctx = null;
         this.pendingCommands = [];
         this.pendingCount = 0;
         this.drawRafId = null;
@@ -49,20 +43,99 @@ class RealtimeBatchDrawManager {
         this._lastToY = null;
         this._speedBuffer = [];
         this._storedWidths = [];
+
+        this._overlayCanvas = null;
+        this._overlayCtx = null;
+        this._overlayTransformScale = 0;
+        this._overlayTransformX = 0;
+        this._overlayTransformY = 0;
     }
 
-    // 获取或缓存 canvas 上下文
-    batch_draw_fetch_ctx() {
-        if (!this.ctx) {
-            this.ctx = window.dom?.drawCtx;
+    init_overlay(container, screenW, screenH, dpr) {
+        this._overlayCanvas = document.createElement('canvas');
+        this._overlayCanvas.className = 'canvas-tile draw-overlay';
+        this._overlayCanvas.width = Math.ceil(screenW * dpr);
+        this._overlayCanvas.height = Math.ceil(screenH * dpr);
+        this._overlayCanvas.style.width = screenW + 'px';
+        this._overlayCanvas.style.height = screenH + 'px';
+        container.appendChild(this._overlayCanvas);
+        this._overlayCtx = this._overlayCanvas.getContext('2d');
+        this._overlayCtx.imageSmoothingEnabled = false;
+        this._overlayTransformScale = 0;
+    }
+
+    resize_overlay(screenW, screenH, dpr) {
+        if (this._overlayCanvas) {
+            this._overlayCanvas.width = Math.ceil(screenW * dpr);
+            this._overlayCanvas.height = Math.ceil(screenH * dpr);
+            this._overlayCanvas.style.width = screenW + 'px';
+            this._overlayCanvas.style.height = screenH + 'px';
         }
-        return this.ctx;
+        this._overlayTransformScale = 0;
     }
 
-    /**
-     * 更新帧率模式（低/高/自适应）
-     * @param {string} mode - 'low' | 'high' | 'adaptive'
-     */
+    destroy_overlay() {
+        if (this._overlayCanvas && this._overlayCanvas.parentNode) {
+            this._overlayCanvas.parentNode.removeChild(this._overlayCanvas);
+        }
+        this._overlayCanvas = null;
+        this._overlayCtx = null;
+    }
+
+    _sync_overlay_transform() {
+        if (!this._overlayCtx) return;
+        const dpr = window.DRAW_CONFIG.dpr;
+        const scale = window.state.scale || 1;
+        const canvasX = window.state.canvasX || 0;
+        const canvasY = window.state.canvasY || 0;
+        this._overlayCtx.setTransform(scale * dpr, 0, 0, scale * dpr, canvasX * dpr, canvasY * dpr);
+    }
+
+    clear_overlay() {
+        if (this._overlayCtx) {
+            this._overlayCtx.setTransform(1, 0, 0, 1, 0, 0);
+            this._overlayCtx.clearRect(0, 0, this._overlayCanvas.width, this._overlayCanvas.height);
+        }
+        this._overlayTransformScale = 0;
+    }
+
+    _each_tile(x1, y1, x2, y2, fn) {
+        const tr = window.tileRenderer;
+        if (!tr) return;
+        const infos = tr.infos_for_segment(x1, y1, x2, y2);
+        const dpr = window.DRAW_CONFIG.dpr;
+        for (const info of infos) {
+            const ctx = info.ctx;
+            ctx.save();
+            ctx.setTransform(dpr, 0, 0, dpr,
+                -info.rect.x * dpr, -info.rect.y * dpr);
+            ctx.lineCap = 'round';
+            ctx.lineJoin = 'round';
+            fn(ctx);
+            ctx.restore();
+        }
+    }
+
+    _each_visible_tile(fn) {
+        const tr = window.tileRenderer;
+        if (!tr) return;
+        const keys = tr.get_visible_keys();
+        const dpr = window.DRAW_CONFIG.dpr;
+        for (const info of tr.tileInfos) {
+            if (keys.has(info.key)) {
+                const ctx = info.ctx;
+                ctx.save();
+                ctx.setTransform(dpr, 0, 0, dpr,
+                    -info.rect.x * dpr, -info.rect.y * dpr);
+                ctx.imageSmoothingEnabled = false;
+                ctx.lineCap = 'round';
+                ctx.lineJoin = 'round';
+                fn(ctx, info);
+                ctx.restore();
+            }
+        }
+    }
+
     batch_draw_update_frame_rate(mode) {
         this.frameRateMode = mode;
 
@@ -82,7 +155,6 @@ class RealtimeBatchDrawManager {
         return this.frameRateMode === 'adaptive';
     }
 
-    // 根据待渲染命令数估算目标 FPS：命令越多，负载越大，FPS 越低
     batch_draw_calc_target_fps(commandCount) {
         if (commandCount < this.LOW_LOAD_THRESHOLD) {
             return this.LOW_LOAD_FPS;
@@ -95,12 +167,6 @@ class RealtimeBatchDrawManager {
         }
     }
 
-    /**
-     * 自适应帧率调节：基于最近绘制的耗时和命令数滑动窗口，动态调整 FPS
-     * 当实际绘制时间超过当前帧预算 1.5 倍时降帧；低于 0.7 倍且未达目标时升帧
-     * @param {number} drawTime - 本次绘制耗时（ms）
-     * @param {number} commandCount - 本次绘制命令数
-     */
     batch_draw_calc_adjust_fps(drawTime, commandCount) {
         const now = performance.now();
         if (now - this.lastAdjustTime < this.adjustCooldown) {
@@ -139,7 +205,6 @@ class RealtimeBatchDrawManager {
         }
     }
 
-    // 获取当前绘制统计信息
     batch_draw_fetch_stats() {
         return {
             currentFps: this.currentFps,
@@ -152,17 +217,6 @@ class RealtimeBatchDrawManager {
         };
     }
 
-    /**
-     * 创建绘制命令并加入待处理队列
-     * 自适应模式下，首条命令立即按负载设定目标 FPS，防止高刷开始
-     * @param {string} type - 'draw' | 'erase'
-     * @param {number} fromX
-     * @param {number} fromY
-     * @param {number} toX
-     * @param {number} toY
-     * @param {string} color
-     * @param {number} lineWidth
-     */
     batch_draw_create_command(type, fromX, fromY, toX, toY, color, lineWidth) {
         const idx = this.pendingCount++;
         if (idx >= this.pendingCommands.length) {
@@ -189,7 +243,6 @@ class RealtimeBatchDrawManager {
         this.batch_draw_setup_schedule();
     }
 
-    // 调度刷新：到间隔时间直接刷新，否则等待下一帧
     batch_draw_setup_schedule() {
         if (this.drawRafId !== null) return;
 
@@ -206,16 +259,6 @@ class RealtimeBatchDrawManager {
         }
     }
 
-    /**
-     * 钢笔笔锋线宽计算：将实时移动速度映射到线宽
-     * 速度越快线宽越细（快笔轻划），配合 easeInOut 曲线平滑过渡，
-     * 再加距离混合和每帧最大变化量限制，防止跳变
-     * @param {number} speed - 当前速度
-     * @param {number} baseWidth - 基础笔宽
-     * @param {number} lastLineWidth - 上一段线宽
-     * @param {number} dist - 移动距离
-     * @returns {number} 最终线宽
-     */
     _calc_pen_line_width(speed, baseWidth, lastLineWidth, dist) {
         const speedScale = Math.max(0.4, Math.min(2.5, baseWidth / 4));
         const maxSpeed = 2.5 * speedScale;
@@ -241,7 +284,6 @@ class RealtimeBatchDrawManager {
         return Math.max(0.5, lineWidth);
     }
 
-    // 起笔渐变：前 4 段从 20% 基础宽度平滑过渡到实际计算宽度
     _apply_start_taper(lineWidth, baseWidth, segmentIndex, totalInBatch) {
         const globalIndex = this._totalSegments + segmentIndex;
         if (globalIndex < 4) {
@@ -253,22 +295,19 @@ class RealtimeBatchDrawManager {
         return lineWidth;
     }
 
-    /**
-     * 刷新所有待处理命令到 canvas
-     * - 橡皮擦命令使用 destination-out 混合模式
-     * - 绘制命令支持钢笔效果（按速度调整线宽 + 起笔渐变）
-     * - 相邻段使用中点二次贝塞尔曲线连接，保证笔迹平滑
-     * - 记录绘制耗时用于自适应帧率调节
-     */
+
     batch_draw_handle_flush() {
         const count = this.pendingCount;
         if (count === 0) return;
         this.pendingCount = 0;
 
-        const ctx = this.batch_draw_fetch_ctx();
-        if (!ctx) return;
-
         const drawStart = performance.now();
+
+        if (window.main_reset_context_state) {
+            window.main_reset_context_state();
+        }
+
+        this._sync_overlay_transform();
 
         const commands = this.pendingCommands;
         let currentType = this.lastType;
@@ -282,11 +321,6 @@ class RealtimeBatchDrawManager {
         let lastLineWidth = currentLineWidth || 5;
         let lastMoveTime = this.lastBatchMoveTime || performance.now() - 16;
 
-        ctx.lineCap = 'round';
-        ctx.lineJoin = 'round';
-
-        // 计算本次批处理的时间跨度，用于估算每段绘制的近似速度
-        // 限制单段最大时间为 8ms（对应 120Hz），保证笔锋快速响应可见
         const curTime = performance.now();
         const batchTimeSpan = Math.max(1, curTime - lastMoveTime);
         const perSegTime = Math.min(batchTimeSpan / count, 8);
@@ -295,26 +329,14 @@ class RealtimeBatchDrawManager {
         for (let i = 0; i < count; i++) {
             const cmd = commands[i];
 
-            if (cmd.type === 'erase') {
-                updateCtx(ctx, {
-                    globalCompositeOperation: 'destination-out',
-                    strokeStyle: 'rgba(0,0,0,1)',
-                    lineWidth: cmd.lineWidth
-                });
-
-                ctx.beginPath();
-                ctx.moveTo(cmd.fromX, cmd.fromY);
-                ctx.lineTo(cmd.toX, cmd.toY);
-                ctx.stroke();
-                continue;
-            }
-
-            const dx = cmd.toX - cmd.fromX;
-            const dy = cmd.toY - cmd.fromY;
-            const dist = Math.sqrt(dx * dx + dy * dy);
+            const fromX = cmd.fromX, fromY = cmd.fromY;
+            const toX = cmd.toX, toY = cmd.toY;
 
             let lineWidth = cmd.lineWidth;
-            if (penEffectActive) {
+            if (penEffectActive && cmd.type === 'draw') {
+                const dx = toX - fromX;
+                const dy = toY - fromY;
+                const dist = Math.sqrt(dx * dx + dy * dy);
                 const rawSpeed = dist / perSegTime;
                 this._speedBuffer.push(rawSpeed);
                 if (this._speedBuffer.length > 3) {
@@ -327,6 +349,7 @@ class RealtimeBatchDrawManager {
                     lineWidth = this._apply_start_taper(lineWidth, cmd.lineWidth, i, count);
                 }
             }
+
             if (penEffectActive && cmd.type === 'draw') {
                 this._storedWidths.push(lineWidth);
             }
@@ -335,36 +358,60 @@ class RealtimeBatchDrawManager {
             if (cmd.type !== currentType || cmd.color !== currentColor) {
                 currentType = cmd.type;
                 currentColor = cmd.color;
-                updateCtx(ctx, {
-                    globalCompositeOperation: 'source-over',
-                    strokeStyle: cmd.color || '#3498db'
-                });
             }
 
-            ctx.lineWidth = Math.max(0.5, lineWidth);
+            const isFirst = (i === 0 && (this._strokeStart || this._lastMidX === null));
+            const lastMX = isFirst ? null : (i === 0 ? this._lastMidX : ((commands[i - 1].fromX + commands[i - 1].toX) / 2));
+            const lastMY = isFirst ? null : (i === 0 ? this._lastMidY : ((commands[i - 1].fromY + commands[i - 1].toY) / 2));
 
-            const midX = (cmd.fromX + cmd.toX) / 2;
-            const midY = (cmd.fromY + cmd.toY) / 2;
+            const prevCmd = i > 0 ? commands[i - 1] : null;
+            const segFromX = prevCmd ? (prevCmd.fromX + prevCmd.toX) / 2 : fromX;
+            const segFromY = prevCmd ? (prevCmd.fromY + prevCmd.toY) / 2 : fromY;
+            const boxMinX = Math.min(segFromX, fromX, toX);
+            const boxMinY = Math.min(segFromY, fromY, toY);
+            const boxMaxX = Math.max(segFromX, fromX, toX);
+            const boxMaxY = Math.max(segFromY, fromY, toY);
+            if (cmd.type === 'erase') {
+                this._each_tile(boxMinX, boxMinY, boxMaxX, boxMaxY, (ctx) => {
+                    ctx.globalCompositeOperation = 'destination-out';
+                    ctx.strokeStyle = 'rgba(0,0,0,1)';
+                    ctx.lineWidth = cmd.lineWidth;
+                    ctx.beginPath();
+                    ctx.moveTo(fromX, fromY);
+                    ctx.lineTo(toX, toY);
+                    ctx.stroke();
+                });
+            } else if (this._overlayCtx) {
+                const ctx = this._overlayCtx;
+                ctx.globalCompositeOperation = 'source-over';
+                ctx.lineCap = 'round';
+                ctx.lineJoin = 'round';
+                if (cmd.color) {
+                    ctx.strokeStyle = cmd.color;
+                }
+                ctx.lineWidth = Math.max(0.5, lineWidth);
 
-            if (i === 0 && (this._strokeStart || this._lastMidX === null)) {
-                ctx.beginPath();
-                ctx.moveTo(cmd.fromX, cmd.fromY);
-                ctx.lineTo(midX, midY);
-                ctx.stroke();
-            } else {
-                const startX = i === 0 ? this._lastMidX : ((commands[i - 1].fromX + commands[i - 1].toX) / 2);
-                const startY = i === 0 ? this._lastMidY : ((commands[i - 1].fromY + commands[i - 1].toY) / 2);
-                ctx.beginPath();
-                ctx.moveTo(startX, startY);
-                ctx.quadraticCurveTo(cmd.fromX, cmd.fromY, midX, midY);
-                ctx.stroke();
+                const midX = (fromX + toX) / 2;
+                const midY = (fromY + toY) / 2;
+
+                if (isFirst || lastMX === null) {
+                    ctx.beginPath();
+                    ctx.moveTo(fromX, fromY);
+                    ctx.lineTo(midX, midY);
+                    ctx.stroke();
+                } else {
+                    ctx.beginPath();
+                    ctx.moveTo(lastMX, lastMY);
+                    ctx.quadraticCurveTo(fromX, fromY, midX, midY);
+                    ctx.stroke();
+                }
             }
 
             if (i === count - 1) {
-                this._lastMidX = midX;
-                this._lastMidY = midY;
-                this._lastToX = cmd.toX;
-                this._lastToY = cmd.toY;
+                this._lastMidX = (fromX + toX) / 2;
+                this._lastMidY = (fromY + toY) / 2;
+                this._lastToX = toX;
+                this._lastToY = toY;
             }
         }
 
@@ -386,7 +433,6 @@ class RealtimeBatchDrawManager {
         }
     }
 
-    // 重置所有状态
     reset_state() {
         this.pendingCount = 0;
         this.pendingCommands.length = 0;
@@ -406,11 +452,9 @@ class RealtimeBatchDrawManager {
         this._lastToY = null;
         this._speedBuffer = [];
         this._storedWidths = [];
+        this.clear_overlay();
     }
 
-    /**
-     * 开始新一笔绘制：重置批处理状态，自适应模式从 LOW_LOAD_FPS 起步
-     */
     batch_draw_init_start() {
         this.pendingCount = 0;
         this.pendingCommands.length = 0;
@@ -429,25 +473,13 @@ class RealtimeBatchDrawManager {
             this.drawInterval = 1000 / this.currentFps;
         }
 
-        const ctx = this.batch_draw_fetch_ctx();
-        if (ctx) {
+        this._each_visible_tile((ctx, info) => {
             ctx.imageSmoothingEnabled = false;
-            const updateCtx = window.main_update_context_state;
-            if (updateCtx) {
-                updateCtx(ctx, {
-                    lineCap: 'round',
-                    lineJoin: 'round'
-                });
-            } else {
-                ctx.lineCap = 'round';
-                ctx.lineJoin = 'round';
-            }
-        }
+            ctx.lineCap = 'round';
+            ctx.lineJoin = 'round';
+        });
     }
 
-    /**
-     * 结束当前笔画：强制刷新残留命令，并补画最后一段的笔尖尾部连线
-     */
     batch_draw_handle_end() {
         if (this.drawRafId !== null) {
             cancelAnimationFrame(this.drawRafId);
@@ -455,31 +487,44 @@ class RealtimeBatchDrawManager {
         }
 
         this.batch_draw_handle_flush();
+        this._sync_overlay_transform();
 
-        const ctx = this.batch_draw_fetch_ctx();
-
-        if (ctx && this._lastMidX !== null && this._lastToX !== null) {
-            ctx.globalCompositeOperation = 'source-over';
-            ctx.strokeStyle = (window.DRAW_CONFIG && window.DRAW_CONFIG.penColor) || '#3498db';
-            ctx.beginPath();
-            ctx.moveTo(this._lastMidX, this._lastMidY);
-            ctx.lineTo(this._lastToX, this._lastToY);
-            ctx.stroke();
-        }
-
-        if (ctx) {
-            const updateCtx = window.main_update_context_state;
-            if (updateCtx) {
-                const cfg = window.DRAW_CONFIG || {};
-                updateCtx(ctx, {
-                    globalCompositeOperation: 'source-over',
-                    strokeStyle: cfg.penColor || '#3498db',
-                    lineWidth: cfg.penWidth || 5,
-                    lineCap: 'round',
-                    lineJoin: 'round'
+        if (this._lastMidX !== null && this._lastToX !== null) {
+            if (this.lastType === 'erase') {
+                this._each_tile(this._lastMidX, this._lastMidY, this._lastToX, this._lastToY, (ctx) => {
+                    ctx.globalCompositeOperation = 'destination-out';
+                    ctx.strokeStyle = 'rgba(0,0,0,1)';
+                    ctx.lineWidth = this.lastLineWidth || 5;
+                    ctx.beginPath();
+                    ctx.moveTo(this._lastMidX, this._lastMidY);
+                    ctx.lineTo(this._lastToX, this._lastToY);
+                    ctx.stroke();
                 });
+            } else if (this._overlayCtx) {
+                const ctx = this._overlayCtx;
+                const cfg = window.DRAW_CONFIG || {};
+                ctx.globalCompositeOperation = 'source-over';
+                ctx.strokeStyle = cfg.penColor || '#3498db';
+                ctx.lineWidth = this.lastLineWidth || 5;
+                ctx.lineCap = 'round';
+                ctx.lineJoin = 'round';
+                ctx.beginPath();
+                ctx.moveTo(this._lastMidX, this._lastMidY);
+                ctx.lineTo(this._lastToX, this._lastToY);
+                ctx.stroke();
             }
         }
+
+        this.clear_overlay();
+
+        this._each_visible_tile((ctx, info) => {
+            const cfg = window.DRAW_CONFIG || {};
+            ctx.globalCompositeOperation = 'source-over';
+            ctx.strokeStyle = cfg.penColor || '#3498db';
+            ctx.lineWidth = cfg.penWidth || 5;
+            ctx.lineCap = 'round';
+            ctx.lineJoin = 'round';
+        });
 
         if (this.is_adaptive) {
             this.drawTimes = [];
@@ -487,7 +532,6 @@ class RealtimeBatchDrawManager {
         }
     }
 
-    // 清空所有绘制数据
     batch_draw_delete_all() {
         this.reset_state();
     }

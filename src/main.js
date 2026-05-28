@@ -318,6 +318,7 @@ function main_stroke_clone(strokes, deep = false) {
             color: stroke.color,
             lineWidth: stroke.lineWidth,
             eraserSize: stroke.eraserSize,
+            eraserSizeRaw: stroke.eraserSizeRaw,
             scale: stroke.scale,
             bounds: stroke.bounds ? { ...stroke.bounds } : undefined,
             variableWidths: stroke.variableWidths ? [...stroke.variableWidths] : null,
@@ -333,6 +334,7 @@ function main_stroke_clone(strokes, deep = false) {
         color: stroke.color,
         lineWidth: stroke.lineWidth,
         eraserSize: stroke.eraserSize,
+        eraserSizeRaw: stroke.eraserSizeRaw,
         scale: stroke.scale,
         bounds: stroke.bounds,
         variableWidths: stroke.variableWidths,
@@ -1307,10 +1309,13 @@ function main_handle_resize() {
 
 // 调整画布大小
 async function main_update_canvas_size(newScreenW, newScreenH) {
-    // 保存当前状态
     const oldScale = state.scale;
     const oldCanvasX = state.canvasX;
     const oldCanvasY = state.canvasY;
+    
+    if (window.tileRenderer) {
+        window.tileRenderer.destroy_all();
+    }
     
     DRAW_CONFIG.screenW = newScreenW;
     DRAW_CONFIG.screenH = newScreenH;
@@ -1318,38 +1323,21 @@ async function main_update_canvas_size(newScreenW, newScreenH) {
     DRAW_CONFIG.canvasW = Math.floor(newScreenW * 2);
     DRAW_CONFIG.canvasH = Math.floor(newScreenH * 2);
     
-    // 使用固定的 DPR（受 dprLimit 限制，0=自动无限制）
     DRAW_CONFIG.dpr = window.main_calc_capped_dpr(DRAW_CONFIG.baseDpr, DRAW_CONFIG.dprLimit);
     
     main_update_move_bound();
     
-    // 摄像头无批注时跳过画布尺寸设置，避免不必要内存分配
-    const hasStrokes = state.strokeHistory && state.strokeHistory.length > 0;
-    const hasBaseImage = state.baseImageObj !== null;
-    
-    if (!state.isCameraOpen || hasStrokes || hasBaseImage) {
-        dom.drawCanvas.width = DRAW_CONFIG.canvasW * DRAW_CONFIG.dpr;
-        dom.drawCanvas.height = DRAW_CONFIG.canvasH * DRAW_CONFIG.dpr;
-    }
-    
     dom.imageElement.style.width = DRAW_CONFIG.canvasW + 'px';
     dom.imageElement.style.height = DRAW_CONFIG.canvasH + 'px';
-    dom.drawCanvas.style.width = DRAW_CONFIG.canvasW + 'px';
-    dom.drawCanvas.style.height = DRAW_CONFIG.canvasH + 'px';
+    dom.canvasWrapper.style.width = DRAW_CONFIG.canvasW + 'px';
+    dom.canvasWrapper.style.height = DRAW_CONFIG.canvasH + 'px';
     
-    if (!state.isCameraOpen || hasStrokes || hasBaseImage) {
-        dom.drawCtx.setTransform(1, 0, 0, 1, 0, 0);
-        dom.drawCtx.scale(DRAW_CONFIG.dpr, DRAW_CONFIG.dpr);
+    window.tileRenderer.init_tiles(dom.canvasWrapper);
+    
+    if (window.batchDrawManager) {
+        window.batchDrawManager.resize_overlay(newScreenW, newScreenH, DRAW_CONFIG.dpr);
     }
     
-    if (!state.isCameraOpen || hasStrokes || hasBaseImage) {
-        dom.drawCtx.imageSmoothingEnabled = false;
-        dom.drawCtx.lineCap = 'round';
-        dom.drawCtx.lineJoin = 'round';
-        dom.drawCtx.miterLimit = 10;
-    }
-    
-    // 重绘内容层 + 批注层 → 恢复变换
     if (state.currentImage) {
         main_render_image_centered(state.currentImage);
     }
@@ -1603,27 +1591,27 @@ async function main_update_mode(mode) {
         btn.classList.remove('primary-btn');
     });
     
-    dom.drawCanvas.classList.remove('drawing', 'eraser', 'dragging');
+    dom.canvasWrapper.classList.remove('drawing', 'eraser', 'dragging');
     
     state.drawMode = mode;
     
     switch (mode) {
         case 'move':
             dom.btnMove.classList.add('primary-btn');
-            dom.drawCanvas.style.cursor = 'grab';
+            dom.canvasWrapper.style.cursor = 'grab';
             main_hide_eraser_hint();
             break;
         case 'comment':
             dom.btnComment.classList.add('primary-btn');
-            dom.drawCanvas.classList.add('drawing');
-            dom.drawCanvas.style.cursor = 'crosshair';
+            dom.canvasWrapper.classList.add('drawing');
+            dom.canvasWrapper.style.cursor = 'crosshair';
             main_hide_eraser_hint();
             main_update_pen_style();
             break;
         case 'eraser':
             dom.btnEraser.classList.add('primary-btn');
-            dom.drawCanvas.classList.add('eraser');
-            dom.drawCanvas.style.cursor = 'none';
+            dom.canvasWrapper.classList.add('eraser');
+            dom.canvasWrapper.style.cursor = 'none';
             main_show_eraser_hint();
             main_update_eraser_style();
             break;
@@ -1898,24 +1886,11 @@ function main_update_pen_preset_dot_color() {
 
 // 设置笔触样式
 function main_update_pen_style() {
-    const dc = dom.drawCtx;
-    main_update_context_state(dc, {
-        strokeStyle: DRAW_CONFIG.penColor,
-        lineWidth: DRAW_CONFIG.penWidth,
-        lineCap: 'round',
-        lineJoin: 'round',
-        globalCompositeOperation: 'source-over'
-    });
+    main_reset_context_state();
 }
 
 function main_update_eraser_style() {
-    const dc = dom.drawCtx;
-    main_update_context_state(dc, {
-        lineWidth: DRAW_CONFIG.eraserSize,
-        lineCap: 'round',
-        lineJoin: 'round',
-        globalCompositeOperation: 'destination-out'
-    });
+    main_reset_context_state();
 }
 
 function main_start_drawing_mode() {
@@ -1926,11 +1901,10 @@ function main_hide_drawing_mode() {
     dom.canvasWrapper.classList.remove('drawing');
 }
 
-// 橡皮提示框
+// 橡皮提示框 — 固定屏幕像素尺寸，不随缩放变化
 function main_update_eraser_hint_size() {
-    const size = DRAW_CONFIG.eraserSize / main_fetch_safe_scale();
-    dom.eraserHint.style.width = `${size}px`;
-    dom.eraserHint.style.height = `${size}px`;
+    dom.eraserHint.style.width = `${DRAW_CONFIG.eraserSize}px`;
+    dom.eraserHint.style.height = `${DRAW_CONFIG.eraserSize}px`;
 }
 
 function main_show_eraser_hint() {
@@ -2027,28 +2001,26 @@ function main_update_eraser_hint_position(clientX, clientY) {
         const y = clientY - rect.top;
         dom.eraserHint.style.left = `${x}px`;
         dom.eraserHint.style.top = `${y}px`;
-        dom.eraserHint.style.transform = `translate(-50%, -50%) scale(${state.scale})`;
+        dom.eraserHint.style.transform = 'translate(-50%, -50%)';
     });
 }
 
 // === 画布交互事件：鼠标/触控 绘制、拖拽、缩放 ===
 
 function main_setup_canvas_mouse_events() {
-    // 优先使用 Pointer Events（支持压感）
     if (window.PointerEvent) {
-        dom.drawCanvas.addEventListener('pointerdown', main_handle_pointer_down);
-        dom.drawCanvas.addEventListener('pointermove', main_handle_pointer_move);
-        dom.drawCanvas.addEventListener('pointerup', main_handle_pointer_up);
-        dom.drawCanvas.addEventListener('pointerleave', main_handle_pointer_leave);
-        dom.drawCanvas.addEventListener('pointercancel', main_handle_pointer_up);
+        dom.canvasWrapper.addEventListener('pointerdown', main_handle_pointer_down);
+        dom.canvasWrapper.addEventListener('pointermove', main_handle_pointer_move);
+        dom.canvasWrapper.addEventListener('pointerup', main_handle_pointer_up);
+        dom.canvasWrapper.addEventListener('pointerleave', main_handle_pointer_leave);
+        dom.canvasWrapper.addEventListener('pointercancel', main_handle_pointer_up);
     } else {
-        // 降级到传统鼠标事件
-        dom.drawCanvas.addEventListener('mousedown', main_handle_mouse_down);
-        dom.drawCanvas.addEventListener('mousemove', main_handle_mouse_move);
-        dom.drawCanvas.addEventListener('mouseup', main_handle_mouse_up);
-        dom.drawCanvas.addEventListener('mouseleave', main_handle_mouse_leave);
+        dom.canvasWrapper.addEventListener('mousedown', main_handle_mouse_down);
+        dom.canvasWrapper.addEventListener('mousemove', main_handle_mouse_move);
+        dom.canvasWrapper.addEventListener('mouseup', main_handle_mouse_up);
+        dom.canvasWrapper.addEventListener('mouseleave', main_handle_mouse_leave);
     }
-    dom.drawCanvas.addEventListener('wheel', main_handle_wheel, { passive: true });
+    dom.canvasWrapper.addEventListener('wheel', main_handle_wheel, { passive: true });
 }
 
 /**
@@ -2056,7 +2028,7 @@ function main_setup_canvas_mouse_events() {
  */
 function main_handle_pointer_down(e) {
     e.preventDefault();
-    state.drawCanvasRect = dom.drawCanvas.getBoundingClientRect();
+    state.drawCanvasRect = dom.canvasWrapper.getBoundingClientRect();
     
     state.currentPressure = e.pressure || 0.5;
     
@@ -2065,7 +2037,6 @@ function main_handle_pointer_down(e) {
         state.startDragX = e.clientX - state.canvasX;
         state.startDragY = e.clientY - state.canvasY;
         dom.canvasWrapper.classList.add('dragging');
-        dom.drawCanvas.classList.add('dragging');
     } else if (state.drawMode === 'comment') {
         main_hide_pen_control_panel();
         state.isDrawing = true;
@@ -2136,7 +2107,6 @@ async function main_handle_pointer_up(e) {
     if (state.isDragging) {
         state.isDragging = false;
         dom.canvasWrapper.classList.remove('dragging');
-        dom.drawCanvas.classList.remove('dragging');
     }
     if (state.isDrawing) {
         state.isDrawing = false;
@@ -2148,7 +2118,7 @@ async function main_handle_pointer_up(e) {
 async function main_handle_pointer_leave(e) {
     if (state.isDragging) {
         state.isDragging = false;
-        dom.drawCanvas.classList.remove('dragging');
+        dom.canvasWrapper.classList.remove('dragging');
     }
     if (state.isDrawing) {
         state.isDrawing = false;
@@ -2160,14 +2130,13 @@ async function main_handle_pointer_leave(e) {
 // 鼠标事件降级处理
 function main_handle_mouse_down(e) {
     e.preventDefault();
-    state.drawCanvasRect = dom.drawCanvas.getBoundingClientRect();
+    state.drawCanvasRect = dom.canvasWrapper.getBoundingClientRect();
     
     if (state.drawMode === 'move') {
         state.isDragging = true;
         state.startDragX = e.clientX - state.canvasX;
         state.startDragY = e.clientY - state.canvasY;
         dom.canvasWrapper.classList.add('dragging');
-        dom.drawCanvas.classList.add('dragging');
     } else if (state.drawMode === 'comment') {
         main_hide_pen_control_panel();
         state.isDrawing = true;
@@ -2238,7 +2207,6 @@ async function main_handle_mouse_up(e) {
     if (state.isDragging) {
         state.isDragging = false;
         dom.canvasWrapper.classList.remove('dragging');
-        dom.drawCanvas.classList.remove('dragging');
     }
     if (state.isDrawing) {
         state.isDrawing = false;
@@ -2251,7 +2219,6 @@ async function main_handle_mouse_leave(e) {
     if (state.isDragging) {
         state.isDragging = false;
         dom.canvasWrapper.classList.remove('dragging');
-        dom.drawCanvas.classList.remove('dragging');
     }
     if (state.isDrawing) {
         state.isDrawing = false;
@@ -2283,21 +2250,24 @@ function main_handle_wheel(e) {
         main_update_move_bound();
         main_update_canvas_position();
         main_update_canvas_transform_smooth(state.canvasX, state.canvasY, state.scale, 100);
+        
+        main_update_eraser_hint_size();
+        if (window.tileRenderer) window.tileRenderer.mark_all();
     }
 }
 
 // 画布触控事件
 function main_setup_canvas_touch_events() {
-    dom.drawCanvas.addEventListener('touchstart', main_handle_touch_start, { passive: false });
-    dom.drawCanvas.addEventListener('touchmove', main_handle_touch_move, { passive: false });
-    dom.drawCanvas.addEventListener('touchend', main_handle_touch_end, { passive: false });
-    dom.drawCanvas.addEventListener('touchcancel', main_handle_touch_end, { passive: false });
+    dom.canvasWrapper.addEventListener('touchstart', main_handle_touch_start, { passive: false });
+    dom.canvasWrapper.addEventListener('touchmove', main_handle_touch_move, { passive: false });
+    dom.canvasWrapper.addEventListener('touchend', main_handle_touch_end, { passive: false });
+    dom.canvasWrapper.addEventListener('touchcancel', main_handle_touch_end, { passive: false });
 }
 
 async function main_handle_touch_start(e) {
     e.preventDefault();
     const touches = e.touches;
-    state.drawCanvasRect = dom.drawCanvas.getBoundingClientRect();
+    state.drawCanvasRect = dom.canvasWrapper.getBoundingClientRect();
     
     // 在支持 PointerEvent 的设备上，TouchEvent 只处理多指手势，单指完全由 PointerEvent 处理
     if (window.PointerEvent) {
@@ -2318,12 +2288,11 @@ async function main_handle_touch_start(e) {
             state.isDragging = true;
             state.startDragX = touch.clientX - state.canvasX;
             state.startDragY = touch.clientY - state.canvasY;
-            dom.canvasWrapper.classList.add('dragging');
-            dom.drawCanvas.classList.add('dragging');
-        } else if (state.drawMode === 'comment') {
-            main_hide_pen_control_panel();
-            state.isDrawing = true;
-            main_start_drawing_mode();
+        dom.canvasWrapper.classList.add('dragging');
+    } else if (state.drawMode === 'comment') {
+        main_hide_pen_control_panel();
+        state.isDrawing = true;
+        main_start_drawing_mode();
             state.cachedInvScale = 1 / main_fetch_safe_scale();
             state.lastX = (touch.clientX - state.drawCanvasRect.left) * state.cachedInvScale;
             state.lastY = (touch.clientY - state.drawCanvasRect.top) * state.cachedInvScale;
@@ -2437,6 +2406,8 @@ function main_handle_touch_move(e) {
         main_update_canvas_position();
         
         main_update_transform_schedule(state.canvasX, state.canvasY, state.scale);
+        
+        main_update_eraser_hint_size();
     }
 }
 
@@ -2450,9 +2421,7 @@ async function main_handle_touch_end(e) {
     
     if (e.touches.length === 0) {
         state.isDragging = false;
-        state.isScaling = false;
         dom.canvasWrapper.classList.remove('dragging');
-        dom.drawCanvas.classList.remove('dragging');
         
         main_update_move_bound();
         main_update_canvas_position();
@@ -2465,7 +2434,10 @@ async function main_handle_touch_end(e) {
             state.isDrawing = false;
             main_hide_drawing_mode();
             await main_submit_stroke();
+        } else if (state.isScaling && window.tileRenderer) {
+            window.tileRenderer.mark_all();
         }
+        state.isScaling = false;
     } else if (e.touches.length === 1) {
         state.isScaling = false;
         main_update_move_bound();
@@ -2537,6 +2509,7 @@ function main_start_stroke(type) {
         color: DRAW_CONFIG.penColor,
         lineWidth: DRAW_CONFIG.penWidth * invScale,
         eraserSize: DRAW_CONFIG.eraserSize * invScale,
+        eraserSizeRaw: DRAW_CONFIG.eraserSize,
         scale: state.scale,
         bounds: {
             minX: Infinity,
@@ -2595,6 +2568,9 @@ async function main_submit_stroke() {
         
         if (state.currentStroke.type === 'erase') {
             await main_handle_eraser_stroke(state.currentStroke);
+            if (window.tileRenderer) {
+                window.tileRenderer.mark_all();
+            }
         } else {
             const cmd = new DrawCommand({
                 stroke: state.currentStroke,
@@ -2602,6 +2578,10 @@ async function main_submit_stroke() {
                 redrawFn: () => main_render_all_strokes()
             });
             await history_execute_command(cmd, false);
+            
+            if (window.tileRenderer) {
+                await window.tileRenderer.add_stroke(state.currentStroke);
+            }
             
             if (history_validate_compact()) {
                 main_init_compact();
@@ -2688,7 +2668,7 @@ function main_validate_eraser_intersection(eraserStroke) {
         return false;
     }
     
-    const eraserSize = eraserStroke.eraserSize || DRAW_CONFIG.eraserSize;
+    const eraserSize = main_get_eraser_linewidth(eraserStroke);
     const eraserRadius = eraserSize / 2;
     
     // 遍历所有现有笔画（不包括橡皮擦笔画）
@@ -2782,7 +2762,7 @@ function main_calc_stroke_bounds(points) {
 }
 
 function main_calc_split_strokes_by_eraser(drawStroke, eraserStroke, penEffectMode) {
-    const eraserSize = eraserStroke.eraserSize || DRAW_CONFIG.eraserSize;
+    const eraserSize = main_get_eraser_linewidth(eraserStroke);
     const eraserRadius = eraserSize / 2;
     const points = drawStroke.points;
     if (!points || points.length === 0) return null;
@@ -2871,304 +2851,75 @@ function main_calc_split_strokes_by_eraser(drawStroke, eraserStroke, penEffectMo
     };
 }
 
-async function main_render_all_strokes(dirtyRect = null) {
-    const ctx = dom.drawCtx;
-    const scale = main_fetch_safe_scale();
-    
-    ctx.imageSmoothingEnabled = false;
-    
-    const visibleRect = main_fetch_visible_rect();
-    
-    // 如果有脏区域，只清除和重绘该区域
-    if (dirtyRect) {
-        const { x, y, width, height } = dirtyRect;
-        ctx.save();
-        ctx.beginPath();
-        ctx.rect(x, y, width, height);
-        ctx.clip();
-        ctx.clearRect(x, y, width, height);
-    } else {
-        // 优化：只清除可见区域
-        ctx.clearRect(visibleRect.x, visibleRect.y, visibleRect.width, visibleRect.height);
-    }
-    
-    if (state.baseImageObj) {
-        if (dirtyRect) {
-            ctx.drawImage(state.baseImageObj, 0, 0, DRAW_CONFIG.canvasW, DRAW_CONFIG.canvasH);
-        } else {
-            // 优化：只绘制可见区域
-            ctx.drawImage(
-                state.baseImageObj,
-                visibleRect.x, visibleRect.y, visibleRect.width, visibleRect.height,
-                visibleRect.x, visibleRect.y, visibleRect.width, visibleRect.height
-            );
-        }
-    }
-    
-    if (state.strokeHistory.length === 0) {
-        if (dirtyRect) {
+async function main_render_all_strokes() {
+    main_reset_context_state();
+    const tr = window.tileRenderer;
+    if (!tr) return;
+
+    if (state.strokeHistory.length === 0 && !state.baseImageObj) {
+        tr.for_each((info) => {
+            const ctx = info.ctx;
+            const dpr = DRAW_CONFIG.dpr;
+            ctx.save();
+            ctx.setTransform(dpr, 0, 0, dpr, -info.rect.x * dpr, -info.rect.y * dpr);
+            ctx.clearRect(info.rect.x, info.rect.y, info.rect.width, info.rect.height);
             ctx.restore();
-        }
+        });
+        tr.dirty.clear();
         return;
     }
-    
-    // 过滤出需要重绘的笔画（在脏区域内或有交集，且在可见区域内）
-    let strokesToRedraw = state.strokeHistory;
-    if (dirtyRect) {
-        // 使用四叉树空间索引快速查询
-        if (!strokeQuadTree || strokeQuadTree.strokes.length === 0 && !strokeQuadTree.children) {
-            strokeQuadTree = new StrokeQuadTree({ x: 0, y: 0, width: DRAW_CONFIG.canvasW, height: DRAW_CONFIG.canvasH });
-            strokeQuadTree.build(state.strokeHistory);
-        }
-        strokesToRedraw = Array.from(strokeQuadTree.query(dirtyRect));
+
+    tr.mark_all();
+    tr.rebuild_all();
+}
+
+function main_get_eraser_linewidth(stroke) {
+    if (stroke.eraserSizeRaw != null) {
+        return stroke.eraserSizeRaw / main_fetch_safe_scale();
     }
-    
-    // 进一步过滤：只保留可见区域内的笔画
-    strokesToRedraw = strokesToRedraw.filter(stroke => main_validate_stroke_visible(stroke, visibleRect));
-    
-    const hasEraseStrokes = strokesToRedraw.some(stroke => stroke.type === 'erase');
-    
-    main_update_context_state(ctx, {
-        lineCap: 'round',
-        lineJoin: 'round'
-    });
-    
-    const pen_effect_mode = DRAW_CONFIG.penEffectMode || 'off';
-    const pen_effect_active = pen_effect_mode !== 'off';
-    
-    if (hasEraseStrokes) {
-        for (const stroke of strokesToRedraw) {
-            if (!stroke.points || stroke.points.length < 1) continue;
-            
-            if (stroke.type === 'erase') {
-                main_update_context_state(ctx, {
-                    globalCompositeOperation: 'destination-out',
-                    strokeStyle: 'rgba(0, 0, 0, 1)',
-                    lineWidth: stroke.eraserSize || DRAW_CONFIG.eraserSize
-                });
-                
-                const path = new Path2D();
-                const firstPoint = stroke.points[0];
-                path.moveTo(firstPoint.fromX, firstPoint.fromY);
-                path.lineTo(firstPoint.toX, firstPoint.toY);
-                for (let i = 1; i < stroke.points.length; i++) {
-                    const pt = stroke.points[i];
-                    path.lineTo(pt.fromX, pt.fromY);
-                    path.lineTo(pt.toX, pt.toY);
-                }
-                ctx.stroke(path);
-            } else if (stroke.type === 'draw' || stroke.type === 'comment') {
-                ctx.globalCompositeOperation = 'source-over';
-                
-                if (pen_effect_active) {
-                    const tessellated = realPenManager.build_tessellated_stroke(stroke, pen_effect_mode);
-                    if (tessellated) {
-                        realPenManager.render_tessellated_stroke(ctx, tessellated);
-                        continue;
-                    }
-                }
-                
-                main_update_context_state(ctx, {
-                    strokeStyle: stroke.color || DRAW_CONFIG.penColor,
-                    lineWidth: stroke.lineWidth || DRAW_CONFIG.penWidth
-                });
-                const path = new Path2D();
-                const firstPoint = stroke.points[0];
-                path.moveTo(firstPoint.fromX, firstPoint.fromY);
-                path.lineTo(firstPoint.toX, firstPoint.toY);
-                for (let i = 1; i < stroke.points.length; i++) {
-                    const pt = stroke.points[i];
-                    path.lineTo(pt.fromX, pt.fromY);
-                    path.lineTo(pt.toX, pt.toY);
-                }
-                ctx.stroke(path);
-            }
-        }
-    } else if (!pen_effect_active) {
-        const variableWidthStrokes = [];
-        const fixedWidthStrokes = new Map();
-        
-        for (const stroke of strokesToRedraw) {
-            if (stroke.type === 'draw' || stroke.type === 'comment') {
-                if (stroke.variableWidths && stroke.variableWidths.length > 0) {
-                    variableWidthStrokes.push(stroke);
-                } else {
-                    const stateKey = `${stroke.color || DRAW_CONFIG.penColor}-${stroke.lineWidth || DRAW_CONFIG.penWidth}`;
-                    if (!fixedWidthStrokes.has(stateKey)) {
-                        fixedWidthStrokes.set(stateKey, {
-                            color: stroke.color || DRAW_CONFIG.penColor,
-                            lineWidth: stroke.lineWidth || DRAW_CONFIG.penWidth,
-                            strokes: []
-                        });
-                    }
-                    fixedWidthStrokes.get(stateKey).strokes.push(stroke);
-                }
-            }
-        }
-        
-        ctx.globalCompositeOperation = 'source-over';
-        
-        for (const stroke of variableWidthStrokes) {
-            if (!stroke.points || stroke.points.length === 0) continue;
-            
-            ctx.fillStyle = stroke.color || DRAW_CONFIG.penColor;
-            
-            const polygonPath = new Path2D();
-            const circlePath = new Path2D();
-            
-            for (let i = 0; i < stroke.points.length && i < stroke.variableWidths.length; i++) {
-                const point = stroke.points[i];
-                const widthInfo = stroke.variableWidths[i];
-                
-                const x1 = point.fromX, y1 = point.fromY;
-                const x2 = point.toX, y2 = point.toY;
-                const w1 = widthInfo.fromWidth, w2 = widthInfo.toWidth;
-                
-                const angle = Math.atan2(y2 - y1, x2 - x1);
-                const perpAngle = angle + Math.PI / 2;
-                const hw1 = w1 / 2, hw2 = w2 / 2;
-                const cos = Math.cos(perpAngle), sin = Math.sin(perpAngle);
-                
-                polygonPath.moveTo(x1 + cos * hw1, y1 + sin * hw1);
-                polygonPath.lineTo(x2 + cos * hw2, y2 + sin * hw2);
-                polygonPath.lineTo(x2 - cos * hw2, y2 - sin * hw2);
-                polygonPath.lineTo(x1 - cos * hw1, y1 - sin * hw1);
-                polygonPath.closePath();
-                
-                circlePath.moveTo(x1 + hw1, y1);
-                circlePath.arc(x1, y1, hw1, 0, Math.PI * 2);
-                circlePath.moveTo(x2 + hw2, y2);
-                circlePath.arc(x2, y2, hw2, 0, Math.PI * 2);
-            }
-            
-            ctx.fill(polygonPath);
-            ctx.fill(circlePath);
-        }
-        
-        for (const [stateKey, group] of fixedWidthStrokes) {
-            main_update_context_state(ctx, {
-                strokeStyle: group.color,
-                lineWidth: group.lineWidth
-            });
-            
-            const drawPath = new Path2D();
-            for (const stroke of group.strokes) {
-                if (!stroke.points || stroke.points.length < 1) continue;
-                
-                const firstPoint = stroke.points[0];
-                drawPath.moveTo(firstPoint.fromX, firstPoint.fromY);
-                drawPath.lineTo(firstPoint.toX, firstPoint.toY);
-                for (let i = 1; i < stroke.points.length; i++) {
-                    const pt = stroke.points[i];
-                    drawPath.lineTo(pt.fromX, pt.fromY);
-                    drawPath.lineTo(pt.toX, pt.toY);
-                }
-            }
-            ctx.stroke(drawPath);
-        }
-    } else {
-        ctx.globalCompositeOperation = 'source-over';
-        
-        for (const stroke of strokesToRedraw) {
-            if (stroke.type !== 'draw' && stroke.type !== 'comment') continue;
-            if (!stroke.points || stroke.points.length < 1) continue;
-            
-            const tessellated = realPenManager.build_tessellated_stroke(stroke, pen_effect_mode);
-            if (tessellated) {
-                realPenManager.render_tessellated_stroke(ctx, tessellated);
-            } else {
-                main_update_context_state(ctx, {
-                    strokeStyle: stroke.color || DRAW_CONFIG.penColor,
-                    lineWidth: stroke.lineWidth || DRAW_CONFIG.penWidth
-                });
-                const path = new Path2D();
-                const firstPoint = stroke.points[0];
-                path.moveTo(firstPoint.fromX, firstPoint.fromY);
-                path.lineTo(firstPoint.toX, firstPoint.toY);
-                for (let i = 1; i < stroke.points.length; i++) {
-                    const pt = stroke.points[i];
-                    path.lineTo(pt.fromX, pt.fromY);
-                    path.lineTo(pt.toX, pt.toY);
-                }
-                ctx.stroke(path);
-            }
-        }
-    }
-    
-    // 重置 canvas 状态
-    main_update_context_state(ctx, {
-        globalCompositeOperation: 'source-over',
-        strokeStyle: DRAW_CONFIG.penColor,
-        lineWidth: DRAW_CONFIG.penWidth
-    });
-    
-    if (dirtyRect) {
-        ctx.restore();
-    }
+    return stroke.eraserSize || DRAW_CONFIG.eraserSize;
 }
 
 async function main_render_eraser_stroke(stroke) {
     if (!stroke.points || stroke.points.length < 1) return;
     
-    const ctx = dom.drawCtx;
-    main_update_context_state(dom.drawCtx, {
-        globalCompositeOperation: 'destination-out',
-        strokeStyle: 'rgba(0, 0, 0, 1)',
-        lineWidth: stroke.eraserSize || DRAW_CONFIG.eraserSize,
-        lineCap: 'round',
-        lineJoin: 'round'
-    });
+    const tr = window.tileRenderer;
+    if (!tr) return;
+    
+    const lineWidth = main_get_eraser_linewidth(stroke);
+    const pts = stroke.points;
+    const minX = Math.min(pts[0].fromX, pts[pts.length - 1].toX);
+    const minY = Math.min(pts[0].fromY, pts[pts.length - 1].toY);
+    const maxX = Math.max(pts[0].fromX, pts[pts.length - 1].toX);
+    const maxY = Math.max(pts[0].fromY, pts[pts.length - 1].toY);
+    
+    const infos = tr.infos_for_segment(minX, minY, maxX, maxY);
+    const dpr = DRAW_CONFIG.dpr;
     
     const path = new Path2D();
-    
-    const firstPoint = stroke.points[0];
-    
-    path.moveTo(firstPoint.fromX, firstPoint.fromY);
-    path.lineTo(firstPoint.toX, firstPoint.toY);
-    for (let i = 1; i < stroke.points.length; i++) {
-        const pt = stroke.points[i];
-        path.lineTo(pt.fromX, pt.fromY);
-        path.lineTo(pt.toX, pt.toY);
+    path.moveTo(pts[0].fromX, pts[0].fromY);
+    path.lineTo(pts[0].toX, pts[0].toY);
+    for (let i = 1; i < pts.length; i++) {
+        path.lineTo(pts[i].fromX, pts[i].fromY);
+        path.lineTo(pts[i].toX, pts[i].toY);
     }
     
-    dom.drawCtx.stroke(path);
-}
-
-async function main_render_stroke(stroke) {
-    if (!stroke.points || stroke.points.length < 1) return;
-    
-    if (stroke.type === 'draw' || stroke.type === 'comment') {
-        const pen_effect = get_pen_effect_mode();
-        if (pen_effect !== 'off') {
-            const tessellated = realPenManager.build_tessellated_stroke(stroke, pen_effect);
-            if (tessellated) {
-                dom.drawCtx.globalCompositeOperation = 'source-over';
-                realPenManager.render_tessellated_stroke(dom.drawCtx, tessellated);
-                return;
-            }
-        }
+    for (const info of infos) {
+        const ctx = info.ctx;
+        ctx.save();
+        ctx.setTransform(dpr, 0, 0, dpr,
+            -info.rect.x * dpr, -info.rect.y * dpr);
+        ctx.beginPath();
+        ctx.rect(info.rect.x, info.rect.y, info.rect.width, info.rect.height);
+        ctx.clip();
+        ctx.globalCompositeOperation = 'destination-out';
+        ctx.strokeStyle = 'rgba(0, 0, 0, 1)';
+        ctx.lineWidth = lineWidth;
+        ctx.lineCap = 'round';
+        ctx.lineJoin = 'round';
+        ctx.stroke(path);
+        ctx.restore();
     }
-    
-    main_update_context_state(dom.drawCtx, {
-        strokeStyle: stroke.color || DRAW_CONFIG.penColor,
-        lineWidth: stroke.lineWidth || DRAW_CONFIG.penWidth,
-        lineCap: 'round',
-        lineJoin: 'round',
-        globalCompositeOperation: stroke.type === 'erase' ? 'destination-out' : 'source-over'
-    });
-    
-    const path = new Path2D();
-    const firstPoint = stroke.points[0];
-    
-    path.moveTo(firstPoint.fromX, firstPoint.fromY);
-    path.lineTo(firstPoint.toX, firstPoint.toY);
-    for (let i = 1; i < stroke.points.length; i++) {
-        const pt = stroke.points[i];
-        path.lineTo(pt.fromX, pt.fromY);
-        path.lineTo(pt.toX, pt.toY);
-    }
-    
-    dom.drawCtx.stroke(path);
 }
 
 function get_pen_effect_mode() {
@@ -3177,6 +2928,15 @@ function get_pen_effect_mode() {
 window.get_pen_effect_mode = get_pen_effect_mode;
 
 let compactIdleId = null;
+
+// 重置上下文状态缓存（在 tile rendering 后调用，避免缓存失效）
+function main_reset_context_state() {
+    currentContextState.strokeStyle = null;
+    currentContextState.lineWidth = null;
+    currentContextState.lineCap = null;
+    currentContextState.lineJoin = null;
+    currentContextState.globalCompositeOperation = null;
+}
 
 // === 批注绘制系统 ===
 // Canvas上下文状态缓存、笔画绘制、批注压缩
@@ -3246,7 +3006,7 @@ async function main_render_strokes_to_context(ctx, strokes) {
             main_update_context_state(ctx, {
                 globalCompositeOperation: 'destination-out',
                 strokeStyle: 'rgba(0, 0, 0, 1)',
-                lineWidth: stroke.eraserSize || DRAW_CONFIG.eraserSize
+                lineWidth: main_get_eraser_linewidth(stroke)
             });
             
             const path = new Path2D();
@@ -3393,6 +3153,7 @@ async function main_handle_compact_strokes() {
             img.onload = () => {
                 if (loadId === state.baseImageLoadId) {
                     state.baseImageObj = img;
+                    if (window.tileRenderer) window.tileRenderer.mark_all();
                 }
             };
             img.src = afterImageURL;
@@ -3460,6 +3221,7 @@ async function main_handle_compact_strokes() {
     img.onload = () => {
         if (loadId === state.baseImageLoadId) {
             state.baseImageObj = img;
+            if (window.tileRenderer) window.tileRenderer.mark_all();
         }
         main_release_offscreen_canvas(offscreen);
     };
@@ -3503,14 +3265,14 @@ function main_update_history_button_status() {
 
 // 清空画布
 function main_delete_draw_canvas() {
-    dom.drawCtx.clearRect(0, 0, DRAW_CONFIG.canvasW, DRAW_CONFIG.canvasH);
-    main_update_context_state(dom.drawCtx, {
-        strokeStyle: DRAW_CONFIG.penColor,
-        lineWidth: DRAW_CONFIG.penWidth,
-        lineCap: 'round',
-        lineJoin: 'round',
-        globalCompositeOperation: 'source-over'
-    });
+    if (window.tileRenderer) {
+        window.tileRenderer.destroy_all();
+        window.tileRenderer.init_tiles(dom.canvasWrapper);
+    }
+    if (window.batchDrawManager) {
+        window.batchDrawManager.clear_overlay();
+    }
+    main_reset_context_state();
 }
 
 async function main_delete_all_drawings() {
@@ -3546,6 +3308,7 @@ function main_load_base_image(url) {
     img.onload = () => {
         if (loadId === state.baseImageLoadId) {
             state.baseImageObj = img;
+            if (window.tileRenderer) window.tileRenderer.mark_all();
             main_render_all_strokes();
         }
     };
@@ -3553,6 +3316,7 @@ function main_load_base_image(url) {
         console.error('base image 加载失败:', url ? url.substring(0, 50) + '...' : 'null');
         if (loadId === state.baseImageLoadId) {
             state.baseImageObj = null;
+            if (window.tileRenderer) window.tileRenderer.mark_all();
             main_render_all_strokes();
         }
     };
@@ -3630,7 +3394,20 @@ function main_save_merged_canvas() {
             parseFloat(dom.imageElement.style.height) || DRAW_CONFIG.canvasH
         );
     }
-    mergedCtx.drawImage(dom.drawCanvas, 0, 0, DRAW_CONFIG.canvasW, DRAW_CONFIG.canvasH);
+    const tr = window.tileRenderer;
+    if (tr) {
+        for (const info of tr.tileInfos) {
+            if (info.canvas) {
+                mergedCtx.drawImage(
+                    info.canvas,
+                    0, 0,
+                    info.canvas.width, info.canvas.height,
+                    info.rect.x, info.rect.y,
+                    info.rect.width, info.rect.height
+                );
+            }
+        }
+    }
     
     const link = document.createElement('a');
     link.download = `photo_${Date.now()}.png`;
@@ -5607,3 +5384,6 @@ window.main_hide_pen_control_panel = main_hide_pen_control_panel;
 window.main_hide_settings_panel = main_hide_settings_panel;
 window.main_render_image_centered = main_render_image_centered;
 window.main_render_all_strokes = main_render_all_strokes;
+window.main_reset_context_state = main_reset_context_state;
+window.main_fetch_visible_rect = main_fetch_visible_rect;
+window.main_render_strokes_to_context = main_render_strokes_to_context;

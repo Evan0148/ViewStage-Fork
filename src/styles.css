@@ -134,8 +134,7 @@ body {
 }
 
 .canvas-base,
-.image-element,
-.canvas-draw {
+.image-element {
     position: absolute;
     user-select: none;
     -webkit-user-select: none;
@@ -153,6 +152,7 @@ body {
     contain: layout style;
     backface-visibility: hidden;
     -webkit-backface-visibility: hidden;
+    touch-action: none;
 }
 
 .canvas-wrapper.dragging {
@@ -170,11 +170,21 @@ body {
     pointer-events: none;
 }
 
-.canvas-draw {
+.canvas-tile {
+    position: absolute;
     z-index: 3;
     background-color: transparent;
-    cursor: grab;
-    will-change: transform;
+    pointer-events: none;
+    image-rendering: auto;
+}
+
+.draw-overlay {
+    position: absolute;
+    top: 0;
+    left: 0;
+    z-index: 4;
+    pointer-events: none;
+    background-color: transparent;
 }
 
 .camera-video {
@@ -186,16 +196,12 @@ body {
     contain: layout style paint;
 }
 
-.canvas-draw.drawing {
+.canvas-wrapper.drawing {
     cursor: crosshair;
 }
 
-.canvas-draw.eraser {
+.canvas-wrapper.eraser {
     cursor: none;
-}
-
-.canvas-draw.dragging {
-    cursor: grabbing;
 }
 
 .eraser-hint {

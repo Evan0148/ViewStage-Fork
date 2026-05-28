@@ -4,6 +4,7 @@
 import ThemeManager from './themes/theme.js';
 import { history_init_manager, history_validate_undo } from './history.js';
 import './batch-draw.js';
+import './tile-renderer.js';
 console.log('[init] module loaded, readyState:', document.readyState);
 
 if (document.readyState === 'loading') {
@@ -43,7 +44,6 @@ function dom_init_all() {
     dom.canvasContainer = document.getElementById('canvasContainer');
     dom.canvasWrapper = document.getElementById('canvasWrapper');
     dom.imageElement = document.getElementById('imageElement');
-    dom.drawCanvas = document.getElementById('drawCanvas');
     dom.cameraVideo = document.getElementById('cameraVideo');
     dom.eraserHint = document.getElementById('eraserHint');
     dom.penControlPanel = document.getElementById('penControlPanel');
@@ -67,14 +67,8 @@ function dom_init_all() {
     dom.btnMinimize = document.getElementById('btnMinimize');
     dom.btnMenu = document.getElementById('btnMenu');
 
-    if (!dom.imageElement || !dom.drawCanvas || !dom.canvasContainer) {
+    if (!dom.imageElement || !dom.canvasContainer) {
         console.error('必需的元素未找到');
-        return false;
-    }
-
-    dom.drawCtx = dom.drawCanvas.getContext('2d', { alpha: true, desynchronized: true });
-    if (!dom.drawCtx) {
-        console.error('获取 Canvas 2D 上下文失败');
         return false;
     }
 
@@ -114,21 +108,16 @@ function canvas_init_all() {
         baseImageURL: null
     };
 
-    dom.drawCanvas.width = DRAW_CONFIG.canvasW * DRAW_CONFIG.dpr;
-    dom.drawCanvas.height = DRAW_CONFIG.canvasH * DRAW_CONFIG.dpr;
-
     dom.imageElement.style.width = DRAW_CONFIG.canvasW + 'px';
     dom.imageElement.style.height = DRAW_CONFIG.canvasH + 'px';
-    dom.drawCanvas.style.width = DRAW_CONFIG.canvasW + 'px';
-    dom.drawCanvas.style.height = DRAW_CONFIG.canvasH + 'px';
+    dom.canvasWrapper.style.width = DRAW_CONFIG.canvasW + 'px';
+    dom.canvasWrapper.style.height = DRAW_CONFIG.canvasH + 'px';
 
-    dom.drawCtx.scale(DRAW_CONFIG.dpr, DRAW_CONFIG.dpr);
+    window.tileRenderer.init_tiles(dom.canvasWrapper);
 
-    const draw_ctx = dom.drawCtx;
-    draw_ctx.imageSmoothingEnabled = false;
-    draw_ctx.lineCap = 'round';
-    draw_ctx.lineJoin = 'round';
-    draw_ctx.miterLimit = 10;
+    if (window.batchDrawManager) {
+        window.batchDrawManager.init_overlay(container, screenW, screenH, DRAW_CONFIG.dpr);
+    }
 
     window.main_update_pen_style();
     window.main_update_eraser_hint_size();
