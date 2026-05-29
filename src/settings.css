@@ -601,6 +601,84 @@ button {
     justify-content: center;
 }
 
+.preset-editor {
+    display: flex;
+    flex-direction: column;
+    gap: var(--spacing-sm, 12px);
+    padding: var(--spacing-sm, 12px);
+    background: var(--color-surface-soft, rgba(255, 255, 255, 0.03));
+    border-radius: var(--rounded-lg, 12px);
+    border: 1px solid var(--color-hairline-soft, rgba(255, 255, 255, 0.06));
+}
+
+.preset-editor-row {
+    display: flex;
+    align-items: flex-end;
+    gap: 10px;
+}
+
+.preset-item {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 6px;
+}
+
+.preset-label {
+    font-size: 11px;
+    color: var(--color-muted);
+    line-height: 1;
+}
+
+.preset-input {
+    width: 52px;
+    height: 34px;
+    text-align: center;
+    border-radius: 6px;
+    border: 1px solid var(--color-hairline);
+    background: var(--color-surface-card);
+    color: var(--color-text-primary);
+    font-size: 14px;
+    outline: none;
+    -moz-appearance: textfield;
+    transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.preset-input::-webkit-outer-spin-button,
+.preset-input::-webkit-inner-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+}
+
+.preset-input:focus {
+    border-color: var(--color-primary);
+    box-shadow: 0 0 0 2px var(--color-primary-active);
+}
+
+.preset-restore-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    height: 34px;
+    padding: 0 12px;
+    font-size: 11px;
+    font-weight: 500;
+    border-radius: 6px;
+    border: 1px solid var(--color-hairline);
+    background: transparent;
+    color: var(--color-muted);
+    cursor: pointer;
+    white-space: nowrap;
+    transition: all 0.15s ease;
+    margin-left: auto;
+}
+
+.preset-restore-btn:hover {
+    border-color: var(--color-primary);
+    color: var(--color-primary);
+    background: var(--color-surface-soft);
+}
+
 .color-edit-item {
     display: flex;
     flex-direction: column;

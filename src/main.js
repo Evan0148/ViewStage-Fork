@@ -81,6 +81,7 @@ async function main_wait_pdfjs(maxWait = 5000) {
 const DRAW_CONFIG = {
     penColor: null,
     penWidth: 5,
+    penSizePresets: [2, 5, 10, 15, 21],
     eraserSize: 15,
     minScale: 0.5,
     maxScale: 3,
@@ -831,6 +832,12 @@ function main_setup_pdf_file_open() {
             });
             main_update_color_buttons();
             console.log('画笔颜色已更改:', DRAW_CONFIG.penColors);
+        }
+        
+        if (settings.penSizePresets && Array.isArray(settings.penSizePresets)) {
+            DRAW_CONFIG.penSizePresets = settings.penSizePresets;
+            main_build_pen_presets(settings.penSizePresets);
+            console.log('画笔预设已更改:', settings.penSizePresets);
         }
         
         if (settings.theme !== undefined) {
@@ -1788,21 +1795,36 @@ async function main_submit_close_window() {
     }
 }
 
-// 笔触控制事件
-function main_setup_pen_control_events() {
-    // 画笔预设尺寸点击
-    dom.penSizePresets.querySelectorAll('.size-preset-btn').forEach(btn => {
+// 动态构建画笔预设按钮
+function main_build_pen_presets(presets) {
+    const container = dom.penSizePresets;
+    container.querySelectorAll('.size-preset-btn').forEach(b => b.remove());
+    const valueSpan = container.querySelector('.pen-size-label');
+    presets.forEach(value => {
+        const btn = document.createElement('button');
+        btn.className = 'size-preset-btn';
+        btn.dataset.value = value;
+        btn.style.setProperty('--dot-size', Math.round(value + 4) + 'px');
         btn.addEventListener('click', () => {
-            const value = parseInt(btn.dataset.value);
             DRAW_CONFIG.penWidth = value;
-            dom.penSizePresets.querySelectorAll('.size-preset-btn').forEach(b => b.classList.remove('active'));
+            container.querySelectorAll('.size-preset-btn').forEach(b => b.classList.remove('active'));
             btn.classList.add('active');
             dom.penSizeValue.textContent = `${value}px`;
             if (state.drawMode === 'comment') {
                 main_update_pen_style();
             }
         });
+        container.insertBefore(btn, valueSpan);
     });
+    const active = container.querySelector(`[data-value="${DRAW_CONFIG.penWidth}"]`);
+    if (active) active.classList.add('active');
+    main_update_pen_preset_dot_color();
+    dom.penSizeValue.textContent = `${DRAW_CONFIG.penWidth}px`;
+}
+
+// 笔触控制事件
+function main_setup_pen_control_events() {
+    main_build_pen_presets(DRAW_CONFIG.penSizePresets);
     
     // 橡皮预设尺寸点击
     dom.eraserSizePresets.querySelectorAll('.size-preset-btn').forEach(btn => {
@@ -1819,12 +1841,9 @@ function main_setup_pen_control_events() {
         });
     });
     
-    // 初始化选中状态
-    const penActive = dom.penSizePresets.querySelector(`[data-value="${DRAW_CONFIG.penWidth}"]`);
-    if (penActive) penActive.classList.add('active');
+    // 初始化橡皮选中状态
     const eraserActive = dom.eraserSizePresets.querySelector(`[data-value="${DRAW_CONFIG.eraserSize}"]`);
     if (eraserActive) eraserActive.classList.add('active');
-    main_update_pen_preset_dot_color();
     
     // 颜色按钮点击事件
     const colorButtons = document.querySelectorAll('.pen-color-btn');

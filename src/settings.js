@@ -323,6 +323,15 @@ document.addEventListener('DOMContentLoaded', async () => {
                     }
                 }
                 
+                const DEFAULT_PRESETS = [2, 5, 10, 15, 21];
+                const savedPresets = settings.penSizePresets || DEFAULT_PRESETS;
+                for (let i = 0; i < 5; i++) {
+                    const input = document.getElementById('penPreset' + i);
+                    if (input) {
+                        input.value = savedPresets[i] !== undefined ? savedPresets[i] : DEFAULT_PRESETS[i];
+                    }
+                }
+
                 const mirrorToggle = document.getElementById('mirrorToggle');
                 if (mirrorToggle) {
                     try {
@@ -333,7 +342,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                         mirrorToggle.checked = false;
                     }
                 }
-                
+
                 const denoiseFrameCount = settings.denoiseFrameCount || 3;
                 const denoiseFrameSelected = document.getElementById('denoiseFrameSelected');
                 const denoiseFrameOptions = document.querySelectorAll('#denoiseFrameOptions .select-option');
@@ -1202,6 +1211,41 @@ document.addEventListener('DOMContentLoaded', async () => {
         });
     });
     
+    // 画笔预设粗细
+    const DEFAULT_PRESETS_BIND = [2, 5, 10, 15, 21];
+    function settings_read_presets_from_ui() {
+        const values = [];
+        for (let i = 0; i < 5; i++) {
+            const input = document.getElementById('penPreset' + i);
+            values.push(input ? parseInt(input.value) || DEFAULT_PRESETS_BIND[i] : DEFAULT_PRESETS_BIND[i]);
+        }
+        return values;
+    }
+    for (let i = 0; i < 5; i++) {
+        const input = document.getElementById('penPreset' + i);
+        if (input) {
+            input.addEventListener('change', async () => {
+                let val = parseInt(input.value);
+                if (isNaN(val) || val < 1) val = 1;
+                if (val > 100) val = 100;
+                input.value = val;
+                const presets = settings_read_presets_from_ui();
+                await settings_save_all_local({ penSizePresets: presets });
+            });
+        }
+    }
+    const presetRestore = document.getElementById('penPresetRestore');
+    if (presetRestore) {
+        presetRestore.addEventListener('click', async () => {
+            const defaults = DEFAULT_PRESETS_BIND;
+            for (let i = 0; i < 5; i++) {
+                const input = document.getElementById('penPreset' + i);
+                if (input) input.value = defaults[i];
+            }
+            await settings_save_all_local({ penSizePresets: defaults });
+        });
+    }
+
     // 镜像开关
     const mirrorToggle = document.getElementById('mirrorToggle');
     if (mirrorToggle) {

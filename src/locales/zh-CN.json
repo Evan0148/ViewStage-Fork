@@ -97,6 +97,8 @@
     "penEffectLimited": "限制",
     "penEffectFull": "完整",
     "penColors": "画笔颜色",
+    "penSizePresets": "画笔粗细预设",
+    "restoreDefaults": "恢复默认",
     "defaultCamera": "默认摄像头",
     "cameraResolution": "摄像头分辨率",
     "pdfOutputResolution": "PDF 输出分辨率",

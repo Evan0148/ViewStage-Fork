@@ -190,6 +190,9 @@ async function settings_load_camera_config() {
                 });
                 window.main_update_color_buttons();
             }
+            if (settings.penSizePresets && Array.isArray(settings.penSizePresets)) {
+                DRAW_CONFIG.penSizePresets = settings.penSizePresets;
+            }
 
             if (settings.frameRateMode !== undefined) {
                 if (window.batchDrawManager) {

@@ -1274,6 +1274,7 @@ fn config_fetch_default() -> serde_json::Value {
         "highFrameRate": false,
         "smoothStrength": 0.5,
         "blurEffect": true,
+        "penSizePresets": [2, 5, 10, 15, 21],
         "penColors": [
             {"r": 52, "g": 152, "b": 219},
             {"r": 46, "g": 204, "b": 113},

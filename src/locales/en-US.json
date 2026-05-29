@@ -97,6 +97,8 @@
     "penEffectLimited": "Limited",
     "penEffectFull": "Full",
     "penColors": "Pen Colors",
+    "penSizePresets": "Pen Size Presets",
+    "restoreDefaults": "Restore Defaults",
     "defaultCamera": "Camera",
     "cameraResolution": "Resolution",
     "pdfOutputResolution": "PDF Resolution",
