@@ -818,7 +818,7 @@ function main_setup_pdf_file_open() {
         if (settings.dynamicDprEnabled !== undefined || settings.dprMin !== undefined ||
             settings.dprMax !== undefined || settings.dprStep !== undefined) {
             if (window.tileRenderer) {
-                window.tileRenderer.update_visible_tile_dpr(state.scale);
+                window.tileRenderer.update_visible_tile_dpr(state.scale, true);
             }
         }
 

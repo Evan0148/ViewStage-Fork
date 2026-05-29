@@ -257,13 +257,17 @@ document.addEventListener('DOMContentLoaded', async () => {
                 }
 
                 const dynamicDprEnabled = settings.dynamicDprEnabled !== undefined ? settings.dynamicDprEnabled : true;
-                const dprEnabledBtns = document.querySelectorAll('#dynamicDprGroup .option-btn');
-                dprEnabledBtns.forEach(btn => {
-                    btn.classList.toggle('active', btn.dataset.value === String(dynamicDprEnabled));
-                });
+                const dprToggle = document.getElementById('dynamicDprToggle');
+                if (dprToggle) {
+                    dprToggle.checked = dynamicDprEnabled;
+                }
                 const dprRangeItem = document.getElementById('dprRangeItem');
                 if (dprRangeItem) {
                     dprRangeItem.style.display = dynamicDprEnabled ? '' : 'none';
+                }
+                const dprLimitItem = document.getElementById('dprLimitItem');
+                if (dprLimitItem) {
+                    dprLimitItem.style.display = dynamicDprEnabled ? 'none' : '';
                 }
 
                 function settings_load_dpr_select(id, key, defaultVal) {
@@ -923,15 +927,14 @@ document.addEventListener('DOMContentLoaded', async () => {
     settings_bind_select_save('dprMinSelect', 'dprMin');
     settings_bind_select_save('dprMaxSelect', 'dprMax');
 
-    const dynamicDprGroup = document.getElementById('dynamicDprGroup');
-    if (dynamicDprGroup) {
-        dynamicDprGroup.addEventListener('click', async (e) => {
-            const btn = e.target.closest('.option-btn');
-            if (!btn) return;
-            const value = btn.dataset.value === 'true';
-            dynamicDprGroup.querySelectorAll('.option-btn').forEach(b => b.classList.toggle('active', b === btn));
+    const dprToggle = document.getElementById('dynamicDprToggle');
+    if (dprToggle) {
+        dprToggle.addEventListener('change', async () => {
+            const value = dprToggle.checked;
             const dprRangeItem = document.getElementById('dprRangeItem');
             if (dprRangeItem) dprRangeItem.style.display = value ? '' : 'none';
+            const dprLimitItem = document.getElementById('dprLimitItem');
+            if (dprLimitItem) dprLimitItem.style.display = value ? 'none' : '';
             await settings_save_all_local({ dynamicDprEnabled: value });
         });
     }

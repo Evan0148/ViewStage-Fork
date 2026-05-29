@@ -84,7 +84,7 @@ class TileRenderer {
         this.dirty.add(info.key);
     }
 
-    update_visible_tile_dpr(scale) {
+    update_visible_tile_dpr(scale, force) {
         const targetDpr = this._calc_target_dpr(scale);
         const keys = this.get_visible_keys();
         let changed = false;
@@ -96,17 +96,26 @@ class TileRenderer {
         }
         if (!changed) return;
 
-        const cfg = window.DRAW_CONFIG;
-        const hysteresis = (cfg.dprStep || 0.5) / Math.max(0.5, cfg.baseDpr || window.devicePixelRatio || 1);
-        if (Math.abs(scale - this._lastDprUpdateScale) < hysteresis) {
-            return;
+        if (!force) {
+            const cfg = window.DRAW_CONFIG;
+            const hysteresis = (cfg.dprStep || 0.5) / Math.max(0.5, cfg.baseDpr || window.devicePixelRatio || 1);
+            if (Math.abs(scale - this._lastDprUpdateScale) < hysteresis) {
+                return;
+            }
         }
         this._lastDprUpdateScale = scale;
 
         this._pendingDpr = targetDpr;
-        if (!this._rebuildRafId) {
-            this._rebuildRafId = requestAnimationFrame(() => this._apply_dpr_update());
+        this._cancel_pending_rebuild();
+        this._rebuildRafId = requestAnimationFrame(() => this._apply_dpr_update());
+    }
+
+    _cancel_pending_rebuild() {
+        if (this._rebuildRafId !== null) {
+            cancelAnimationFrame(this._rebuildRafId);
+            this._rebuildRafId = null;
         }
+        this._pendingDpr = null;
     }
 
     _apply_dpr_update() {
@@ -270,11 +279,7 @@ class TileRenderer {
     }
 
     destroy() {
-        if (this._rebuildRafId !== null) {
-            cancelAnimationFrame(this._rebuildRafId);
-            this._rebuildRafId = null;
-        }
-        this._pendingDpr = null;
+        this._cancel_pending_rebuild();
         for (const info of this.tileInfos) {
             if (info.canvas && info.canvas.parentNode) {
                 info.canvas.parentNode.removeChild(info.canvas);
