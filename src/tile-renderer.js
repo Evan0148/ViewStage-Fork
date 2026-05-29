@@ -16,6 +16,8 @@ class TileRenderer {
         this._DPR_SETTLE_MS = 300;
         this._idleShrinkTimerId = null;
         this._IDLE_SHRINK_MS = 5000;
+        this._strokeVersion = 0;
+        this._builtStrokeVersion = -1;
         for (let r = 0; r < TILE_ROWS; r++) {
             for (let c = 0; c < TILE_COLS; c++) {
                 this.tileInfos.push({ col: c, row: r, key: `${c}_${r}`, dpr: 1 });
@@ -88,7 +90,13 @@ class TileRenderer {
         this._baseCacheCtx = null;
     }
 
+    mark_strokes_changed() {
+        this._strokeVersion++;
+    }
+
     _build_quadtree() {
+        if (this._strokeVersion === this._builtStrokeVersion) return;
+        this._builtStrokeVersion = this._strokeVersion;
         const strokes = window.state.strokeHistory;
         if (!strokes || strokes.length === 0) {
             this._quadtree = null;
@@ -219,7 +227,6 @@ class TileRenderer {
                 }
             }
             if (anyShrunk) {
-                this.mark_all();
                 this.rebuild_visible(keys);
             }
         }, this._IDLE_SHRINK_MS);
@@ -239,7 +246,6 @@ class TileRenderer {
                 }
             }
         }
-        this.mark_all();
         this.rebuild_visible(keys);
         this._schedule_idle_shrink();
     }

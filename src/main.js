@@ -2938,6 +2938,7 @@ async function main_render_all_strokes() {
     if (!tr) return;
 
     if (state.strokeHistory.length === 0 && !state.baseImageObj) {
+        tr.mark_strokes_changed();
         tr.for_each((info) => {
             const ctx = info.ctx;
             const dpr = info.dpr;
@@ -2950,6 +2951,7 @@ async function main_render_all_strokes() {
         return;
     }
 
+    tr.mark_strokes_changed();
     tr.mark_all();
     tr.rebuild_all();
 }

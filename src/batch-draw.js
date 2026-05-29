@@ -63,6 +63,8 @@ class RealtimeBatchDrawManager {
         this._overlayCtx = this._overlayCanvas.getContext('2d');
         this._overlayCtx.imageSmoothingEnabled = false;
         this._overlayTransformScale = 0;
+        this._overlayTransformX = 0;
+        this._overlayTransformY = 0;
     }
 
     resize_overlay(screenW, screenH, dpr) {
@@ -74,6 +76,8 @@ class RealtimeBatchDrawManager {
             this._overlayCanvas.style.height = screenH + 'px';
         }
         this._overlayTransformScale = 0;
+        this._overlayTransformX = 0;
+        this._overlayTransformY = 0;
     }
 
     destroy_overlay() {
@@ -90,6 +94,14 @@ class RealtimeBatchDrawManager {
         const scale = window.state.scale || 1;
         const canvasX = window.state.canvasX || 0;
         const canvasY = window.state.canvasY || 0;
+        if (this._overlayTransformScale === scale &&
+            this._overlayTransformX === canvasX &&
+            this._overlayTransformY === canvasY) {
+            return;
+        }
+        this._overlayTransformScale = scale;
+        this._overlayTransformX = canvasX;
+        this._overlayTransformY = canvasY;
         this._overlayCtx.setTransform(scale * dpr, 0, 0, scale * dpr, canvasX * dpr, canvasY * dpr);
     }
 
@@ -99,6 +111,8 @@ class RealtimeBatchDrawManager {
             this._overlayCtx.clearRect(0, 0, this._overlayCanvas.width, this._overlayCanvas.height);
         }
         this._overlayTransformScale = 0;
+        this._overlayTransformX = 0;
+        this._overlayTransformY = 0;
     }
 
     _each_tile(x1, y1, x2, y2, fn) {
@@ -328,6 +342,8 @@ class RealtimeBatchDrawManager {
         const perSegTime = Math.min(batchTimeSpan / count, 8);
         lastMoveTime = curTime;
 
+        const eraseByTile = new Map();
+
         for (let i = 0; i < count; i++) {
             const cmd = commands[i];
 
@@ -362,27 +378,20 @@ class RealtimeBatchDrawManager {
                 currentColor = cmd.color;
             }
 
-            const isFirst = (i === 0 && (this._strokeStart || this._lastMidX === null));
-            const lastMX = isFirst ? null : (i === 0 ? this._lastMidX : ((commands[i - 1].fromX + commands[i - 1].toX) / 2));
-            const lastMY = isFirst ? null : (i === 0 ? this._lastMidY : ((commands[i - 1].fromY + commands[i - 1].toY) / 2));
-
-            const prevCmd = i > 0 ? commands[i - 1] : null;
-            const segFromX = prevCmd ? (prevCmd.fromX + prevCmd.toX) / 2 : fromX;
-            const segFromY = prevCmd ? (prevCmd.fromY + prevCmd.toY) / 2 : fromY;
-            const boxMinX = Math.min(segFromX, fromX, toX);
-            const boxMinY = Math.min(segFromY, fromY, toY);
-            const boxMaxX = Math.max(segFromX, fromX, toX);
-            const boxMaxY = Math.max(segFromY, fromY, toY);
             if (cmd.type === 'erase') {
-                this._each_tile(boxMinX, boxMinY, boxMaxX, boxMaxY, (ctx) => {
-                    ctx.globalCompositeOperation = 'destination-out';
-                    ctx.strokeStyle = 'rgba(0,0,0,1)';
-                    ctx.lineWidth = cmd.lineWidth;
-                    ctx.beginPath();
-                    ctx.moveTo(fromX, fromY);
-                    ctx.lineTo(toX, toY);
-                    ctx.stroke();
-                });
+                const tr = window.tileRenderer;
+                if (tr) {
+                    const infos = tr.infos_for_segment(fromX, fromY, toX, toY);
+                    for (const info of infos) {
+                        let entry = eraseByTile.get(info.key);
+                        if (!entry) {
+                            entry = { paths: [], lineWidth: cmd.lineWidth };
+                            eraseByTile.set(info.key, entry);
+                        }
+                        entry.paths.push({ fromX, fromY, toX, toY });
+                        entry.lineWidth = cmd.lineWidth;
+                    }
+                }
             } else if (this._overlayCtx) {
                 const ctx = this._overlayCtx;
                 ctx.globalCompositeOperation = 'source-over';
@@ -393,6 +402,9 @@ class RealtimeBatchDrawManager {
                 }
                 ctx.lineWidth = Math.max(0.5, lineWidth);
 
+                const isFirst = (i === 0 && (this._strokeStart || this._lastMidX === null));
+                const lastMX = isFirst ? null : (i === 0 ? this._lastMidX : ((commands[i - 1].fromX + commands[i - 1].toX) / 2));
+                const lastMY = isFirst ? null : (i === 0 ? this._lastMidY : ((commands[i - 1].fromY + commands[i - 1].toY) / 2));
                 const midX = (fromX + toX) / 2;
                 const midY = (fromY + toY) / 2;
 
@@ -414,6 +426,32 @@ class RealtimeBatchDrawManager {
                 this._lastMidY = (fromY + toY) / 2;
                 this._lastToX = toX;
                 this._lastToY = toY;
+            }
+        }
+
+        if (eraseByTile.size > 0) {
+            const tr = window.tileRenderer;
+            if (tr) {
+                for (const info of tr.tileInfos) {
+                    const entry = eraseByTile.get(info.key);
+                    if (!entry) continue;
+                    const ctx = info.ctx;
+                    const dpr = info.dpr;
+                    ctx.save();
+                    ctx.setTransform(dpr, 0, 0, dpr, -info.rect.x * dpr, -info.rect.y * dpr);
+                    ctx.lineCap = 'round';
+                    ctx.lineJoin = 'round';
+                    ctx.globalCompositeOperation = 'destination-out';
+                    ctx.strokeStyle = 'rgba(0,0,0,1)';
+                    ctx.lineWidth = entry.lineWidth;
+                    ctx.beginPath();
+                    for (const p of entry.paths) {
+                        ctx.moveTo(p.fromX, p.fromY);
+                        ctx.lineTo(p.toX, p.toY);
+                    }
+                    ctx.stroke();
+                    ctx.restore();
+                }
             }
         }
 
