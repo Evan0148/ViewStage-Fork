@@ -84,6 +84,7 @@
     "exportSettings": "匯出設定",
     "importSettings": "匯入設定",
     "resetApp": "重置應用",
+    "blackboardEnabled": "小黑板",
     "canvasScale": "畫布縮放倍數",
     "backgroundColor": "畫布背景顏色",
     "dprLimit": "畫面精度",

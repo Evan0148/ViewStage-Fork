@@ -84,6 +84,7 @@
     "exportSettings": "Export",
     "importSettings": "Import",
     "resetApp": "Reset",
+    "blackboardEnabled": "Blackboard",
     "canvasScale": "Canvas Scale",
     "backgroundColor": "Background",
     "dprLimit": "Display Quality",
