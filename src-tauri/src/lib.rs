@@ -1339,7 +1339,8 @@ fn config_fetch_default() -> serde_json::Value {
         "theme": "com.viewstage.theme.simplify",
         "denoiseFrameCount": 3,
         "denoiseStrength": "medium",
-        "penEffectMode": "limited"
+        "penEffectMode": "limited",
+        "memreductCleanEnabled": true
     })
 }
 
@@ -3377,8 +3378,6 @@ pub fn app_init_run() {
         log::info!("日志系统初始化成功");
     }
 
-    memreduct_start_monitor();
-    
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_fs::init())
@@ -3453,6 +3452,19 @@ pub fn app_init_run() {
                 }
                 
                 println!("应用已启动，等待文件打开事件...");
+                
+                // 根据配置决定是否启动 Mem Reduct 自动清理
+                #[cfg(target_os = "windows")]
+                {
+                    let memreduct_enabled = std::fs::read_to_string(&config_path)
+                        .ok()
+                        .and_then(|content| serde_json::from_str::<serde_json::Value>(&content).ok())
+                        .and_then(|v| v.get("memreductCleanEnabled")?.as_bool())
+                        .unwrap_or(true);
+                    if memreduct_enabled {
+                        memreduct_start_monitor();
+                    }
+                }
             }
             
             Ok(())
