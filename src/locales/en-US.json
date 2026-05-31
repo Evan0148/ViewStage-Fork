@@ -209,7 +209,8 @@
     "configSaved": "Settings saved. Click the button below to restart the app.",
     "restartApp": "Restart App",
     "clickToStart": "Click anywhere to start setup",
-    "cameraPreviewLoading": "Loading camera..."
+    "cameraPreviewLoading": "Loading camera...",
+    "saving": "Saving settings..."
   },
   "about": {
     "description": "ViewStage is an application for video presentation and document annotation.",
