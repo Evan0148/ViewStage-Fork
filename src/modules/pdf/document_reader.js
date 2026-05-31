@@ -121,14 +121,15 @@ class DocumentReaderManager {
         this._dr_tool_group = document.getElementById('drToolGroup');
 
         this._setup_toolbar_events();
-        this._setup_events();
-        this._setup_keyboard_events();
     }
 
     // ====== 面板管理 ======
 
     async open(folder_index, page_index = 0) {
-        if (this.is_open) return;
+        // 如果已打开其他文档，先关闭再打开新的
+        if (this.is_open) {
+            await this.close();
+        }
 
         if (window.main_update_camera_state && window.state.isCameraOpen) {
             this._was_camera_open_before = true;
@@ -167,6 +168,10 @@ class DocumentReaderManager {
         this.page_manager.current_index = page_index;
 
         this._build_page_dom();
+
+        // 确保滚动容器事件已绑定（close() 可能已移除）
+        this._setup_events();
+        this._setup_keyboard_events();
 
         // 创建文档阅读器专用的橡皮擦提示元素（与 blackboard 模式一致）
         this._create_eraser_hint();
@@ -251,6 +256,9 @@ class DocumentReaderManager {
                     this._scroll_container.removeEventListener('pointerup', this._bound_handle_pointer_up);
                     this._scroll_container.removeEventListener('pointerleave', this._bound_handle_pointer_up);
                     this._scroll_container.removeEventListener('pointercancel', this._bound_handle_pointer_up);
+                    this._bound_handle_pointer_down = null;
+                    this._bound_handle_pointer_move = null;
+                    this._bound_handle_pointer_up = null;
                 }
             } else {
                 if (this._bound_handle_mouse_down) {
@@ -258,6 +266,9 @@ class DocumentReaderManager {
                     this._scroll_container.removeEventListener('mousemove', this._bound_handle_mouse_move);
                     this._scroll_container.removeEventListener('mouseup', this._bound_handle_mouse_up);
                     this._scroll_container.removeEventListener('mouseleave', this._bound_handle_mouse_up);
+                    this._bound_handle_mouse_down = null;
+                    this._bound_handle_mouse_move = null;
+                    this._bound_handle_mouse_up = null;
                 }
             }
             if (this._bound_dr_handle_wheel) {
@@ -266,6 +277,10 @@ class DocumentReaderManager {
                 this._scroll_container.removeEventListener('touchmove', this._bound_dr_handle_touch_move);
                 this._scroll_container.removeEventListener('touchend', this._bound_dr_handle_touch_end);
                 this._scroll_container.removeEventListener('touchcancel', this._bound_dr_handle_touch_end);
+                this._bound_dr_handle_wheel = null;
+                this._bound_dr_handle_touch_start = null;
+                this._bound_dr_handle_touch_move = null;
+                this._bound_dr_handle_touch_end = null;
             }
         }
 
