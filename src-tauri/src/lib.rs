@@ -3350,6 +3350,19 @@ fn memreduct_start_monitor() {
 #[cfg(not(target_os = "windows"))]
 fn memreduct_start_monitor() {}
 
+/// Tauri IPC 命令：检查本地是否安装了 Mem Reduct 可执行文件
+#[tauri::command]
+fn memreduct_check_installed() -> bool {
+    #[cfg(target_os = "windows")]
+    {
+        memreduct_find_executable().is_some()
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        false
+    }
+}
+
 /// 应用入口函数
 ///
 /// 初始化日志、注册 Tauri 插件和 IPC 命令，配置 OOBE/主窗口启动流程。
@@ -3513,7 +3526,8 @@ pub fn app_init_run() {
             office_convert_docx_to_pdf_bytes,
             filetype_set_icons,
             filetype_delete_icons,
-            device_detect_all
+            device_detect_all,
+            memreduct_check_installed
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
