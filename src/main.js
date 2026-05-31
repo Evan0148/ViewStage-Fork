@@ -4940,6 +4940,7 @@ window.main_update_eraser_hint_size = main_update_eraser_hint_size;
 window.main_update_canvas_transform = main_update_canvas_transform;
 window.main_init_pdfjs = main_init_pdfjs;
 window.main_wait_pdfjs = main_wait_pdfjs;
+window.main_show_pen_control_panel = main_show_pen_control_panel;
 window.main_hide_pen_control_panel = main_hide_pen_control_panel;
 window.main_hide_settings_panel = main_hide_settings_panel;
 window.main_render_image_centered = main_render_image_centered;

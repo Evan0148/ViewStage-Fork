@@ -86,7 +86,6 @@ class DocumentReaderManager {
     init(container) {
         this._scroll_container = document.getElementById('docReaderScrollContainer');
         this._dr_tool_group = document.getElementById('drToolGroup');
-        this._eraser_hint = document.getElementById('eraserHint');
 
         this._setup_toolbar_events();
         this._setup_events();
@@ -135,6 +134,9 @@ class DocumentReaderManager {
         this.page_manager.current_index = page_index;
 
         this._build_page_dom();
+
+        // 创建文档阅读器专用的橡皮擦提示元素（与 blackboard 模式一致）
+        this._create_eraser_hint();
 
         // 默认启用移动模式，允许立即拖拽平移（不设为批注模式）
         this._set_draw_mode('move');
@@ -188,6 +190,12 @@ class DocumentReaderManager {
 
         await this._submit_stroke();
         this._hide_eraser_hint();
+
+        // 移除橡皮擦提示元素
+        if (this._eraser_hint && this._eraser_hint.parentNode) {
+            this._eraser_hint.parentNode.removeChild(this._eraser_hint);
+            this._eraser_hint = null;
+        }
 
         // 保存当前页的 undo/redo
         const cur_page = this.page_manager.get_current_page();
@@ -812,6 +820,7 @@ class DocumentReaderManager {
                 text_layer.replaceChildren();
                 text_layer.style.width = Math.ceil(css_viewport.width) + 'px';
                 text_layer.style.height = Math.ceil(css_viewport.height) + 'px';
+                text_layer.style.setProperty('--scale-factor', css_scale);
 
                 const ctx = canvas.getContext('2d', { alpha: false });
                 ctx.setTransform(1, 0, 0, 1, 0, 0);
@@ -1728,6 +1737,20 @@ class DocumentReaderManager {
         if (eraser_btn) eraser_btn.addEventListener('click', () => this._set_draw_mode('eraser'));
         if (undo_btn) undo_btn.addEventListener('click', () => this.handle_undo());
         if (clear_btn) clear_btn.addEventListener('click', () => this.handle_clear());
+
+        // 双击画笔/橡皮擦按钮弹出控制面板（与主界面行为一致）
+        if (comment_btn) comment_btn.addEventListener('dblclick', (e) => {
+            e.preventDefault();
+            if (window.main_show_pen_control_panel) {
+                window.main_show_pen_control_panel(comment_btn, 'comment');
+            }
+        });
+        if (eraser_btn) eraser_btn.addEventListener('dblclick', (e) => {
+            e.preventDefault();
+            if (window.main_show_pen_control_panel) {
+                window.main_show_pen_control_panel(eraser_btn, 'eraser');
+            }
+        });
     }
 
     _set_draw_mode(mode) {
@@ -1755,8 +1778,26 @@ class DocumentReaderManager {
 
     // ====== 橡皮擦提示 ======
 
+    _create_eraser_hint() {
+        // 移除旧的橡皮擦提示（如果有）
+        if (this._eraser_hint && this._eraser_hint.parentNode) {
+            this._eraser_hint.parentNode.removeChild(this._eraser_hint);
+        }
+
+        // 创建文档阅读器专用的橡皮擦提示元素
+        this._eraser_hint = document.createElement('div');
+        this._eraser_hint.className = 'eraser-hint';
+        this._eraser_hint.style.width = (window.DRAW_CONFIG?.eraserSize || 15) + 'px';
+        this._eraser_hint.style.height = (window.DRAW_CONFIG?.eraserSize || 15) + 'px';
+        this._scroll_container.appendChild(this._eraser_hint);
+    }
+
     _show_eraser_hint() {
         if (!this._eraser_hint) return;
+        // 更新橡皮擦尺寸
+        const eraser_size = window.DRAW_CONFIG?.eraserSize || 15;
+        this._eraser_hint.style.width = eraser_size + 'px';
+        this._eraser_hint.style.height = eraser_size + 'px';
         this._eraser_hint.classList.add('active');
     }
 
@@ -1784,8 +1825,16 @@ class DocumentReaderManager {
             const eraser_size = window.DRAW_CONFIG?.eraserSize || 15;
             this._eraser_hint.style.width = eraser_size + 'px';
             this._eraser_hint.style.height = eraser_size + 'px';
-            this._eraser_hint.style.left = (pos.clientX - eraser_size / 2) + 'px';
-            this._eraser_hint.style.top = (pos.clientY - eraser_size / 2) + 'px';
+
+            // 计算相对于滚动容器的位置
+            if (this._scroll_container) {
+                const rect = this._scroll_container.getBoundingClientRect();
+                const x = pos.clientX - rect.left;
+                const y = pos.clientY - rect.top;
+                this._eraser_hint.style.left = x + 'px';
+                this._eraser_hint.style.top = y + 'px';
+                this._eraser_hint.style.transform = 'translate(-50%, -50%)';
+            }
         });
     }
 
