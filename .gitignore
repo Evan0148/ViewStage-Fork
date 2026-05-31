@@ -39,3 +39,6 @@ example/
 
 # Trae config
 .trae/
+
+# OpenCode metadata
+.omo/
