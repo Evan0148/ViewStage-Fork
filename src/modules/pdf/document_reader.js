@@ -1098,7 +1098,7 @@ class DocumentReaderManager {
      * @param {number} scale - 当前缩放级别
      * @returns {number} 降级后的 DPR（1 或 2）
      */
-    _calculate_adaptive_dpr(base_dpr, scale) {
+    _calculate_adaptive_dpr(base_dpr, scale, is_active_page = true) {
         if (!this._adaptive_dpr_enabled) return Math.min(base_dpr, 2);
 
         // 缩小查看时降低 DPR 节约显存
@@ -1106,6 +1106,9 @@ class DocumentReaderManager {
 
         // 内存压力检测：堆内存超 500MB 时降级 DPR
         if (performance.memory?.usedJSHeapSize > 500 * 1024 * 1024) return 1;
+
+        // 放大时非当前页不需要高分辨率（视口内只显示当前页）
+        if (!is_active_page && scale > 1.5) return 1;
 
         // 放大时按比例提升渲染 DPR，确保文字清晰
         // 基础 DPR * 缩放倍数，上限 4x 防止 OOM
@@ -1122,8 +1125,16 @@ class DocumentReaderManager {
 
         this._create_pdf_page_layers(page_data);
         const css_w = Math.round(parseFloat(page_data.page_element.style.width)) || page_data.page_element.clientWidth || 800;
+
+        // 计算目标 DPR，若与上次缓存不同则强制重绘（如翻页后活跃页变更）
+        const target_dpr = is_prerender ? 1 : this._calculate_adaptive_dpr(
+            window.devicePixelRatio || window.DRAW_CONFIG?.dpr || 1,
+            this.dr_scale,
+            page_index === this.active_page_index
+        );
         if (!force &&
             page_data.pdf_render_css_width === css_w &&
+            page_data.pdf_render_dpr === target_dpr &&
             page_data.pdf_canvas?.width > 0) {
             return;
         }
@@ -1140,16 +1151,8 @@ class DocumentReaderManager {
                 const css_scale = css_w / base_viewport.width;
                 const css_viewport = pdf_page.getViewport({ scale: css_scale });
 
-                // 预渲染使用更低的 DPR 以节省内存
-                let render_dpr;
-                if (is_prerender) {
-                    render_dpr = 1; // 预渲染固定使用 1x
-                } else {
-                    render_dpr = this._calculate_adaptive_dpr(
-                        window.devicePixelRatio || window.DRAW_CONFIG?.dpr || 1,
-                        this.dr_scale
-                    );
-                }
+                // 预渲染固定 1x，普通渲染沿用缓存检查阶段已算好的 target_dpr
+                const render_dpr = is_prerender ? 1 : target_dpr;
                 const render_viewport = pdf_page.getViewport({ scale: css_scale * render_dpr });
 
                 page_data.page_width = base_viewport.width;
@@ -1199,6 +1202,7 @@ class DocumentReaderManager {
                     await text_task.promise;
                 }
                 page_data.pdf_render_css_width = css_w;
+                page_data.pdf_render_dpr = target_dpr;
             } finally {
                 pdf_page.cleanup?.();
             }
