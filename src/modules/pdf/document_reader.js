@@ -88,6 +88,8 @@ class DocumentReaderManager {
         this.dr_max_scale = 4;
         this.dr_cached_inv_scale = 1;
         this._zoom_wrapper = null;
+        this._dr_is_zooming = false;            // 缩放进行中标记，缩放结束后延迟批量重绘
+        this._zoom_complete_timer = null;        // 缩放结束延迟触发重绘
 
         // 触摸手势优化状态
         this._touch_raf_id = null;               // 捏合缩放 rAF 节流 ID
@@ -1118,6 +1120,10 @@ class DocumentReaderManager {
     async _render_pdf_page_direct(page_index, force = false, is_prerender = false) {
         const page_data = this.page_manager.pages_list[page_index];
         if (!page_data || page_data.render_mode !== 'pdfjs') return;
+
+        // 缩放进行中不触发 PDF 重绘，由缩放结束后的批量刷新处理
+        if (this._dr_is_zooming && !force) return;
+
         if (page_data.pdf_render_promise && !force) return page_data.pdf_render_promise;
 
         const folder = window.state.fileList[this.folder_index];
@@ -2923,6 +2929,9 @@ class DocumentReaderManager {
         this._dr_update_canvas_position();
         this._dr_sync_transform();
 
+        // 缩放进行中跳过 tile DPR 更新和可见页重绘，由缩放结束后批量刷新
+        if (this._dr_is_zooming) return;
+
         // 仅遍历已初始化 tile 的页面（跳过无 tile 页面，200+ 页文档性能提升显著）
         for (const i of this._pages_with_tiles) {
             const pd = this.page_manager.pages_list[i];
@@ -2940,7 +2949,34 @@ class DocumentReaderManager {
         this._check_page_visibility();
     }
 
-    /** 启用 will-change: transform（缩放/拖拽开始时调用） */
+    /** 标记缩放进行中，延迟 300ms 后触发批量重绘 */
+    _dr_set_zooming() {
+        this._dr_is_zooming = true;
+        if (this._zoom_complete_timer !== null) {
+            clearTimeout(this._zoom_complete_timer);
+        }
+        this._zoom_complete_timer = setTimeout(() => {
+            this._zoom_complete_timer = null;
+            this._dr_is_zooming = false;
+            // 缩放结束后批量重绘可见页 + 更新 tile DPR
+            this._check_page_visibility();
+            for (const i of this._pages_with_tiles) {
+                const pd = this.page_manager.pages_list[i];
+                if (pd && (pd.is_visible || this._is_page_near_active(i, this._tile_keep_distance))) {
+                    pd.tile_renderer?.update_visible_tile_dpr(this.dr_scale, false, true);
+                }
+            }
+        }, 300);
+    }
+
+    /** 撤销、翻页等操作应强制立即重绘，取消缩放延迟 */
+    _dr_cancel_zoom_debounce() {
+        if (this._zoom_complete_timer !== null) {
+            clearTimeout(this._zoom_complete_timer);
+            this._zoom_complete_timer = null;
+        }
+        this._dr_is_zooming = false;
+    }
     _dr_enable_smooth_transform() {
         if (this._smooth_transform_timeout_id !== null) {
             clearTimeout(this._smooth_transform_timeout_id);
@@ -2993,6 +3029,9 @@ class DocumentReaderManager {
             // will-change: 按需启用 GPU 合成层
             this._dr_enable_smooth_transform();
 
+            // 标记缩放进行中，合并多帧事件并延迟批量重绘
+            this._dr_set_zooming();
+
             // rAF 节流：合并多帧滚轮事件的 _dr_apply_scale 调用
             if (this._wheel_raf_id !== null) {
                 cancelAnimationFrame(this._wheel_raf_id);
@@ -3034,6 +3073,9 @@ class DocumentReaderManager {
 
             // will-change: 按需启用 GPU 合成层
             this._dr_enable_smooth_transform();
+
+            // 标记缩放进行中，捏合期间跳过昂贵重绘
+            this._dr_set_zooming();
 
             // 记录捏合起始中心（用于两指平移增量计算）
             this._touch_start_center_x = this.dr_start_scale_x;
@@ -3080,6 +3122,7 @@ class DocumentReaderManager {
                     this.dr_canvas_x = this.dr_start_scale_x - (this.dr_start_scale_x - this.dr_start_canvas_x) * ratio + pan_dx;
                     this.dr_canvas_y = this.dr_start_scale_y - (this.dr_start_scale_y - this.dr_start_canvas_y) * ratio + pan_dy;
                     this.dr_scale = new_s;
+                    this._dr_set_zooming();
                     this._dr_apply_scale();
                 } else {
                     // 纯平移（缩放未变化时也允许平移）
