@@ -54,6 +54,7 @@ class DocumentReaderManager {
         this._sidebar_virtual_threshold = 160;
         this._sidebar_item_height = 128;
         this._sidebar_overscan = 8;
+        this._sidebar_thumbnail_cache = new Map(); // 缩略图缓存：page_index -> blob URL
 
         // 分块渲染相关
         this.batch_draw = null;
@@ -254,6 +255,9 @@ class DocumentReaderManager {
         // 清理页面侧边栏
         const page_sidebar = document.getElementById('drPageSidebar');
         if (page_sidebar) page_sidebar.remove();
+
+        // 释放缩略图缓存
+        this._release_sidebar_thumbnail_cache();
 
         if (this._scroll_container) {
             this._scroll_container.innerHTML = '';
@@ -1987,6 +1991,7 @@ class DocumentReaderManager {
         const unloaded_imgs = Array.from(content.querySelectorAll('.dr-page-sidebar-thumb.is-loading'));
         if (unloaded_imgs.length === 0) return;
 
+        // 优先加载可见页面和当前活动页面附近的缩略图
         const priority_imgs = unloaded_imgs
             .filter(img => {
                 const page_index = parseInt(img.dataset.page);
@@ -1999,20 +2004,33 @@ class DocumentReaderManager {
                 return Math.abs(ai - this.active_page_index) - Math.abs(bi - this.active_page_index);
             });
 
-        priority_imgs.forEach(img => {
-            this._load_page_sidebar_thumbnail(parseInt(img.dataset.page), img);
-        });
+        // 批量加载优先图片（限制并发数为3）
+        const max_concurrent = 3;
+        let loading_count = 0;
+        const load_next = () => {
+            while (loading_count < max_concurrent && priority_imgs.length > 0) {
+                const img = priority_imgs.shift();
+                loading_count++;
+                this._load_page_sidebar_thumbnail(parseInt(img.dataset.page), img).finally(() => {
+                    loading_count--;
+                    load_next();
+                });
+            }
+        };
+        load_next();
 
         const deferred_imgs = unloaded_imgs.filter(img => !priority_imgs.includes(img));
         if (deferred_imgs.length === 0) return;
 
         if (!window.IntersectionObserver) {
+            // 不支持IntersectionObserver时，加载前8个
             deferred_imgs.slice(0, 8).forEach(img => {
                 this._load_page_sidebar_thumbnail(parseInt(img.dataset.page), img);
             });
             return;
         }
 
+        // 使用IntersectionObserver加载可见区域的缩略图
         const observer = new IntersectionObserver((entries) => {
             for (const entry of entries) {
                 if (!entry.isIntersecting) continue;
@@ -2022,7 +2040,7 @@ class DocumentReaderManager {
             }
         }, {
             root: content,
-            rootMargin: '120px 0px',
+            rootMargin: '200px 0px', // 增加预加载区域
             threshold: 0.01
         });
 
@@ -2032,6 +2050,13 @@ class DocumentReaderManager {
     async _load_page_sidebar_thumbnail(page_index, img) {
         const page = this.page_manager.pages_list[page_index];
         if (!page || !img) return;
+
+        // 检查缓存
+        if (this._sidebar_thumbnail_cache.has(page_index)) {
+            const cached_url = this._sidebar_thumbnail_cache.get(page_index);
+            this._set_sidebar_thumbnail_src(img, page_index, cached_url);
+            return;
+        }
 
         if (page.render_mode === 'pdfjs') {
             if (img.dataset.rendered === 'true') return;
@@ -2074,9 +2099,17 @@ class DocumentReaderManager {
         const folder = window.state.fileList[this.folder_index];
         if (!page || !folder?.pdfDoc || !canvas || canvas.tagName !== 'CANVAS') return;
 
+        // 检查缓存
+        if (this._sidebar_thumbnail_cache.has(page_index)) {
+            const cached_url = this._sidebar_thumbnail_cache.get(page_index);
+            this._set_sidebar_thumbnail_src(canvas, page_index, cached_url);
+            return;
+        }
+
         const pdf_page = await folder.pdfDoc.getPage(page.page_num);
         try {
             const base_viewport = pdf_page.getViewport({ scale: 1 });
+            // 使用更小的渲染尺寸以提高性能
             const css_w = Math.max(120, Math.round(canvas.clientWidth || canvas.closest('.dr-page-sidebar-item')?.clientWidth || 180));
             const css_h = Math.round(css_w * 9 / 16);
             const dpr = Math.min(window.devicePixelRatio || window.DRAW_CONFIG?.dpr || 1, 2);
@@ -2104,9 +2137,26 @@ class DocumentReaderManager {
             });
             await task.promise;
 
-            canvas.dataset.rendered = 'true';
-            canvas.classList.remove('is-loading');
-            canvas.closest('.dr-page-sidebar-item')?.classList.remove('loading');
+            // 将渲染结果转换为blob URL并缓存
+            const blob_url = await new Promise(resolve => {
+                canvas.toBlob(blob => {
+                    if (blob) {
+                        resolve(URL.createObjectURL(blob));
+                    } else {
+                        resolve(null);
+                    }
+                }, 'image/jpeg', 0.7);
+            });
+
+            if (blob_url) {
+                this._sidebar_thumbnail_cache.set(page_index, blob_url);
+                // 使用缓存的blob URL替换canvas
+                this._set_sidebar_thumbnail_src(canvas, page_index, blob_url);
+            } else {
+                canvas.dataset.rendered = 'true';
+                canvas.classList.remove('is-loading');
+                canvas.closest('.dr-page-sidebar-item')?.classList.remove('loading');
+            }
         } finally {
             pdf_page.cleanup?.();
         }
@@ -2132,6 +2182,16 @@ class DocumentReaderManager {
         img.src = src;
         img.classList.remove('is-loading');
         img.closest('.dr-page-sidebar-item')?.classList.remove('loading');
+    }
+
+    _release_sidebar_thumbnail_cache() {
+        // 释放所有缓存的blob URL
+        for (const blob_url of this._sidebar_thumbnail_cache.values()) {
+            if (blob_url && blob_url.startsWith('blob:')) {
+                URL.revokeObjectURL(blob_url);
+            }
+        }
+        this._sidebar_thumbnail_cache.clear();
     }
 
     // ====== 缩放与 LOD ======
