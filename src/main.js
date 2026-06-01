@@ -3410,10 +3410,6 @@ function main_setup_sidebar_lazy_loader(sidebarContent) {
                         img.src = imgData.thumbnail;
                     }
                 }
-            } else if (!item.classList.contains('active')) {
-                if (img.src !== SIDEBAR_PLACEHOLDER) {
-                    img.src = SIDEBAR_PLACEHOLDER;
-                }
             }
         }
     }, {
@@ -3458,10 +3454,9 @@ function main_show_sidebar() {
         state.imageList.forEach((imgData, index) => {
             const isActive = (state.currentImageIndex >= 0 && index === state.currentImageIndex) ? 'active' : '';
             const imageAlt = window.i18n?.format_translate('sidebar.imageAlt', { n: index + 1 }) || `图片${index + 1}`;
-            const src = isActive ? imgData.thumbnail : SIDEBAR_PLACEHOLDER;
             imageListHTML += `
                 <div class="sidebar-image-item ${isActive}" data-index="${index}">
-                    <img src="${src}" class="sidebar-thumbnail" alt="${imageAlt}" loading="lazy">
+                    <img src="${imgData.thumbnail}" class="sidebar-thumbnail" alt="${imageAlt}" loading="lazy">
                     <div class="sidebar-image-actions">
                         <button class="sidebar-btn-delete" title="${deleteText}">✕</button>
                     </div>
@@ -3643,10 +3638,6 @@ function main_update_sidebar_selection() {
     if (lastSidebarSelection >= 0 && lastSidebarSelection < items.length) {
         const prevItem = items[lastSidebarSelection];
         prevItem.classList.remove('active');
-        const prevImg = prevItem.querySelector('.sidebar-thumbnail');
-        if (prevImg && prevImg.src !== SIDEBAR_PLACEHOLDER) {
-            prevImg.src = SIDEBAR_PLACEHOLDER;
-        }
     }
     
     if (state.currentImageIndex >= 0 && state.currentImageIndex < items.length) {
@@ -3682,10 +3673,9 @@ function main_update_sidebar_content() {
         state.imageList.forEach((imgData, index) => {
             const isActive = (state.currentImageIndex >= 0 && index === state.currentImageIndex) ? 'active' : '';
             const imageAlt = window.i18n?.format_translate('sidebar.imageAlt', { n: index + 1 }) || `图片${index + 1}`;
-            const src = isActive ? imgData.thumbnail : SIDEBAR_PLACEHOLDER;
             imageListHTML += `
                 <div class="sidebar-image-item ${isActive}" data-index="${index}">
-                    <img src="${src}" class="sidebar-thumbnail" alt="${imageAlt}" loading="lazy">
+                    <img src="${imgData.thumbnail}" class="sidebar-thumbnail" alt="${imageAlt}" loading="lazy">
                     <div class="sidebar-image-actions">
                         <button class="sidebar-btn-delete" title="${deleteText}">✕</button>
                     </div>
