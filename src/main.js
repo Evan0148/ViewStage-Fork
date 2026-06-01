@@ -2327,7 +2327,7 @@ function main_handle_wheel(e) {
         
         main_update_move_bound();
         main_update_canvas_position();
-        main_update_canvas_transform_smooth(state.canvasX, state.canvasY, state.scale, 100);
+        main_update_canvas_transform_smooth(state.canvasX, state.canvasY, state.scale, 200);
         
         main_update_eraser_hint_size();
         if (window.tileRenderer) window.tileRenderer.mark_all();
@@ -2504,27 +2504,36 @@ async function main_handle_touch_end(e) {
         
         main_update_move_bound();
         main_update_canvas_position();
-        dom.canvasWrapper.style.transform = `translate3d(${state.canvasX}px, ${state.canvasY}px, 0) scale(${state.scale})`;
-        last_canvas_transform.x = state.canvasX;
-        last_canvas_transform.y = state.canvasY;
-        last_canvas_transform.scale = state.scale;
         
-        if (state.isDrawing) {
-            state.isDrawing = false;
-            main_hide_drawing_mode();
-            await main_submit_stroke();
-        } else if (state.isScaling) {
+        if (state.isScaling) {
+            // 捏合缩放结束 → 缓动动画归位
+            main_update_canvas_transform_smooth(state.canvasX, state.canvasY, state.scale, 200);
             if (window.tileRenderer) {
                 window.tileRenderer.update_visible_tile_dpr(state.scale, false, true);
                 window.tileRenderer.mark_all();
             }
+        } else if (state.isDrawing) {
+            state.isDrawing = false;
+            dom.canvasWrapper.style.transform = `translate3d(${state.canvasX}px, ${state.canvasY}px, 0) scale(${state.scale})`;
+            last_canvas_transform.x = state.canvasX;
+            last_canvas_transform.y = state.canvasY;
+            last_canvas_transform.scale = state.scale;
+            main_hide_drawing_mode();
+            await main_submit_stroke();
+        } else {
+            // 单指拖动结束 → 缓动动画归位
+            main_update_canvas_transform_smooth(state.canvasX, state.canvasY, state.scale, 200);
         }
+        
         state.isScaling = false;
     } else if (e.touches.length === 1) {
         state.isScaling = false;
         main_update_move_bound();
         main_update_canvas_position();
         dom.canvasWrapper.style.transform = `translate3d(${state.canvasX}px, ${state.canvasY}px, 0) scale(${state.scale})`;
+        last_canvas_transform.x = state.canvasX;
+        last_canvas_transform.y = state.canvasY;
+        last_canvas_transform.scale = state.scale;
         
         const touch = e.touches[0];
         if (state.drawMode === 'move') {
@@ -2560,7 +2569,7 @@ function main_update_canvas_transform() {
     }
 }
 
-function main_update_canvas_transform_smooth(targetX, targetY, targetScale, duration = 250) {
+function main_update_canvas_transform_smooth(targetX, targetY, targetScale, duration = 200) {
     if (currentAnimationId !== null) {
         clearTimeout(currentAnimationId);
         currentAnimationId = null;
@@ -2577,6 +2586,7 @@ function main_update_canvas_transform_smooth(targetX, targetY, targetScale, dura
     last_canvas_transform.y = state.canvasY;
     last_canvas_transform.scale = state.scale;
     
+    dom.canvasWrapper.style.transitionDuration = duration + 'ms';
     dom.canvasWrapper.classList.add('smooth-transform');
     dom.canvasWrapper.style.transform = `translate3d(${state.canvasX}px, ${state.canvasY}px, 0) scale(${state.scale})`;
 
@@ -2587,6 +2597,7 @@ function main_update_canvas_transform_smooth(targetX, targetY, targetScale, dura
     currentAnimationId = setTimeout(() => {
         currentAnimationId = null;
         dom.canvasWrapper.classList.remove('smooth-transform');
+        dom.canvasWrapper.style.transitionDuration = '';
     }, duration);
 }
 

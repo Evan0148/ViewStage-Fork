@@ -135,7 +135,7 @@ class BlackboardManager {
         }
     }
 
-    _sync_bb_transform_smooth(target_x, target_y, target_scale, duration = 250) {
+    _sync_bb_transform_smooth(target_x, target_y, target_scale, duration = 200) {
         if (this._animate_timer_id !== null) {
             clearTimeout(this._animate_timer_id);
             this._animate_timer_id = null;
@@ -154,6 +154,7 @@ class BlackboardManager {
         lt.y = s.canvas_y;
         lt.scale = s.scale;
 
+        this.bb_wrapper.style.transitionDuration = duration + 'ms';
         this.bb_wrapper.classList.add('smooth-transform');
         this.bb_wrapper.style.transform = `translate3d(${s.canvas_x}px, ${s.canvas_y}px, 0) scale(${s.scale})`;
 
@@ -164,6 +165,7 @@ class BlackboardManager {
         this._animate_timer_id = setTimeout(() => {
             this._animate_timer_id = null;
             this.bb_wrapper.classList.remove('smooth-transform');
+            this.bb_wrapper.style.transitionDuration = '';
         }, duration);
     }
 
@@ -505,7 +507,7 @@ class BlackboardManager {
 
             this._update_move_bound();
             this._update_canvas_position();
-            this._sync_bb_transform_smooth(s.canvas_x, s.canvas_y, s.scale, 100);
+            this._sync_bb_transform_smooth(s.canvas_x, s.canvas_y, s.scale, 200);
 
             if (this.tile_renderer) this.tile_renderer.mark_all();
         }
