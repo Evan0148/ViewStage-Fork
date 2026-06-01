@@ -62,16 +62,21 @@ class TileRenderer {
         const targetDpr = this._calc_target_dpr(scale);
         const keys = this.get_visible_keys();
         let changed = false;
+        let visibleChanged = false;
         for (const info of this.tileInfos) {
             if (keys.has(info.key)) {
-                if (info.dpr !== targetDpr) { changed = true; break; }
+                if (info.dpr !== targetDpr) {
+                    changed = true;
+                    visibleChanged = true;
+                    break;
+                }
             } else if (info.dpr > 1) {
                 changed = true; break;
             }
         }
         if (!changed) return;
 
-        if (!force) {
+        if (!force && !visibleChanged) {
             const cfg = window.DRAW_CONFIG;
             const hysteresis = (cfg.dprStep || 0.5) / Math.max(0.5, cfg.baseDpr || window.devicePixelRatio || 1);
             if (Math.abs(scale - this._lastDprUpdateScale) < hysteresis) {

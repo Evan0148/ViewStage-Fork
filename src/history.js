@@ -168,6 +168,8 @@ export class SnapshotCommand extends Command {
     }
 }
 
+const _history_pending_queue = [];
+
 /**
  * 执行命令并压入 undo 栈，清空 redo 栈
  * 当 undo 栈超过硬性上限（MAX_HISTORY_STEPS * 2）时强制裁剪
@@ -175,7 +177,10 @@ export class SnapshotCommand extends Command {
  * @param {boolean} [needRedraw=true] - 是否需要重绘
  */
 export async function history_execute_command(command, needRedraw = true) {
-    if (history_state.is_executing) return;
+    if (history_state.is_executing) {
+        _history_pending_queue.push({ command, needRedraw });
+        return;
+    }
 
     history_state.is_executing = true;
     try {
@@ -194,6 +199,11 @@ export async function history_execute_command(command, needRedraw = true) {
     }
 
     history_handle_state_change();
+
+    if (_history_pending_queue.length > 0) {
+        const next = _history_pending_queue.shift();
+        await history_execute_command(next.command, next.needRedraw);
+    }
 }
 
 /**

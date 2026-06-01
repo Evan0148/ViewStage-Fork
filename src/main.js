@@ -2162,6 +2162,7 @@ async function main_handle_pointer_up(e) {
     }
     if (state.isDrawing) {
         state.isDrawing = false;
+        main_flush_last_segment(e.clientX, e.clientY);
         main_hide_drawing_mode();
         await main_submit_stroke();
     }
@@ -2174,8 +2175,32 @@ async function main_handle_pointer_leave(e) {
     }
     if (state.isDrawing) {
         state.isDrawing = false;
+        main_flush_last_segment(e.clientX, e.clientY);
         main_hide_drawing_mode();
         await main_submit_stroke();
+    }
+}
+
+function main_flush_last_segment(clientX, clientY) {
+    if (!state.drawCanvasRect) return;
+    const invScale = state.cachedInvScale;
+    const x = (clientX - state.drawCanvasRect.left) * invScale;
+    const y = (clientY - state.drawCanvasRect.top) * invScale;
+    const dx = x - state.lastX;
+    const dy = y - state.lastY;
+    if (dx !== 0 || dy !== 0) {
+        main_save_stroke_point(state.lastX, state.lastY, x, y, state.currentPressure);
+        batchDrawManager.batch_draw_create_command(
+            state.cachedDrawType,
+            state.lastX,
+            state.lastY,
+            x,
+            y,
+            state.cachedDrawColor,
+            state.cachedDrawLineWidth
+        );
+        state.lastX = x;
+        state.lastY = y;
     }
 }
 
