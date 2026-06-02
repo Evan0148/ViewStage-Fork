@@ -42,6 +42,10 @@
       "icons/Square1024x1024Logo.png",
       "icons/icon.ico"
     ],
+    "resources": [
+      "icons/PDF.ico",
+      "icons/word.ico"
+    ],
     "fileAssociations": [
       {
         "ext": ["pdf"],

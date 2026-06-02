@@ -2946,12 +2946,12 @@ async fn filetype_set_icons_windows(app: tauri::AppHandle) -> Result<(), String>
     let resource_dir = app.path().resource_dir()
         .map_err(|e| format!("获取资源目录失败: {}", e))?;
     
-    let pdf_icon = resource_dir.join("icons").join("pdf.ico").to_string_lossy().to_string();
-    let word_icon = resource_dir.join("icons").join("word.ico").to_string_lossy().to_string();
+    let pdf_icon = resource_dir.join("icons").join("PDF.ico").display().to_string();
+    let word_icon = resource_dir.join("icons").join("word.ico").display().to_string();
     
     let exe_path = std::env::current_exe()
         .map_err(|e| format!("获取可执行文件路径失败: {}", e))?;
-    let exe_path_str = exe_path.to_string_lossy().to_string();
+    let exe_path_str = exe_path.display().to_string();
     
     let app_id = "SECTL.ViewStage";
     
