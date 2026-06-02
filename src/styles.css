@@ -196,7 +196,10 @@ body {
     display: none;
     pointer-events: none;
     object-fit: contain;
-    contain: layout style paint;
+    contain: strict;
+    will-change: transform;
+    backface-visibility: hidden;
+    content-visibility: auto;
 }
 
 .canvas-wrapper.drawing {
