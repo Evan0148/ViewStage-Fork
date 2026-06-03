@@ -246,7 +246,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                     dprToggle.checked = dynamicDprEnabled;
                 }
 
-                const eraserSpeedEnabled = settings.eraserSpeedEnabled !== undefined ? settings.eraserSpeedEnabled : true;
+                const eraserSpeedEnabled = settings.eraserSpeedEnabled !== undefined ? settings.eraserSpeedEnabled : false;
                 const eraserSpeedToggle = document.getElementById('eraserSpeedToggle');
                 if (eraserSpeedToggle) {
                     eraserSpeedToggle.checked = eraserSpeedEnabled;

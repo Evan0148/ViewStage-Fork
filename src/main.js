@@ -75,7 +75,7 @@ const DRAW_CONFIG = {
     penSizePresets: [2, 5, 10, 15, 21],
     eraserSize: 15,
     eraserSizePresets: [5, 15, 25, 38, 50],
-    eraserSpeedEnabled: true,
+    eraserSpeedEnabled: false,
     eraserSpeedMinSize: 5,
     eraserSpeedMaxSize: 120,
     eraserSpeedFactor: 0.3,
