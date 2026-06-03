@@ -121,6 +121,16 @@
                             <span class="setting-hint" data-i18n="settings.dynamicResolutionHint">放大时自动提高画布分辨率以获得更清晰的显示</span>
                         </div>
                     </div>
+                    <div class="setting-item flex-start">
+                        <span class="setting-label" data-i18n="settings.eraserSpeed">速度擦</span>
+                        <div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px;">
+                            <label class="toggle-switch">
+                                <input type="checkbox" id="eraserSpeedToggle" checked>
+                                <span class="toggle-slider"></span>
+                            </label>
+                            <span class="setting-hint" data-i18n="settings.eraserSpeedHint">橡皮擦大小随移动速度自动变化</span>
+                        </div>
+                    </div>
                     <div class="setting-item" id="dprRangeItem">
                         <span class="setting-label">DPR <span data-i18n="settings.range">范围</span></span>
                         <div class="range-group">
@@ -275,6 +285,34 @@
                                     <input type="number" class="preset-input" id="penPreset4" min="1" max="100" value="21">
                                 </div>
                                 <button class="preset-restore-btn" id="penPresetRestore" data-i18n="settings.restoreDefaults">恢复默认</button>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="setting-item flex-start">
+                        <span class="setting-label" data-i18n="settings.eraserSizePresets">橡皮擦粗细预设</span>
+                        <div class="preset-editor" id="eraserPresetEditor">
+                            <div class="preset-editor-row">
+                                <div class="preset-item">
+                                    <span class="preset-label">1</span>
+                                    <input type="number" class="preset-input" id="eraserPreset0" min="1" max="200" value="5">
+                                </div>
+                                <div class="preset-item">
+                                    <span class="preset-label">2</span>
+                                    <input type="number" class="preset-input" id="eraserPreset1" min="1" max="200" value="15">
+                                </div>
+                                <div class="preset-item">
+                                    <span class="preset-label">3</span>
+                                    <input type="number" class="preset-input" id="eraserPreset2" min="1" max="200" value="25">
+                                </div>
+                                <div class="preset-item">
+                                    <span class="preset-label">4</span>
+                                    <input type="number" class="preset-input" id="eraserPreset3" min="1" max="200" value="38">
+                                </div>
+                                <div class="preset-item">
+                                    <span class="preset-label">5</span>
+                                    <input type="number" class="preset-input" id="eraserPreset4" min="1" max="200" value="50">
+                                </div>
+                                <button class="preset-restore-btn" id="eraserPresetRestore" data-i18n="settings.restoreDefaults">恢复默认</button>
                             </div>
                         </div>
                     </div>

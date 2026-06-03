@@ -208,6 +208,10 @@ async function settings_load_camera_config() {
                 DRAW_CONFIG.penSizePresets = settings.penSizePresets;
             }
 
+            if (settings.eraserSizePresets && Array.isArray(settings.eraserSizePresets)) {
+                DRAW_CONFIG.eraserSizePresets = settings.eraserSizePresets;
+            }
+
             if (settings.frameRateMode !== undefined) {
                 if (window.batchDrawManager) {
                     window.batchDrawManager.batch_draw_update_frame_rate(settings.frameRateMode);
@@ -216,6 +220,10 @@ async function settings_load_camera_config() {
 
             if (settings.penEffectMode !== undefined) {
                 DRAW_CONFIG.penEffectMode = settings.penEffectMode;
+            }
+
+            if (settings.eraserSpeedEnabled !== undefined) {
+                DRAW_CONFIG.eraserSpeedEnabled = settings.eraserSpeedEnabled;
             }
 
             const themeName = settings.theme || 'com.viewstage.theme.simplify';

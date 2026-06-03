@@ -245,6 +245,12 @@ document.addEventListener('DOMContentLoaded', async () => {
                 if (dprToggle) {
                     dprToggle.checked = dynamicDprEnabled;
                 }
+
+                const eraserSpeedEnabled = settings.eraserSpeedEnabled !== undefined ? settings.eraserSpeedEnabled : true;
+                const eraserSpeedToggle = document.getElementById('eraserSpeedToggle');
+                if (eraserSpeedToggle) {
+                    eraserSpeedToggle.checked = eraserSpeedEnabled;
+                }
                 const dprRangeItem = document.getElementById('dprRangeItem');
                 if (dprRangeItem) {
                     dprRangeItem.style.display = dynamicDprEnabled ? '' : 'none';
@@ -313,6 +319,15 @@ document.addEventListener('DOMContentLoaded', async () => {
                     const input = document.getElementById('penPreset' + i);
                     if (input) {
                         input.value = savedPresets[i] !== undefined ? savedPresets[i] : DEFAULT_PRESETS[i];
+                    }
+                }
+
+                const DEFAULT_ERASER_PRESETS = [5, 15, 25, 38, 50];
+                const savedEraserPresets = settings.eraserSizePresets || DEFAULT_ERASER_PRESETS;
+                for (let i = 0; i < 5; i++) {
+                    const input = document.getElementById('eraserPreset' + i);
+                    if (input) {
+                        input.value = savedEraserPresets[i] !== undefined ? savedEraserPresets[i] : DEFAULT_ERASER_PRESETS[i];
                     }
                 }
 
@@ -932,6 +947,17 @@ document.addEventListener('DOMContentLoaded', async () => {
             await settings_save_all_local({ dynamicDprEnabled: value });
         });
     }
+
+    const eraserSpeedToggle = document.getElementById('eraserSpeedToggle');
+    if (eraserSpeedToggle) {
+        eraserSpeedToggle.addEventListener('change', async () => {
+            const value = eraserSpeedToggle.checked;
+            await settings_save_all_local({ eraserSpeedEnabled: value });
+            if (window.DRAW_CONFIG) {
+                window.DRAW_CONFIG.eraserSpeedEnabled = value;
+            }
+        });
+    }
     
     // 自定义颜色选择器
     const colorPickerPopup = document.getElementById('colorPickerPopup');
@@ -1228,6 +1254,41 @@ document.addEventListener('DOMContentLoaded', async () => {
                 if (input) input.value = defaults[i];
             }
             await settings_save_all_local({ penSizePresets: defaults });
+        });
+    }
+
+    // 橡皮擦预设粗细
+    const DEFAULT_ERASER_PRESETS_BIND = [5, 15, 25, 38, 50];
+    function settings_read_eraser_presets_from_ui() {
+        const values = [];
+        for (let i = 0; i < 5; i++) {
+            const input = document.getElementById('eraserPreset' + i);
+            values.push(input ? parseInt(input.value) || DEFAULT_ERASER_PRESETS_BIND[i] : DEFAULT_ERASER_PRESETS_BIND[i]);
+        }
+        return values;
+    }
+    for (let i = 0; i < 5; i++) {
+        const input = document.getElementById('eraserPreset' + i);
+        if (input) {
+            input.addEventListener('change', async () => {
+                let val = parseInt(input.value);
+                if (isNaN(val) || val < 1) val = 1;
+                if (val > 200) val = 200;
+                input.value = val;
+                const presets = settings_read_eraser_presets_from_ui();
+                await settings_save_all_local({ eraserSizePresets: presets });
+            });
+        }
+    }
+    const eraserPresetRestore = document.getElementById('eraserPresetRestore');
+    if (eraserPresetRestore) {
+        eraserPresetRestore.addEventListener('click', async () => {
+            const defaults = DEFAULT_ERASER_PRESETS_BIND;
+            for (let i = 0; i < 5; i++) {
+                const input = document.getElementById('eraserPreset' + i);
+                if (input) input.value = defaults[i];
+            }
+            await settings_save_all_local({ eraserSizePresets: defaults });
         });
     }
 

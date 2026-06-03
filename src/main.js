@@ -21,6 +21,7 @@ import {
     MAX_HISTORY_STEPS
 } from './history.js';
 import { DocLoader } from './modules/pdf/document_loader.js';
+import { eraser_speed_create_state, eraser_speed_build_config, eraser_speed_update } from './modules/eraser/eraser_speed.js';
 
 // === 全局变量 ===
 let last_canvas_transform = { x: null, y: null, scale: null };
@@ -73,6 +74,7 @@ const DRAW_CONFIG = {
     penWidth: 5,
     penSizePresets: [2, 5, 10, 15, 21],
     eraserSize: 15,
+    eraserSizePresets: [5, 15, 25, 38, 50],
     eraserSpeedEnabled: true,
     eraserSpeedMinSize: 5,
     eraserSpeedMaxSize: 120,
@@ -955,6 +957,12 @@ function main_setup_pdf_file_open() {
             console.log('画笔预设已更改:', settings.penSizePresets);
         }
         
+        if (settings.eraserSizePresets && Array.isArray(settings.eraserSizePresets)) {
+            DRAW_CONFIG.eraserSizePresets = settings.eraserSizePresets;
+            main_build_eraser_presets(settings.eraserSizePresets);
+            console.log('橡皮擦预设已更改:', settings.eraserSizePresets);
+        }
+        
         if (settings.theme !== undefined) {
             ThemeManager.theme_update_active(settings.theme).then(() => {
                 const canvasBgColor = ThemeManager.theme_fetch_canvas_bg_color();
@@ -985,6 +993,10 @@ function main_setup_pdf_file_open() {
             } else {
                 dom.btnBlackboard.style.display = '';
             }
+        }
+
+        if (settings.eraserSpeedEnabled !== undefined) {
+            DRAW_CONFIG.eraserSpeedEnabled = settings.eraserSpeedEnabled;
         }
         
         if (needRestartCamera && state.isCameraOpen) {
@@ -1558,20 +1570,18 @@ function main_setup_mode_events() {
         main_update_mode('move');
     });
     dom.btnComment.addEventListener('click', () => {
-        main_update_mode('comment');
+        if (state.drawMode === 'comment') {
+            main_show_pen_control_panel(dom.btnComment, 'comment');
+        } else {
+            main_update_mode('comment');
+        }
     });
     dom.btnEraser.addEventListener('click', () => {
-        main_update_mode('eraser');
-    });
-    
-    dom.btnComment.addEventListener('dblclick', (e) => {
-        e.preventDefault();
-        main_show_pen_control_panel(dom.btnComment, 'comment');
-    });
-    
-    dom.btnEraser.addEventListener('dblclick', (e) => {
-        e.preventDefault();
-        main_show_pen_control_panel(dom.btnEraser, 'eraser');
+        if (state.drawMode === 'eraser' && !DRAW_CONFIG.eraserSpeedEnabled) {
+            main_show_pen_control_panel(dom.btnEraser, 'eraser');
+        } else {
+            main_update_mode('eraser');
+        }
     });
 }
 
@@ -1850,16 +1860,19 @@ function main_build_pen_presets(presets) {
     dom.penSizeValue.textContent = `${DRAW_CONFIG.penWidth}px`;
 }
 
-// 笔触控制事件
-function main_setup_pen_control_events() {
-    main_build_pen_presets(DRAW_CONFIG.penSizePresets);
-    
-    // 橡皮预设尺寸点击
-    dom.eraserSizePresets.querySelectorAll('.size-preset-btn').forEach(btn => {
+// 动态构建橡皮擦预设按钮
+function main_build_eraser_presets(presets) {
+    const container = dom.eraserSizePresets;
+    container.querySelectorAll('.size-preset-btn').forEach(b => b.remove());
+    const valueSpan = container.querySelector('.pen-size-label');
+    presets.forEach(value => {
+        const btn = document.createElement('button');
+        btn.className = 'size-preset-btn';
+        btn.dataset.value = value;
+        btn.style.setProperty('--dot-size', Math.round(value * 0.8 + 4) + 'px');
         btn.addEventListener('click', () => {
-            const value = parseInt(btn.dataset.value);
             DRAW_CONFIG.eraserSize = value;
-            dom.eraserSizePresets.querySelectorAll('.size-preset-btn').forEach(b => b.classList.remove('active'));
+            container.querySelectorAll('.size-preset-btn').forEach(b => b.classList.remove('active'));
             btn.classList.add('active');
             dom.eraserSizeValue.textContent = `${value}px`;
             main_update_eraser_hint_size();
@@ -1867,11 +1880,17 @@ function main_setup_pen_control_events() {
                 main_update_eraser_style();
             }
         });
+        container.insertBefore(btn, valueSpan);
     });
-    
-    // 初始化橡皮选中状态
-    const eraserActive = dom.eraserSizePresets.querySelector(`[data-value="${DRAW_CONFIG.eraserSize}"]`);
-    if (eraserActive) eraserActive.classList.add('active');
+    const active = container.querySelector(`[data-value="${DRAW_CONFIG.eraserSize}"]`);
+    if (active) active.classList.add('active');
+    dom.eraserSizeValue.textContent = `${DRAW_CONFIG.eraserSize}px`;
+}
+
+// 笔触控制事件
+function main_setup_pen_control_events() {
+    main_build_pen_presets(DRAW_CONFIG.penSizePresets);
+    main_build_eraser_presets(DRAW_CONFIG.eraserSizePresets);
     
     // 颜色按钮点击事件
     const colorButtons = document.querySelectorAll('.pen-color-btn');
@@ -2009,7 +2028,7 @@ function main_show_pen_control_panel(targetBtn, mode) {
     } else if (mode === 'eraser') {
         if (penSizeControl) penSizeControl.style.display = 'none';
         if (colorButtons) colorButtons.style.display = 'none';
-        if (eraserSizeControl) eraserSizeControl.style.display = 'flex';
+        if (eraserSizeControl) eraserSizeControl.style.display = DRAW_CONFIG.eraserSpeedEnabled ? 'none' : 'flex';
     }
     
     // 重置面板布局 → 强制重排获取准确尺寸 → 计算并约束位置
@@ -2649,10 +2668,7 @@ function main_start_stroke(type) {
         lineWidth: (type === 'draw' ? DRAW_CONFIG.penWidth : DRAW_CONFIG.eraserSize) * invScale,
         eraserSize: baseEraserSize,
         eraserSizeRaw: DRAW_CONFIG.eraserSize,
-        eraserSpeedEnabled: DRAW_CONFIG.eraserSpeedEnabled,
-        eraserSpeedMinSize: DRAW_CONFIG.eraserSpeedMinSize * invScale,
-        eraserSpeedMaxSize: DRAW_CONFIG.eraserSpeedMaxSize * invScale,
-        eraserSpeedFactor: DRAW_CONFIG.eraserSpeedFactor,
+        ...eraser_speed_build_config(DRAW_CONFIG, invScale),
         scale: state.scale,
         bounds: {
             minX: Infinity,
@@ -2671,10 +2687,7 @@ function main_start_stroke(type) {
     state.cachedDrawColor = type === 'draw' ? DRAW_CONFIG.penColor : '#000000';
     state.cachedDrawLineWidth = baseEraserSize;
     
-    state.lastDrawTime = performance.now();
-    state.lastDrawX = null;
-    state.lastDrawY = null;
-    state.speedBuffer = [];
+    state.eraserSpeedState = eraser_speed_create_state();
     
     batchDrawManager.batch_draw_init_start();
 }
@@ -2701,28 +2714,7 @@ function main_save_stroke_point(fromX, fromY, toX, toY, pressure = 0.5) {
         currentWidth = stroke.lineWidth * (0.9 + pressure * 0.2);
         state.currentLineWidth = currentWidth;
     } else if (stroke.type === 'erase' && stroke.eraserSpeedEnabled) {
-        const now = performance.now();
-        const dt = now - state.lastDrawTime;
-        
-        if (state.lastDrawX !== null && dt > 0) {
-            const dx = toX - state.lastDrawX;
-            const dy = toY - state.lastDrawY;
-            const speed = Math.sqrt(dx * dx + dy * dy) / dt;
-            
-            state.speedBuffer.push(speed);
-            if (state.speedBuffer.length > 5) {
-                state.speedBuffer.shift();
-            }
-            
-            const avgSpeed = state.speedBuffer.reduce((a, b) => a + b, 0) / state.speedBuffer.length;
-            const sizeRange = stroke.eraserSpeedMaxSize - stroke.eraserSpeedMinSize;
-            currentWidth = stroke.eraserSpeedMinSize + Math.min(avgSpeed * stroke.eraserSpeedFactor * 100, sizeRange);
-            currentWidth = Math.max(stroke.eraserSpeedMinSize, Math.min(stroke.eraserSpeedMaxSize, currentWidth));
-        }
-        
-        state.lastDrawTime = now;
-        state.lastDrawX = toX;
-        state.lastDrawY = toY;
+        currentWidth = eraser_speed_update(state.eraserSpeedState, stroke, toX, toY);
         state.cachedDrawLineWidth = currentWidth;
     }
     

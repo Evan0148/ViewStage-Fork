@@ -15,6 +15,7 @@ import {
     ClearCommand,
     history_state
 } from '../../history.js';
+import { eraser_speed_create_state, eraser_speed_build_config, eraser_speed_update } from '../eraser/eraser_speed.js';
 
 class DocumentReaderManager {
     constructor() {
@@ -2011,10 +2012,7 @@ class DocumentReaderManager {
             lineWidth: type === 'draw' ? DRAW_CONFIG.penWidth : baseEraserSize,
             eraserSize: baseEraserSize,
             eraserSizeRaw: DRAW_CONFIG.eraserSize,
-            eraserSpeedEnabled: DRAW_CONFIG.eraserSpeedEnabled,
-            eraserSpeedMinSize: DRAW_CONFIG.eraserSpeedMinSize,
-            eraserSpeedMaxSize: DRAW_CONFIG.eraserSpeedMaxSize,
-            eraserSpeedFactor: DRAW_CONFIG.eraserSpeedFactor,
+            ...eraser_speed_build_config(DRAW_CONFIG, 1),
             scale: 1,
             bounds: { minX: Infinity, minY: Infinity, maxX: -Infinity, maxY: -Infinity },
             variableWidths: [],
@@ -2029,10 +2027,7 @@ class DocumentReaderManager {
         this.cached_draw_color = type === 'draw' ? DRAW_CONFIG.penColor : '#000000';
         this.cached_draw_line_width = baseEraserSize;
 
-        this._last_draw_time = performance.now();
-        this._last_draw_x = null;
-        this._last_draw_y = null;
-        this._speed_buffer = [];
+        this._eraser_speed_state = eraser_speed_create_state();
 
         if (this.batch_draw) {
             this.batch_draw.batch_draw_init_start();
@@ -2061,28 +2056,7 @@ class DocumentReaderManager {
             currentWidth = stroke.lineWidth * (0.9 + pressure * 0.2);
             this.current_line_width = currentWidth;
         } else if (stroke.type === 'erase' && stroke.eraserSpeedEnabled) {
-            const now = performance.now();
-            const dt = now - this._last_draw_time;
-
-            if (this._last_draw_x !== null && dt > 0) {
-                const dx = to_x - this._last_draw_x;
-                const dy = to_y - this._last_draw_y;
-                const speed = Math.sqrt(dx * dx + dy * dy) / dt;
-
-                this._speed_buffer.push(speed);
-                if (this._speed_buffer.length > 5) {
-                    this._speed_buffer.shift();
-                }
-
-                const avgSpeed = this._speed_buffer.reduce((a, b) => a + b, 0) / this._speed_buffer.length;
-                const sizeRange = stroke.eraserSpeedMaxSize - stroke.eraserSpeedMinSize;
-                currentWidth = stroke.eraserSpeedMinSize + Math.min(avgSpeed * stroke.eraserSpeedFactor * 100, sizeRange);
-                currentWidth = Math.max(stroke.eraserSpeedMinSize, Math.min(stroke.eraserSpeedMaxSize, currentWidth));
-            }
-
-            this._last_draw_time = now;
-            this._last_draw_x = to_x;
-            this._last_draw_y = to_y;
+            currentWidth = eraser_speed_update(this._eraser_speed_state, stroke, to_x, to_y);
             this.cached_draw_line_width = currentWidth;
         }
 
@@ -2388,24 +2362,26 @@ class DocumentReaderManager {
         const clear_btn = document.getElementById('drBtnClear');
 
         if (move_btn) move_btn.addEventListener('click', () => this._set_draw_mode('move'));
-        if (comment_btn) comment_btn.addEventListener('click', () => this._set_draw_mode('comment'));
-        if (eraser_btn) eraser_btn.addEventListener('click', () => this._set_draw_mode('eraser'));
+        if (comment_btn) comment_btn.addEventListener('click', () => {
+            if (this.draw_mode === 'comment') {
+                if (window.main_show_pen_control_panel) {
+                    window.main_show_pen_control_panel(comment_btn, 'comment');
+                }
+            } else {
+                this._set_draw_mode('comment');
+            }
+        });
+        if (eraser_btn) eraser_btn.addEventListener('click', () => {
+            if (this.draw_mode === 'eraser' && !window.DRAW_CONFIG.eraserSpeedEnabled) {
+                if (window.main_show_pen_control_panel) {
+                    window.main_show_pen_control_panel(eraser_btn, 'eraser');
+                }
+            } else {
+                this._set_draw_mode('eraser');
+            }
+        });
         if (undo_btn) undo_btn.addEventListener('click', () => this.handle_undo());
         if (clear_btn) clear_btn.addEventListener('click', () => this.handle_clear());
-
-        // 双击画笔/橡皮擦按钮弹出控制面板（与主界面行为一致）
-        if (comment_btn) comment_btn.addEventListener('dblclick', (e) => {
-            e.preventDefault();
-            if (window.main_show_pen_control_panel) {
-                window.main_show_pen_control_panel(comment_btn, 'comment');
-            }
-        });
-        if (eraser_btn) eraser_btn.addEventListener('dblclick', (e) => {
-            e.preventDefault();
-            if (window.main_show_pen_control_panel) {
-                window.main_show_pen_control_panel(eraser_btn, 'eraser');
-            }
-        });
     }
 
     /**
