@@ -251,6 +251,10 @@ document.addEventListener('DOMContentLoaded', async () => {
                 if (eraserSpeedToggle) {
                     eraserSpeedToggle.checked = eraserSpeedEnabled;
                 }
+                const eraserPresetsItem = document.getElementById('eraserPresetsItem');
+                if (eraserPresetsItem) {
+                    eraserPresetsItem.style.display = eraserSpeedEnabled ? 'none' : '';
+                }
                 const dprRangeItem = document.getElementById('dprRangeItem');
                 if (dprRangeItem) {
                     dprRangeItem.style.display = dynamicDprEnabled ? '' : 'none';
@@ -955,6 +959,10 @@ document.addEventListener('DOMContentLoaded', async () => {
             await settings_save_all_local({ eraserSpeedEnabled: value });
             if (window.DRAW_CONFIG) {
                 window.DRAW_CONFIG.eraserSpeedEnabled = value;
+            }
+            const eraserPresetsItem = document.getElementById('eraserPresetsItem');
+            if (eraserPresetsItem) {
+                eraserPresetsItem.style.display = value ? 'none' : '';
             }
         });
     }
