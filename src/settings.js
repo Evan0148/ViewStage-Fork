@@ -425,32 +425,6 @@ document.addEventListener('DOMContentLoaded', async () => {
                     });
                 }
                 
-                // 文件关联设置
-                const assocPdf = document.getElementById('assocPdf');
-                if (assocPdf) {
-                    try {
-                        const isDefault = await invoke('filetype_validate_pdf_default');
-                        
-                        if (isDefault) {
-                            assocPdf.checked = settings.fileAssociations === true;
-                        } else {
-                            assocPdf.checked = false;
-                            
-                            if (settings.fileAssociations === true) {
-                                await settings_save_all_local({ fileAssociations: false });
-                            }
-                        }
-                    } catch (error) {
-                        console.error('检查默认程序失败:', error);
-                        assocPdf.checked = false;
-                    }
-                }
-                
-                const assocWord = document.getElementById('assocWord');
-                if (assocWord) {
-                    assocWord.checked = settings.wordAssociations === true;
-                }
-                
                 const autoClearCacheDays = settings.autoClearCacheDays ?? 15;
                 const autoClearCacheSelected = document.getElementById('autoClearCacheSelected');
                 const autoClearCacheOptions = document.getElementById('autoClearCacheOptions');
@@ -1489,91 +1463,61 @@ document.addEventListener('DOMContentLoaded', async () => {
         });
     }
     
-    // 默认打开方式复选框
-    const assocPdf = document.getElementById('assocPdf');
-    if (assocPdf) {
-        assocPdf.addEventListener('change', async () => {
+    // 默认打开方式按钮
+    const btnSetPdf = document.getElementById('btnSetPdf');
+    if (btnSetPdf) {
+        btnSetPdf.addEventListener('click', async () => {
+            if (!window.__TAURI__) return;
             const { invoke } = window.__TAURI__.core;
-            
-            if (assocPdf.checked) {
-                try {
-                    await invoke('filetype_set_icons');
-                    await settings_save_all_local({ fileAssociations: true });
-                    settings_show_dialog(
-                        window.i18n?.format_translate('common.success') || '成功',
-                        window.i18n?.format_translate('settings.pdfDefaultSetSuccess') || 'PDF 已设置为默认打开方式',
-                        'success'
-                    );
-                } catch (e) {
-                    console.error('设置 PDF 默认打开方式失败:', e);
-                    assocPdf.checked = false;
-                    settings_show_dialog(
-                        window.i18n?.format_translate('common.error') || '错误',
-                        window.i18n?.format_translate('settings.pdfDefaultSetFailed') || '设置 PDF 默认打开方式失败，请手动在系统设置中设置',
-                        'error'
-                    );
-                }
-            } else {
-                try {
-                    await invoke('filetype_delete_icons');
-                    await settings_save_all_local({ fileAssociations: false });
-                    settings_show_dialog(
-                        window.i18n?.format_translate('common.success') || '成功',
-                        window.i18n?.format_translate('settings.pdfDefaultRemoved') || '已取消 PDF 默认打开方式设置',
-                        'success'
-                    );
-                } catch (e) {
-                    console.error('取消 PDF 默认打开方式失败:', e);
-                    settings_show_dialog(
-                        window.i18n?.format_translate('common.error') || '错误',
-                        String(e),
-                        'error'
-                    );
-                }
+            const origText = btnSetPdf.textContent;
+            btnSetPdf.disabled = true;
+            btnSetPdf.textContent = window.i18n?.format_translate('settings.setSetting') || '设置中...';
+            try {
+                await invoke('filetype_set_icons');
+                settings_show_dialog(
+                    window.i18n?.format_translate('common.success') || '成功',
+                    window.i18n?.format_translate('settings.pdfDefaultSetSuccess') || 'PDF 已设置为默认打开方式',
+                    'success'
+                );
+            } catch (e) {
+                console.error('设置 PDF 默认打开方式:', e);
+                settings_show_dialog(
+                    window.i18n?.format_translate('common.success') || '成功',
+                    window.i18n?.format_translate('settings.setDefaultManual') || '部分关联已注册，请在系统设置中手动设置默认程序',
+                    'info'
+                );
+            } finally {
+                btnSetPdf.disabled = false;
+                btnSetPdf.textContent = origText;
             }
         });
     }
-    
-    const assocWord = document.getElementById('assocWord');
-    if (assocWord) {
-        assocWord.addEventListener('change', async () => {
+
+    const btnSetWord = document.getElementById('btnSetWord');
+    if (btnSetWord) {
+        btnSetWord.addEventListener('click', async () => {
+            if (!window.__TAURI__) return;
             const { invoke } = window.__TAURI__.core;
-            
-            if (assocWord.checked) {
-                try {
-                    await invoke('filetype_set_icons');
-                    await settings_save_all_local({ wordAssociations: true });
-                    settings_show_dialog(
-                        window.i18n?.format_translate('common.success') || '成功',
-                        window.i18n?.format_translate('settings.wordDefaultSetSuccess') || 'Word 文档已设置为默认打开方式',
-                        'success'
-                    );
-                } catch (e) {
-                    console.error('设置 Word 默认打开方式失败:', e);
-                    assocWord.checked = false;
-                    settings_show_dialog(
-                        window.i18n?.format_translate('common.error') || '错误',
-                        window.i18n?.format_translate('settings.wordDefaultSetFailed') || '设置 Word 默认打开方式失败，请手动在系统设置中设置',
-                        'error'
-                    );
-                }
-            } else {
-                try {
-                    await invoke('filetype_delete_icons');
-                    await settings_save_all_local({ wordAssociations: false });
-                    settings_show_dialog(
-                        window.i18n?.format_translate('common.success') || '成功',
-                        window.i18n?.format_translate('settings.wordDefaultRemoved') || '已取消 Word 文档默认打开方式设置',
-                        'success'
-                    );
-                } catch (e) {
-                    console.error('取消 Word 默认打开方式失败:', e);
-                    settings_show_dialog(
-                        window.i18n?.format_translate('common.error') || '错误',
-                        String(e),
-                        'error'
-                    );
-                }
+            const origText = btnSetWord.textContent;
+            btnSetWord.disabled = true;
+            btnSetWord.textContent = window.i18n?.format_translate('settings.setSetting') || '设置中...';
+            try {
+                await invoke('filetype_set_icons');
+                settings_show_dialog(
+                    window.i18n?.format_translate('common.success') || '成功',
+                    window.i18n?.format_translate('settings.wordDefaultSetSuccess') || 'Word 文档已设置为默认打开方式',
+                    'success'
+                );
+            } catch (e) {
+                console.error('设置 Word 默认打开方式:', e);
+                settings_show_dialog(
+                    window.i18n?.format_translate('common.success') || '成功',
+                    window.i18n?.format_translate('settings.setDefaultManual') || '部分关联已注册，请在系统设置中手动设置默认程序',
+                    'info'
+                );
+            } finally {
+                btnSetWord.disabled = false;
+                btnSetWord.textContent = origText;
             }
         });
     }
