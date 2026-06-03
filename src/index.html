@@ -10,16 +10,16 @@
     <meta name="apple-mobile-web-app-capable" content="yes">
     <title>ViewStage</title>
     <link rel="stylesheet" href="styles.css">
-    <script src="JS/pdf.min.js" defer></script>
-    <script src="i18n.js" defer></script>
+    <script src="modules/pdf/pdf.min.js" defer></script>
+    <script src="modules/i18n.js" defer></script>
     <script>
         window.__TAURI__?.core.invoke('main_signal_loaded').catch(()=>{});
         (async()=>{
             try {
                 await import('./themes/theme.js');
-                await import('./pen_tessellator.js');
+                await import('./modules/canvas/pen_tessellator.js');
                 await import('./main.js');
-                await import('./blackboard.js');
+                await import('./modules/blackboard/blackboard.js');
                 await import('./modules/pdf/document_reader_page.js');
                 await import('./modules/pdf/document_reader.js');
                 await import('./init.js');

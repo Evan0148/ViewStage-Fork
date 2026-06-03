@@ -14,7 +14,7 @@ import {
     DrawCommand,
     ClearCommand,
     history_state
-} from '../../history.js';
+} from '../history.js';
 import { eraser_speed_create_state, eraser_speed_build_config, eraser_speed_update } from '../eraser/eraser_speed.js';
 
 class DocumentReaderManager {

@@ -9,7 +9,7 @@
  */
 export function init_pdfjs() {
     if (window.pdfjsLib) {
-        window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'JS/pdf.worker.min.js';
+        window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'modules/pdf/pdf.worker.min.js';
         return true;
     }
     console.warn('[DocLoader] PDF.js 库未加载');

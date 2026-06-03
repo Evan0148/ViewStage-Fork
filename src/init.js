@@ -2,9 +2,9 @@
  * 应用初始化流程 - DOM 构建、画布设置、摄像头初始化、事件绑定
  */
 import ThemeManager from './themes/theme.js';
-import { history_init_manager, history_validate_undo } from './history.js';
-import './batch-draw.js';
-import './tile-renderer.js';
+import { history_init_manager, history_validate_undo } from './modules/history.js';
+import './modules/canvas/batch-draw.js';
+import './modules/canvas/tile-renderer.js';
 console.log('[init] module loaded, readyState:', document.readyState);
 
 if (document.readyState === 'loading') {

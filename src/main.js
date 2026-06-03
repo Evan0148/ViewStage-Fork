@@ -4,7 +4,7 @@
  * 性能: RAF批量绘制减少重绘；Blob URL替代Data URL节省内存
  */
 
-import './batch-draw.js';
+import './modules/canvas/batch-draw.js';
 import ThemeManager from './themes/theme.js';
 import {
     history_execute_command,
@@ -19,7 +19,7 @@ import {
     history_fetch_commands_to_compact,
     history_format_compact,
     MAX_HISTORY_STEPS
-} from './history.js';
+} from './modules/history.js';
 import { DocLoader } from './modules/pdf/document_loader.js';
 import { eraser_speed_create_state, eraser_speed_build_config, eraser_speed_update } from './modules/eraser/eraser_speed.js';
 

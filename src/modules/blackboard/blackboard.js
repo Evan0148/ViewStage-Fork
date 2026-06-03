@@ -14,7 +14,7 @@ import {
     DrawCommand,
     ClearCommand,
     history_state
-} from './history.js';
+} from '../history.js';
 
 class BlackboardManager {
     constructor() {
