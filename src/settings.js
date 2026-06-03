@@ -346,34 +346,6 @@ document.addEventListener('DOMContentLoaded', async () => {
                     }
                 }
 
-                const denoiseFrameCount = settings.denoiseFrameCount || 3;
-                const denoiseFrameSelected = document.getElementById('denoiseFrameSelected');
-                const denoiseFrameOptions = document.querySelectorAll('#denoiseFrameOptions .select-option');
-                if (denoiseFrameSelected && denoiseFrameOptions.length > 0) {
-                    denoiseFrameOptions.forEach(option => {
-                        if (parseInt(option.dataset.value) === denoiseFrameCount) {
-                            denoiseFrameSelected.textContent = option.textContent;
-                            option.classList.add('selected');
-                        } else {
-                            option.classList.remove('selected');
-                        }
-                    });
-                }
-                
-                const denoiseStrength = settings.denoiseStrength || 'medium';
-                const denoiseStrengthSelected = document.getElementById('denoiseStrengthSelected');
-                const denoiseStrengthOptions = document.querySelectorAll('#denoiseStrengthOptions .select-option');
-                if (denoiseStrengthSelected && denoiseStrengthOptions.length > 0) {
-                    denoiseStrengthOptions.forEach(option => {
-                        if (option.dataset.value === denoiseStrength) {
-                            denoiseStrengthSelected.textContent = option.textContent;
-                            option.classList.add('selected');
-                        } else {
-                            option.classList.remove('selected');
-                        }
-                    });
-                }
-                
                 const frameRateModeGroup = document.getElementById('frameRateModeGroup');
                 if (frameRateModeGroup) {
                     const mode = settings.frameRateMode || 'adaptive';
@@ -1286,57 +1258,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             }
         });
     }
-    
-    // 降噪帧数选择
-    const denoiseFrameSelect = document.getElementById('denoiseFrameSelect');
-    const denoiseFrameSelected = document.getElementById('denoiseFrameSelected');
-    
-    if (denoiseFrameSelect && denoiseFrameSelected) {
-        denoiseFrameSelected.addEventListener('click', () => {
-            denoiseFrameSelect.classList.toggle('open');
-        });
-        
-        const denoiseFrameOptions = document.querySelectorAll('#denoiseFrameOptions .select-option');
-        denoiseFrameOptions.forEach(option => {
-            option.addEventListener('click', async () => {
-                const value = option.dataset.value;
-                denoiseFrameSelected.textContent = option.textContent;
-                
-                denoiseFrameOptions.forEach(opt => opt.classList.remove('selected'));
-                option.classList.add('selected');
-                
-                denoiseFrameSelect.classList.remove('open');
-                
-                await settings_save_all_local({ denoiseFrameCount: parseInt(value) });
-            });
-        });
-    }
-    
-    // 降噪强度选择
-    const denoiseStrengthSelect = document.getElementById('denoiseStrengthSelect');
-    const denoiseStrengthSelected = document.getElementById('denoiseStrengthSelected');
-    
-    if (denoiseStrengthSelect && denoiseStrengthSelected) {
-        denoiseStrengthSelected.addEventListener('click', () => {
-            denoiseStrengthSelect.classList.toggle('open');
-        });
-        
-        const denoiseStrengthOptions = document.querySelectorAll('#denoiseStrengthOptions .select-option');
-        denoiseStrengthOptions.forEach(option => {
-            option.addEventListener('click', async () => {
-                const value = option.dataset.value;
-                denoiseStrengthSelected.textContent = option.textContent;
-                
-                denoiseStrengthOptions.forEach(opt => opt.classList.remove('selected'));
-                option.classList.add('selected');
-                
-                denoiseStrengthSelect.classList.remove('open');
-                
-                await settings_save_all_local({ denoiseStrength: value });
-            });
-        });
-    }
-    
+
     // 帧率模式选择
     const frameRateModeGroup = document.getElementById('frameRateModeGroup');
     if (frameRateModeGroup) {

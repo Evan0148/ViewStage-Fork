@@ -1337,8 +1337,8 @@ fn config_fetch_default() -> serde_json::Value {
         "autoClearCacheDays": 15,
         "lastCacheClearDate": "",
         "theme": "com.viewstage.theme.simplify",
-        "denoiseFrameCount": 3,
-        "denoiseStrength": "medium",
+        "eraserSpeedEnabled": false,
+        "eraserSizePresets": [5, 15, 25, 38, 50],
         "penEffectMode": "limited",
         "memreductCleanEnabled": true
     })
