@@ -2616,6 +2616,13 @@ function main_handle_touch_move(e) {
         const transform = `translate3d(${state.canvasX}px, ${state.canvasY}px, 0) scale(${state.scale})`;
         dom.canvasWrapper.style.transform = transform;
         
+        if (window.tileRenderer) {
+            window.tileRenderer.update_visible_tile_dpr(state.scale, false, true);
+        }
+        if (window.batchDrawManager) {
+            window.batchDrawManager.update_overlay_dpr(state.scale);
+        }
+        
         last_canvas_transform.x = state.canvasX;
         last_canvas_transform.y = state.canvasY;
         last_canvas_transform.scale = state.scale;
