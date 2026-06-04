@@ -2,7 +2,7 @@ export const PALM_CONFIG = {
     penThreshold: 5,
     fingerThreshold: 15,
     palmMultiplier: 2.5,
-    palmSizeMultiplier: 1.5,
+    palmSizeMultiplier: 1.2,
     eraserSizeK: 1.0,
     fallbackTouchCount: 4,
     fallbackSpread: 300,
@@ -12,13 +12,15 @@ export const PALM_CONFIG = {
 
 export function is_palm_by_pointer(e) {
     if (typeof e.width !== 'number' || e.width <= 0 || typeof e.height !== 'number' || e.height <= 0) {
-        return { isPalm: false, width: 0 };
+        return { isPalm: false, width: 0, height: 0 };
     }
-    const w = Math.max(e.width, e.height);
+    const w = e.width;
+    const h = e.height;
     const threshold = PALM_CONFIG.fingerThreshold;
     return {
         isPalm: w > threshold * PALM_CONFIG.palmMultiplier,
-        width: w
+        width: w,
+        height: h
     };
 }
 

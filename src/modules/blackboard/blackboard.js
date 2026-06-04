@@ -559,7 +559,8 @@ class BlackboardManager {
 
         const palmResult = is_palm_by_pointer(e);
         if (palmResult.isPalm && (window.DRAW_CONFIG?.palmEraserEnabled !== false)) {
-            this._start_palm_erase(e.clientX, e.clientY, palmResult.width * PALM_CONFIG.palmSizeMultiplier * PALM_CONFIG.eraserSizeK);
+            const contactSize = Math.max(palmResult.width, palmResult.height) * PALM_CONFIG.palmSizeMultiplier * PALM_CONFIG.eraserSizeK;
+            this._start_palm_erase(e.clientX, e.clientY, contactSize);
             return;
         }
 

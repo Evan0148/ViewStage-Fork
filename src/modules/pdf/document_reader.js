@@ -1825,9 +1825,10 @@ class DocumentReaderManager {
         if (!this.is_open) return;
 
         const palmEraser = window.__palmEraser;
-        const palmResult = palmEraser ? palmEraser.is_palm_by_pointer(e) : { isPalm: false, width: 0 };
+        const palmResult = palmEraser ? palmEraser.is_palm_by_pointer(e) : { isPalm: false, width: 0, height: 0 };
         if (palmResult.isPalm && (window.DRAW_CONFIG?.palmEraserEnabled !== false)) {
-            this._start_palm_erase(e.clientX, e.clientY, palmResult.width * palmEraser.PALM_CONFIG.palmSizeMultiplier * palmEraser.PALM_CONFIG.eraserSizeK);
+            const contactSize = Math.max(palmResult.width, palmResult.height) * palmEraser.PALM_CONFIG.palmSizeMultiplier * palmEraser.PALM_CONFIG.eraserSizeK;
+            this._start_palm_erase(e.clientX, e.clientY, contactSize);
             return;
         }
 

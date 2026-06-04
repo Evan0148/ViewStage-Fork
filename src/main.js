@@ -2096,7 +2096,7 @@ function main_update_eraser_hint_position(clientX, clientY) {
 
 function main_is_palm_pointer(e) {
     const mod = window.__palmEraser;
-    if (!mod) return { isPalm: false, width: 0 };
+    if (!mod) return { isPalm: false, width: 0, height: 0 };
     return mod.is_palm_by_pointer(e);
 }
 
@@ -2229,7 +2229,8 @@ function main_handle_pointer_down(e) {
 
     const palmResult = main_is_palm_pointer(e);
     if (palmResult.isPalm && DRAW_CONFIG.palmEraserEnabled) {
-        main_start_palm_erase(e.clientX, e.clientY, palmResult.width * window.__palmEraser.PALM_CONFIG.palmSizeMultiplier * window.__palmEraser.PALM_CONFIG.eraserSizeK);
+        const contactSize = Math.max(palmResult.width, palmResult.height) * window.__palmEraser.PALM_CONFIG.palmSizeMultiplier * window.__palmEraser.PALM_CONFIG.eraserSizeK;
+        main_start_palm_erase(e.clientX, e.clientY, contactSize);
         return;
     }
     
