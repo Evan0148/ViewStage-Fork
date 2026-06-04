@@ -15,7 +15,6 @@ import {
     ClearCommand,
     history_state
 } from '../history.js';
-import { eraser_speed_create_state, eraser_speed_build_config, eraser_speed_update } from '../eraser/eraser_speed.js';
 
 class DocumentReaderManager {
     constructor() {
@@ -44,6 +43,10 @@ class DocumentReaderManager {
         this._eraser_hint = null;
         this._eraser_hint_raf_id = null;
         this._eraser_hint_pending_pos = null;
+        this._palm_eraser_hint = null;
+        this.isPalmErasing = false;
+        this.savedDrawMode = null;
+        this.palmEraserSize = 60;
         this._was_camera_open_before = false;
         this._last_loaded_index = -1;
         this._page_visible_timeout_id = null;
@@ -295,11 +298,16 @@ class DocumentReaderManager {
 
         await this._submit_stroke();
         this._hide_eraser_hint();
+        this._hide_palm_eraser_hint();
 
         // 移除橡皮擦提示元素
         if (this._eraser_hint && this._eraser_hint.parentNode) {
             this._eraser_hint.parentNode.removeChild(this._eraser_hint);
             this._eraser_hint = null;
+        }
+        if (this._palm_eraser_hint && this._palm_eraser_hint.parentNode) {
+            this._palm_eraser_hint.parentNode.removeChild(this._palm_eraser_hint);
+            this._palm_eraser_hint = null;
         }
 
         // 保存所有页的批注到缓存（含全局 undo/redo 历史）
@@ -1816,6 +1824,13 @@ class DocumentReaderManager {
     _handle_pointer_down(e) {
         if (!this.is_open) return;
 
+        const palmEraser = window.__palmEraser;
+        const palmResult = palmEraser ? palmEraser.is_palm_by_pointer(e) : { isPalm: false, width: 0 };
+        if (palmResult.isPalm && (window.DRAW_CONFIG?.palmEraserEnabled !== false)) {
+            this._start_palm_erase(e.clientX, e.clientY, palmResult.width * palmEraser.PALM_CONFIG.palmSizeMultiplier * palmEraser.PALM_CONFIG.eraserSizeK);
+            return;
+        }
+
         const target = e.target.closest('.doc-reader-page');
         if (!target) return;
 
@@ -1878,6 +1893,11 @@ class DocumentReaderManager {
     }
 
     _handle_pointer_move(e) {
+        if (this.isPalmErasing) {
+            this._update_palm_erase(e.clientX, e.clientY);
+            return;
+        }
+
         // 拖拽平移
         if (this.dr_is_dragging) {
             e.preventDefault();
@@ -1947,6 +1967,10 @@ class DocumentReaderManager {
     }
 
     async _handle_pointer_up(e) {
+        if (this.isPalmErasing) {
+            await this._end_palm_erase();
+            return;
+        }
         // 停止拖拽，启动惯性滚动
         if (this.dr_is_dragging) {
             this.dr_is_dragging = false;
@@ -2012,7 +2036,7 @@ class DocumentReaderManager {
             lineWidth: type === 'draw' ? DRAW_CONFIG.penWidth : baseEraserSize,
             eraserSize: baseEraserSize,
             eraserSizeRaw: DRAW_CONFIG.eraserSize,
-            ...eraser_speed_build_config(DRAW_CONFIG, 1),
+            ...(window.__eraserSpeed ? window.__eraserSpeed.eraser_speed_build_config(DRAW_CONFIG, 1) : { eraserSpeedEnabled: false }),
             scale: 1,
             bounds: { minX: Infinity, minY: Infinity, maxX: -Infinity, maxY: -Infinity },
             variableWidths: [],
@@ -2027,7 +2051,7 @@ class DocumentReaderManager {
         this.cached_draw_color = type === 'draw' ? DRAW_CONFIG.penColor : '#000000';
         this.cached_draw_line_width = baseEraserSize;
 
-        this._eraser_speed_state = eraser_speed_create_state();
+        this._eraser_speed_state = window.__eraserSpeed?.eraser_speed_create_state() ?? null;
 
         if (this.batch_draw) {
             this.batch_draw.batch_draw_init_start();
@@ -2056,7 +2080,7 @@ class DocumentReaderManager {
             currentWidth = stroke.lineWidth * (0.9 + pressure * 0.2);
             this.current_line_width = currentWidth;
         } else if (stroke.type === 'erase' && stroke.eraserSpeedEnabled) {
-            currentWidth = eraser_speed_update(this._eraser_speed_state, stroke, to_x, to_y);
+            currentWidth = window.__eraserSpeed.eraser_speed_update(this._eraser_speed_state, stroke, to_x, to_y);
             this.cached_draw_line_width = currentWidth;
         }
 
@@ -2440,6 +2464,12 @@ class DocumentReaderManager {
         this._eraser_hint.style.width = (window.DRAW_CONFIG?.eraserSize || 15) + 'px';
         this._eraser_hint.style.height = (window.DRAW_CONFIG?.eraserSize || 15) + 'px';
         this._scroll_container.appendChild(this._eraser_hint);
+
+        this._palm_eraser_hint = document.createElement('div');
+        this._palm_eraser_hint.className = 'palm-eraser-hint';
+        this._palm_eraser_hint.style.width = '60px';
+        this._palm_eraser_hint.style.height = '60px';
+        this._scroll_container.appendChild(this._palm_eraser_hint);
     }
 
     _show_eraser_hint() {
@@ -2486,6 +2516,126 @@ class DocumentReaderManager {
                 this._eraser_hint.style.transform = 'translate(-50%, -50%)';
             }
         });
+    }
+
+    // ====== 文档阅读器手掌擦除 ======
+
+    _show_palm_eraser_hint() {
+        if (!this._palm_eraser_hint) return;
+        this._palm_eraser_hint.classList.add('active');
+    }
+
+    _hide_palm_eraser_hint() {
+        if (!this._palm_eraser_hint) return;
+        this._palm_eraser_hint.classList.remove('active');
+    }
+
+    _update_palm_eraser_hint(clientX, clientY, size) {
+        if (!this._palm_eraser_hint || !this._scroll_container) return;
+        const rect = this._scroll_container.getBoundingClientRect();
+        const x = clientX - rect.left;
+        const y = clientY - rect.top;
+        this._palm_eraser_hint.style.width = size + 'px';
+        this._palm_eraser_hint.style.height = size + 'px';
+        this._palm_eraser_hint.style.left = x + 'px';
+        this._palm_eraser_hint.style.top = y + 'px';
+        this._palm_eraser_hint.style.transform = 'translate(-50%, -50%)';
+    }
+
+    _start_palm_erase(clientX, clientY, eraserWidth) {
+        const target = document.elementFromPoint(clientX, clientY);
+        if (!target) return;
+        const page_index = parseInt(target.dataset.page);
+        if (isNaN(page_index)) return;
+        const page_data = this.page_manager.pages_list[page_index];
+        if (!page_data?.page_element) return;
+        this.isPalmErasing = true;
+        this.savedDrawMode = this.draw_mode;
+        this.draw_mode = 'eraser';
+        this.palmEraserSize = eraserWidth || (window.DRAW_CONFIG?.palmEraserSize || 60);
+        this.active_page_index = page_index;
+        const rect = page_data.page_element.getBoundingClientRect();
+        this.draw_canvas_rect = rect;
+        this.dr_cached_inv_scale = 1 / this.dr_scale;
+
+        const inv = this.dr_cached_inv_scale;
+        this.last_x = (clientX - rect.left) * inv;
+        this.last_y = (clientY - rect.top) * inv;
+
+        this._show_palm_eraser_hint();
+        this._update_palm_eraser_hint(clientX, clientY, this.palmEraserSize);
+
+        this.is_drawing = true;
+        const baseEraserSize = this.palmEraserSize * inv;
+        this.current_stroke = {
+            type: 'erase',
+            points: [],
+            color: '#000000',
+            lineWidth: baseEraserSize,
+            eraserSize: baseEraserSize,
+            eraserSizeRaw: this.palmEraserSize,
+            eraserShape: 'square',
+            eraserSpeedEnabled: false,
+            scale: 1,
+            bounds: { minX: Infinity, minY: Infinity, maxX: -Infinity, maxY: -Infinity },
+            variableWidths: [],
+            _cache_uid: `${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
+        };
+
+        this.cached_draw_type = 'erase';
+        this.cached_draw_color = '#000000';
+        this.cached_draw_line_width = baseEraserSize;
+
+        const page_data2 = this.page_manager.pages_list[this.active_page_index];
+        if (page_data2 && !page_data2.is_tiles_initialized) {
+            this._on_page_visible(this.active_page_index);
+        }
+        if (this.batch_draw) {
+            this.batch_draw.batch_draw_init_start();
+            this.batch_draw.eraserShape = 'square';
+            if (page_data2?.tile_renderer) {
+                this.batch_draw._tileRenderer = page_data2.tile_renderer;
+            }
+        }
+    }
+
+    _update_palm_erase(clientX, clientY) {
+        if (!this.isPalmErasing || !this.draw_canvas_rect) return;
+        const inv = this.dr_cached_inv_scale;
+        const x = (clientX - this.draw_canvas_rect.left) * inv;
+        const y = (clientY - this.draw_canvas_rect.top) * inv;
+        const dx = x - this.last_x;
+        const dy = y - this.last_y;
+
+        this._update_palm_eraser_hint(clientX, clientY, this.palmEraserSize);
+
+        if (dx !== 0 || dy !== 0) {
+            this._save_stroke_point(this.last_x, this.last_y, x, y, 0.5);
+            if (this.batch_draw) {
+                const page_data = this.page_manager.pages_list[this.active_page_index];
+                if (page_data?.tile_renderer) {
+                    this.batch_draw.batch_draw_create_command(
+                        'erase', this.last_x, this.last_y, x, y,
+                        '#000000', this.palmEraserSize * inv
+                    );
+                }
+            }
+            this.last_x = x;
+            this.last_y = y;
+        }
+    }
+
+    async _end_palm_erase() {
+        if (!this.isPalmErasing) return;
+        this.isPalmErasing = false;
+        this.is_drawing = false;
+        this.draw_canvas_rect = null;
+        this._hide_palm_eraser_hint();
+
+        await this._submit_stroke();
+        this.draw_mode = this.savedDrawMode || 'comment';
+        this.savedDrawMode = null;
+        this.current_stroke = null;
     }
 
     // ====== 页面侧边栏 ======
@@ -3025,6 +3175,24 @@ class DocumentReaderManager {
         if (!this.is_open) return;
         const touches = e.touches;
 
+        if ((window.DRAW_CONFIG?.palmEraserEnabled !== false) && touches.length >= 4) {
+            const palmEraser = window.__palmEraser;
+            if (palmEraser && palmEraser.is_palm_by_touch_count(touches)) {
+                e.preventDefault();
+                if (this.is_drawing) {
+                    this.is_drawing = false;
+                    this.draw_canvas_rect = null;
+                    await this._submit_stroke();
+                    if (this.batch_draw) {
+                        this.batch_draw.batch_draw_delete_all();
+                    }
+                }
+                const center = palmEraser.get_palm_center(touches);
+                this._start_palm_erase(center.x, center.y, window.DRAW_CONFIG?.palmEraserSize || 60);
+                return;
+            }
+        }
+
         if (touches.length === 2) {
             e.preventDefault();
 
@@ -3060,7 +3228,15 @@ class DocumentReaderManager {
     }
 
     _dr_handle_touch_move(e) {
-        if (!this.is_open || !this.dr_is_scaling) return;
+        if (!this.is_open) return;
+
+        if (this.isPalmErasing && window.__palmEraser) {
+            const center = window.__palmEraser.get_palm_center(e.touches);
+            this._update_palm_erase(center.x, center.y);
+            return;
+        }
+
+        if (!this.dr_is_scaling) return;
         const touches = e.touches;
 
         if (touches.length === 2) {
@@ -3115,7 +3291,13 @@ class DocumentReaderManager {
         }
     }
 
-    _dr_handle_touch_end(e) {
+    async _dr_handle_touch_end(e) {
+        if (this.isPalmErasing) {
+            if (e.touches.length < 4) {
+                await this._end_palm_erase();
+            }
+            return;
+        }
         if (e.touches.length < 2) {
             this.dr_is_scaling = false;
             this.dr_is_dragging = false;

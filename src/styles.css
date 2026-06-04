@@ -227,6 +227,23 @@ body {
     will-change: transform, left, top;
 }
 
+.palm-eraser-hint {
+    position: absolute;
+    z-index: 9;
+    border: 3px solid #3b82f6;
+    border-radius: 0;
+    background-color: rgba(59, 130, 246, 0.25);
+    pointer-events: none;
+    display: none;
+    transform-origin: center center;
+    contain: layout style;
+}
+
+.palm-eraser-hint.active {
+    display: block;
+    will-change: transform, left, top;
+}
+
 /* ===== 加载遮罩 ===== */
 .loading-overlay {
     position: fixed;

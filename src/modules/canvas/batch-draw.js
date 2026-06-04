@@ -54,6 +54,7 @@ class RealtimeBatchDrawManager {
         this._overlayDprSettleMs = 300;
 
         this._tileRenderer = null;
+        this.eraserShape = 'round';
     }
 
     _calc_overlay_dpr(scale) {
@@ -485,8 +486,8 @@ class RealtimeBatchDrawManager {
                     const dpr = info.dpr;
                     ctx.save();
                     ctx.setTransform(dpr, 0, 0, dpr, -info.rect.x * dpr, -info.rect.y * dpr);
-                    ctx.lineCap = 'round';
-                    ctx.lineJoin = 'round';
+                    ctx.lineCap = this.eraserShape === 'square' ? 'square' : 'round';
+                    ctx.lineJoin = this.eraserShape === 'square' ? 'miter' : 'round';
                     ctx.globalCompositeOperation = 'destination-out';
                     ctx.strokeStyle = 'rgba(0,0,0,1)';
                     
@@ -565,6 +566,7 @@ class RealtimeBatchDrawManager {
         this._lastToY = null;
         this._speedBuffer = [];
         this._storedWidths = [];
+        this.eraserShape = 'round';
 
         if (this.is_adaptive) {
             this.currentFps = this.LOW_LOAD_FPS;
@@ -591,6 +593,8 @@ class RealtimeBatchDrawManager {
             if (this.lastType === 'erase') {
                 const eraseHalfWidth = (this.lastLineWidth || 5) / 2;
                 this._each_tile(this._lastMidX, this._lastMidY, this._lastToX, this._lastToY, (ctx) => {
+                    ctx.lineCap = this.eraserShape === 'square' ? 'square' : 'round';
+                    ctx.lineJoin = this.eraserShape === 'square' ? 'miter' : 'round';
                     ctx.globalCompositeOperation = 'destination-out';
                     ctx.strokeStyle = 'rgba(0,0,0,1)';
                     ctx.lineWidth = this.lastLineWidth || 5;

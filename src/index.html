@@ -19,7 +19,6 @@
                 await import('./themes/theme.js');
                 await import('./modules/canvas/pen_tessellator.js');
                 await import('./main.js');
-                await import('./modules/blackboard/blackboard.js');
                 await import('./modules/pdf/document_reader_page.js');
                 await import('./modules/pdf/document_reader.js');
                 await import('./init.js');
@@ -45,6 +44,7 @@
                     <video id="cameraVideo" class="camera-video" autoplay playsinline muted></video>
                 </div>
                 <div class="eraser-hint" id="eraserHint"></div>
+                <div class="palm-eraser-hint" id="palmEraserHint"></div>
             </div>
             
             <div class="pen-control-panel" id="penControlPanel">

@@ -21,7 +21,6 @@ import {
     MAX_HISTORY_STEPS
 } from './modules/history.js';
 import { DocLoader } from './modules/pdf/document_loader.js';
-import { eraser_speed_create_state, eraser_speed_build_config, eraser_speed_update } from './modules/eraser/eraser_speed.js';
 
 // === 全局变量 ===
 let last_canvas_transform = { x: null, y: null, scale: null };
@@ -79,6 +78,8 @@ const DRAW_CONFIG = {
     eraserSpeedMinSize: 5,
     eraserSpeedMaxSize: 120,
     eraserSpeedFactor: 0.3,
+    palmEraserEnabled: true,
+    palmEraserSize: 60,
     minScale: 0.5,
     maxScale: 3,
     maxScaleCamera: 2,
@@ -525,7 +526,10 @@ let state = {
     currentPressure: 0.5,
     currentVelocity: 0,
     currentLineWidth: 0,
-    lastLineWidth: 0
+    lastLineWidth: 0,
+    isPalmErasing: false,
+    savedDrawMode: null,
+    palmEraserSize: 60
 };
 
 const MAX_PDF_CACHE = 10;
@@ -983,21 +987,6 @@ function main_setup_pdf_file_open() {
             });
         }
 
-        if (settings.blackboardEnabled !== undefined) {
-            const bb = window.blackboardManager;
-            if (settings.blackboardEnabled === false) {
-                if (bb && bb.is_open) {
-                    bb.close();
-                }
-                dom.btnBlackboard.style.display = 'none';
-            } else {
-                dom.btnBlackboard.style.display = '';
-            }
-        }
-
-        if (settings.eraserSpeedEnabled !== undefined) {
-            DRAW_CONFIG.eraserSpeedEnabled = settings.eraserSpeedEnabled;
-        }
         
         if (needRestartCamera && state.isCameraOpen) {
             console.log('摄像头设置已更改，重新初始化摄像头...');
@@ -1690,8 +1679,8 @@ function main_setup_tool_events() {
     dom.btnMinimize.addEventListener('click', main_hide_window);
     dom.btnMenu.addEventListener('click', main_handle_menu_toggle);
     dom.btnExpand.addEventListener('click', main_handle_sidebar_toggle);
-    dom.btnBlackboard.addEventListener('click', () => {
-        const bb = window.blackboardManager;
+    dom.btnBlackboard.addEventListener('click', async () => {
+        const bb = await window.blackboard_ensure_loaded(dom.canvasContainer);
         if (bb) {
             if (bb.is_open) {
                 bb.close();
@@ -2103,6 +2092,115 @@ function main_update_eraser_hint_position(clientX, clientY) {
     });
 }
 
+// ====== 手掌擦除 ======
+
+function main_is_palm_pointer(e) {
+    const mod = window.__palmEraser;
+    if (!mod) return { isPalm: false, width: 0 };
+    return mod.is_palm_by_pointer(e);
+}
+
+function main_show_palm_eraser_hint() {
+    if (!dom.palmEraserHint) return;
+    dom.palmEraserHint.classList.add('active');
+}
+
+function main_hide_palm_eraser_hint() {
+    if (!dom.palmEraserHint) return;
+    dom.palmEraserHint.classList.remove('active');
+}
+
+function main_update_palm_eraser_hint(clientX, clientY, size) {
+    if (!dom.palmEraserHint) return;
+    const rect = dom.canvasWrapper.getBoundingClientRect();
+    const x = clientX - rect.left;
+    const y = clientY - rect.top;
+    dom.palmEraserHint.style.width = `${size}px`;
+    dom.palmEraserHint.style.height = `${size}px`;
+    dom.palmEraserHint.style.left = `${x}px`;
+    dom.palmEraserHint.style.top = `${y}px`;
+    dom.palmEraserHint.style.transform = 'translate(-50%, -50%)';
+}
+
+function main_start_palm_erase(clientX, clientY, eraserWidth) {
+    state.isPalmErasing = true;
+    state.savedDrawMode = state.drawMode;
+    state.drawMode = 'eraser';
+    state.palmEraserSize = eraserWidth || DRAW_CONFIG.palmEraserSize;
+
+    state.drawCanvasRect = dom.canvasWrapper.getBoundingClientRect();
+    state.cachedInvScale = 1 / main_fetch_safe_scale();
+    const inv = state.cachedInvScale;
+    state.lastX = (clientX - state.drawCanvasRect.left) * inv;
+    state.lastY = (clientY - state.drawCanvasRect.top) * inv;
+
+    main_show_palm_eraser_hint();
+    main_update_palm_eraser_hint(clientX, clientY, state.palmEraserSize);
+
+    state.currentStroke = null;
+    state.isDrawing = true;
+    main_start_drawing_mode();
+    state.cachedDrawType = 'erase';
+    state.cachedDrawColor = '#000000';
+    state.cachedDrawLineWidth = state.palmEraserSize * state.cachedInvScale;
+
+    const invScale = state.cachedInvScale;
+    const baseEraserSize = state.palmEraserSize * invScale;
+    state.currentStroke = {
+        type: 'erase',
+        points: [],
+        color: '#000000',
+        lineWidth: baseEraserSize,
+        eraserSize: baseEraserSize,
+        eraserSizeRaw: state.palmEraserSize,
+        eraserShape: 'square',
+        eraserSpeedEnabled: false,
+        scale: state.scale,
+        bounds: {
+            minX: Infinity, minY: Infinity,
+            maxX: -Infinity, maxY: -Infinity
+        },
+        variableWidths: []
+    };
+
+    batchDrawManager.batch_draw_init_start();
+    batchDrawManager.eraserShape = 'square';
+}
+
+function main_update_palm_erase(clientX, clientY) {
+    if (!state.isPalmErasing || !state.drawCanvasRect) return;
+    const inv = state.cachedInvScale;
+    const x = (clientX - state.drawCanvasRect.left) * inv;
+    const y = (clientY - state.drawCanvasRect.top) * inv;
+    const dx = x - state.lastX;
+    const dy = y - state.lastY;
+
+    main_update_palm_eraser_hint(clientX, clientY, state.palmEraserSize);
+
+    if (dx !== 0 || dy !== 0) {
+        main_save_stroke_point(state.lastX, state.lastY, x, y, 0.5);
+        batchDrawManager.batch_draw_create_command(
+            'erase', state.lastX, state.lastY, x, y,
+            '#000000', state.palmEraserSize * inv
+        );
+        state.lastX = x;
+        state.lastY = y;
+    }
+}
+
+async function main_end_palm_erase() {
+    if (!state.isPalmErasing) return;
+    state.isPalmErasing = false;
+    state.isDrawing = false;
+    main_hide_drawing_mode();
+    main_hide_palm_eraser_hint();
+
+    await main_submit_stroke();
+    state.drawMode = state.savedDrawMode || 'move';
+    state.savedDrawMode = null;
+    state.currentStroke = null;
+}
+
 // === 画布交互事件：鼠标/触控 绘制、拖拽、缩放 ===
 
 function main_setup_canvas_mouse_events() {
@@ -2128,6 +2226,12 @@ function main_handle_pointer_down(e) {
     if (window.tileRenderer) window.tileRenderer.cancel_idle_shrink();
     e.preventDefault();
     state.drawCanvasRect = dom.canvasWrapper.getBoundingClientRect();
+
+    const palmResult = main_is_palm_pointer(e);
+    if (palmResult.isPalm && DRAW_CONFIG.palmEraserEnabled) {
+        main_start_palm_erase(e.clientX, e.clientY, palmResult.width * window.__palmEraser.PALM_CONFIG.palmSizeMultiplier * window.__palmEraser.PALM_CONFIG.eraserSizeK);
+        return;
+    }
     
     state.currentPressure = e.pressure || 0.5;
     
@@ -2160,6 +2264,11 @@ function main_handle_pointer_down(e) {
  */
 function main_handle_pointer_move(e) {
     e.preventDefault();
+
+    if (state.isPalmErasing) {
+        main_update_palm_erase(e.clientX, e.clientY);
+        return;
+    }
     
     state.currentPressure = e.pressure || 0.5;
     
@@ -2203,6 +2312,10 @@ function main_handle_pointer_move(e) {
 }
 
 async function main_handle_pointer_up(e) {
+    if (state.isPalmErasing) {
+        await main_end_palm_erase();
+        return;
+    }
     if (state.isDragging) {
         state.isDragging = false;
         dom.canvasWrapper.classList.remove('dragging');
@@ -2216,6 +2329,10 @@ async function main_handle_pointer_up(e) {
 }
 
 async function main_handle_pointer_leave(e) {
+    if (state.isPalmErasing) {
+        await main_end_palm_erase();
+        return;
+    }
     if (state.isDragging) {
         state.isDragging = false;
         dom.canvasWrapper.classList.remove('dragging');
@@ -2393,6 +2510,21 @@ async function main_handle_touch_start(e) {
     e.preventDefault();
     const touches = e.touches;
     state.drawCanvasRect = dom.canvasWrapper.getBoundingClientRect();
+
+    if (DRAW_CONFIG.palmEraserEnabled && touches.length >= 4) {
+        const palmEraser = window.__palmEraser;
+        if (palmEraser && palmEraser.is_palm_by_touch_count(touches)) {
+            if (state.isDrawing) {
+                state.isDrawing = false;
+                main_hide_drawing_mode();
+                await main_submit_stroke();
+            }
+            const center = palmEraser.get_palm_center(touches);
+            const palmSize = DRAW_CONFIG.palmEraserSize;
+            main_start_palm_erase(center.x, center.y, palmSize);
+            return;
+        }
+    }
     
     // 在支持 PointerEvent 的设备上，TouchEvent 只处理多指手势，单指完全由 PointerEvent 处理
     if (window.PointerEvent) {
@@ -2457,6 +2589,12 @@ function main_handle_touch_move(e) {
     e.preventDefault();
     if (window.tileRenderer) window.tileRenderer.cancel_idle_shrink();
     const touches = e.touches;
+
+    if (state.isPalmErasing && window.__palmEraser) {
+        const center = window.__palmEraser.get_palm_center(touches);
+        main_update_palm_erase(center.x, center.y);
+        return;
+    }
     
     // 在支持 PointerEvent 的设备上，TouchEvent 只处理多指手势
     if (window.PointerEvent && touches.length === 1) {
@@ -2539,6 +2677,13 @@ function main_handle_touch_move(e) {
 
 async function main_handle_touch_end(e) {
     e.preventDefault();
+
+    if (state.isPalmErasing) {
+        if (e.touches.length < 4) {
+            await main_end_palm_erase();
+        }
+        return;
+    }
     
     // 在支持 PointerEvent 的设备上，只处理多指缩放结束
     if (window.PointerEvent && !state.isScaling) {
@@ -2658,7 +2803,7 @@ function main_update_canvas_transform_smooth(targetX, targetY, targetScale, dura
 }
 
 // 撤销功能 - 混合方案：路径记录 + ImageData 压缩
-function main_start_stroke(type) {
+function main_start_stroke(type, eraserShape) {
     const invScale = 1 / main_fetch_safe_scale();
     const baseEraserSize = DRAW_CONFIG.eraserSize * invScale;
     state.currentStroke = {
@@ -2668,7 +2813,8 @@ function main_start_stroke(type) {
         lineWidth: (type === 'draw' ? DRAW_CONFIG.penWidth : DRAW_CONFIG.eraserSize) * invScale,
         eraserSize: baseEraserSize,
         eraserSizeRaw: DRAW_CONFIG.eraserSize,
-        ...eraser_speed_build_config(DRAW_CONFIG, invScale),
+        eraserShape: eraserShape || 'round',
+        ...(window.__eraserSpeed ? window.__eraserSpeed.eraser_speed_build_config(DRAW_CONFIG, invScale) : { eraserSpeedEnabled: false }),
         scale: state.scale,
         bounds: {
             minX: Infinity,
@@ -2687,8 +2833,9 @@ function main_start_stroke(type) {
     state.cachedDrawColor = type === 'draw' ? DRAW_CONFIG.penColor : '#000000';
     state.cachedDrawLineWidth = baseEraserSize;
     
-    state.eraserSpeedState = eraser_speed_create_state();
+    state.eraserSpeedState = window.__eraserSpeed?.eraser_speed_create_state() ?? null;
     
+    batchDrawManager.eraserShape = state.currentStroke.eraserShape;
     batchDrawManager.batch_draw_init_start();
 }
 
@@ -2714,7 +2861,7 @@ function main_save_stroke_point(fromX, fromY, toX, toY, pressure = 0.5) {
         currentWidth = stroke.lineWidth * (0.9 + pressure * 0.2);
         state.currentLineWidth = currentWidth;
     } else if (stroke.type === 'erase' && stroke.eraserSpeedEnabled) {
-        currentWidth = eraser_speed_update(state.eraserSpeedState, stroke, toX, toY);
+        currentWidth = window.__eraserSpeed.eraser_speed_update(state.eraserSpeedState, stroke, toX, toY);
         state.cachedDrawLineWidth = currentWidth;
     }
     
@@ -2887,6 +3034,8 @@ async function main_render_strokes_to_context(ctx, strokes) {
         lineJoin: 'round'
     });
 
+    let currentEraserShape = 'round';
+
     const pen_effect = get_pen_effect_mode();
 
     for (const stroke of strokes) {
@@ -2899,6 +3048,14 @@ async function main_render_strokes_to_context(ctx, strokes) {
                 globalCompositeOperation: 'destination-out',
                 strokeStyle: '#000000'
             });
+            const shape = stroke.eraserShape || 'round';
+            if (shape !== currentEraserShape) {
+                currentEraserShape = shape;
+                main_update_context_state(ctx, {
+                    lineCap: shape === 'square' ? 'square' : 'round',
+                    lineJoin: shape === 'square' ? 'miter' : 'round'
+                });
+            }
         } else {
             main_update_context_state(ctx, {
                 globalCompositeOperation: 'source-over'
@@ -2950,7 +3107,9 @@ async function main_render_strokes_to_context(ctx, strokes) {
     }
 
     main_update_context_state(ctx, {
-        globalCompositeOperation: 'source-over'
+        globalCompositeOperation: 'source-over',
+        lineCap: 'round',
+        lineJoin: 'round'
     });
 }
 

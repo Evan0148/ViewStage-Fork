@@ -46,6 +46,7 @@ function dom_init_all() {
     dom.imageElement = document.getElementById('imageElement');
     dom.cameraVideo = document.getElementById('cameraVideo');
     dom.eraserHint = document.getElementById('eraserHint');
+    dom.palmEraserHint = document.getElementById('palmEraserHint');
     dom.penControlPanel = document.getElementById('penControlPanel');
     dom.settingsPanel = document.getElementById('settingsPanel');
 
@@ -233,10 +234,35 @@ async function settings_load_camera_config() {
             DRAW_CONFIG.canvasBgColor = canvasBgColor;
             window.main_update_canvas_bg_color(canvasBgColor);
 
-            if (settings.blackboardEnabled === false && dom.btnBlackboard) {
+            const blackboardEnabled = settings.blackboardEnabled !== false;
+            window.__blackboardEnabled = blackboardEnabled;
+            if (!blackboardEnabled && dom.btnBlackboard) {
                 dom.btnBlackboard.style.display = 'none';
             } else if (dom.btnBlackboard) {
                 dom.btnBlackboard.style.display = '';
+            }
+
+            const palmEraserEnabled = settings.palmEraserEnabled !== false;
+            DRAW_CONFIG.palmEraserEnabled = palmEraserEnabled;
+            if (palmEraserEnabled) {
+                try {
+                    const mod = await import('./modules/palm-eraser/palm-eraser.js');
+                    window.__palmEraser = mod;
+                } catch (e) {
+                    console.error('[init] palm eraser load error:', e);
+                }
+            } else {
+                window.__palmEraser = null;
+            }
+
+            if (DRAW_CONFIG.eraserSpeedEnabled) {
+                try {
+                    window.__eraserSpeed = await import('./modules/eraser/eraser_speed.js');
+                } catch (e) {
+                    console.error('[init] eraser speed load error:', e);
+                }
+            } else {
+                window.__eraserSpeed = null;
             }
         } catch (error) {
             console.error('加载摄像头设置失败:', error);
@@ -307,11 +333,17 @@ async function main_init_all() {
         await settings_load_camera_config();
         console.log('[init] settings_load_camera_config done');
 
+        app_emit_splash_progress(2, '正在加载组件...');
+        console.log('[init] progress 2 emitted');
         console.log('[init] calling canvas_init_all');
         canvas_init_all();
         console.log('[init] blackboard init');
-        if (window.blackboardManager) {
-            window.blackboardManager.init(dom.canvasContainer);
+        if (window.__blackboardEnabled !== false) {
+            try {
+                await window.blackboard_ensure_loaded(dom.canvasContainer);
+            } catch (e) {
+                console.error('[init] blackboard lazy load error:', e);
+            }
         }
         console.log('[init] document reader init');
         if (window.documentReaderManager) {
@@ -343,11 +375,11 @@ async function main_init_all() {
             }
         });
 
-        app_emit_splash_progress(2, '正在加载主题...');
-        console.log('[init] progress 2 emitted');
-
-        app_emit_splash_progress(3, '正在初始化摄像头...');
+        app_emit_splash_progress(3, '正在加载主题...');
         console.log('[init] progress 3 emitted');
+
+        app_emit_splash_progress(4, '正在初始化摄像头...');
+        console.log('[init] progress 4 emitted');
 
         // 摄像头检测与初始化：先枚举设备，无摄像头则直接跳过
         let is_camera_handled = false;
@@ -385,11 +417,11 @@ async function main_init_all() {
             }
         }
 
-        app_emit_splash_progress(4, '正在完成...');
-        console.log('[init] progress 4 emitted');
-
-        app_emit_splash_progress(5, '');
+        app_emit_splash_progress(5, '正在完成...');
         console.log('[init] progress 5 emitted');
+
+        app_emit_splash_progress(6, '');
+        console.log('[init] progress 6 emitted');
 
         // 关闭启动屏
         if (window.__TAURI__) {
@@ -459,6 +491,25 @@ function show_config_recovery_dialog(recoveredFields) {
         if (e.target === dialog) dialog.remove();
     });
 }
+
+window.blackboard_ensure_loaded = (async (container) => {
+    if (window.blackboardManager) {
+        if (!window.blackboardManager.canvas) {
+            window.blackboardManager.init(container);
+        }
+        return window.blackboardManager;
+    }
+    try {
+        await import('./modules/blackboard/blackboard.js');
+        if (!window.blackboardManager.canvas) {
+            window.blackboardManager.init(container);
+        }
+        return window.blackboardManager;
+    } catch (e) {
+        console.error('[blackboard] failed to load:', e);
+        return null;
+    }
+});
 
 if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', () => main_init_all());

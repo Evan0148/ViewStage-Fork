@@ -255,6 +255,14 @@ document.addEventListener('DOMContentLoaded', async () => {
                 if (eraserPresetsItem) {
                     eraserPresetsItem.style.display = eraserSpeedEnabled ? 'none' : '';
                 }
+                const palmEraserEnabled = settings.palmEraserEnabled !== undefined ? settings.palmEraserEnabled : (window.DRAW_CONFIG?.palmEraserEnabled ?? true);
+                const palmEraserToggle = document.getElementById('palmEraserToggle');
+                if (palmEraserToggle) {
+                    palmEraserToggle.checked = palmEraserEnabled;
+                }
+                if (window.DRAW_CONFIG) {
+                    window.DRAW_CONFIG.palmEraserEnabled = palmEraserEnabled;
+                }
                 const dprRangeItem = document.getElementById('dprRangeItem');
                 if (dprRangeItem) {
                     dprRangeItem.style.display = dynamicDprEnabled ? '' : 'none';
@@ -901,15 +909,26 @@ document.addEventListener('DOMContentLoaded', async () => {
     const eraserSpeedToggle = document.getElementById('eraserSpeedToggle');
     if (eraserSpeedToggle) {
         eraserSpeedToggle.addEventListener('change', async () => {
-            const value = eraserSpeedToggle.checked;
-            await settings_save_all_local({ eraserSpeedEnabled: value });
-            if (window.DRAW_CONFIG) {
-                window.DRAW_CONFIG.eraserSpeedEnabled = value;
+            await settings_save_all_local({ eraserSpeedEnabled: eraserSpeedToggle.checked });
+            const restartModal = document.getElementById('restartModal');
+            const modalMessage = restartModal?.querySelector('.modal-message');
+            if (modalMessage) {
+                modalMessage.textContent = window.i18n?.format_translate('settings.languageChanged') || '需要重启应用才能生效。';
             }
-            const eraserPresetsItem = document.getElementById('eraserPresetsItem');
-            if (eraserPresetsItem) {
-                eraserPresetsItem.style.display = value ? 'none' : '';
+            if (restartModal) restartModal.classList.add('active');
+        });
+    }
+
+    const palmEraserToggle = document.getElementById('palmEraserToggle');
+    if (palmEraserToggle) {
+        palmEraserToggle.addEventListener('change', async () => {
+            await settings_save_all_local({ palmEraserEnabled: palmEraserToggle.checked });
+            const restartModal = document.getElementById('restartModal');
+            const modalMessage = restartModal?.querySelector('.modal-message');
+            if (modalMessage) {
+                modalMessage.textContent = window.i18n?.format_translate('settings.languageChanged') || '需要重启应用才能生效。';
             }
+            if (restartModal) restartModal.classList.add('active');
         });
     }
     
@@ -1748,6 +1767,12 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (blackboardToggle) {
         blackboardToggle.addEventListener('change', async () => {
             await settings_save_all_local({ blackboardEnabled: blackboardToggle.checked });
+            const restartModal = document.getElementById('restartModal');
+            const modalMessage = restartModal?.querySelector('.modal-message');
+            if (modalMessage) {
+                modalMessage.textContent = window.i18n?.format_translate('settings.languageChanged') || '需要重启应用才能生效。';
+            }
+            if (restartModal) restartModal.classList.add('active');
         });
     }
 

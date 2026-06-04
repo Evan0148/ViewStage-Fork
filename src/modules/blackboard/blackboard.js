@@ -15,6 +15,7 @@ import {
     ClearCommand,
     history_state
 } from '../history.js';
+import { is_palm_by_pointer, is_palm_by_touch_count, get_palm_center, PALM_CONFIG } from '../palm-eraser/palm-eraser.js';
 
 class BlackboardManager {
     constructor() {
@@ -45,7 +46,10 @@ class BlackboardManager {
             start_canvas_y: 0,
             is_scaling: false,
             start_distance_sq: 0,
-            cached_inv_scale: 1
+            cached_inv_scale: 1,
+            isPalmErasing: false,
+            savedDrawMode: null,
+            palmEraserSize: 60
         };
         this._cached_move_bound_scale = null;
         this._cached_visible_rect = null;
@@ -261,6 +265,12 @@ class BlackboardManager {
         this._eraser_hint.style.height = window.DRAW_CONFIG.eraserSize + 'px';
         canvas_wrap.appendChild(this._eraser_hint);
 
+        this._palm_eraser_hint = document.createElement('div');
+        this._palm_eraser_hint.className = 'palm-eraser-hint';
+        this._palm_eraser_hint.style.width = '60px';
+        this._palm_eraser_hint.style.height = '60px';
+        canvas_wrap.appendChild(this._palm_eraser_hint);
+
         // batch_draw 使用覆盖层
         this.batch_draw = new window.RealtimeBatchDrawManager();
         this.batch_draw._overlayCanvas = this.overlay_canvas;
@@ -393,6 +403,7 @@ class BlackboardManager {
 
         await this._submit_stroke();
         this._hide_eraser_hint();
+        this._hide_palm_eraser_hint();
 
         // 关闭前保存当前页的 undo/redo 和 tile 快照
         const cur_page = this.page_manager.get_current_page();
@@ -546,6 +557,12 @@ class BlackboardManager {
         this.draw_canvas_rect = this._get_canvas_rect();
         if (!this.draw_canvas_rect) return;
 
+        const palmResult = is_palm_by_pointer(e);
+        if (palmResult.isPalm && (window.DRAW_CONFIG?.palmEraserEnabled !== false)) {
+            this._start_palm_erase(e.clientX, e.clientY, palmResult.width * PALM_CONFIG.palmSizeMultiplier * PALM_CONFIG.eraserSizeK);
+            return;
+        }
+
         this.bb_state.cached_inv_scale = 1 / this._fetch_safe_scale();
         this.current_pressure = e.pressure || 0.5;
 
@@ -570,6 +587,11 @@ class BlackboardManager {
 
     _handle_pointer_move(e) {
         e.preventDefault();
+
+        if (this.bb_state.isPalmErasing) {
+            this._update_palm_erase(e.clientX, e.clientY);
+            return;
+        }
 
         this.current_pressure = e.pressure || 0.5;
 
@@ -617,6 +639,10 @@ class BlackboardManager {
     }
 
     async _handle_pointer_up(e) {
+        if (this.bb_state.isPalmErasing) {
+            await this._end_palm_erase();
+            return;
+        }
         if (this.bb_state.is_dragging) {
             this.bb_state.is_dragging = false;
             return;
@@ -670,6 +696,110 @@ class BlackboardManager {
             this._eraser_hint.style.top = `${y}px`;
             this._eraser_hint.style.transform = 'translate(-50%, -50%)';
         });
+    }
+
+    // ====== 黑板手掌擦除 ======
+
+    _show_palm_eraser_hint() {
+        if (!this._palm_eraser_hint) return;
+        this._palm_eraser_hint.classList.add('active');
+    }
+
+    _hide_palm_eraser_hint() {
+        if (!this._palm_eraser_hint) return;
+        this._palm_eraser_hint.classList.remove('active');
+    }
+
+    _update_palm_eraser_hint(clientX, clientY, size) {
+        if (!this._palm_eraser_hint) return;
+        const rect = this.bb_wrapper
+            ? this.bb_wrapper.parentElement.getBoundingClientRect()
+            : null;
+        if (!rect) return;
+        const x = clientX - rect.left;
+        const y = clientY - rect.top;
+        this._palm_eraser_hint.style.width = size + 'px';
+        this._palm_eraser_hint.style.height = size + 'px';
+        this._palm_eraser_hint.style.left = `${x}px`;
+        this._palm_eraser_hint.style.top = `${y}px`;
+        this._palm_eraser_hint.style.transform = 'translate(-50%, -50%)';
+    }
+
+    _start_palm_erase(clientX, clientY, eraserWidth) {
+        this.draw_canvas_rect = this._get_canvas_rect();
+        if (!this.draw_canvas_rect) return;
+        const s = this.bb_state;
+        s.isPalmErasing = true;
+        s.savedDrawMode = this.draw_mode;
+        this.draw_mode = 'eraser';
+        s.palmEraserSize = eraserWidth || (window.DRAW_CONFIG?.palmEraserSize || 60);
+
+        s.cached_inv_scale = 1 / this._fetch_safe_scale();
+        const inv = s.cached_inv_scale;
+        this.last_x = (clientX - this.draw_canvas_rect.left) * inv;
+        this.last_y = (clientY - this.draw_canvas_rect.top) * inv;
+
+        this._show_palm_eraser_hint();
+        this._update_palm_eraser_hint(clientX, clientY, s.palmEraserSize);
+
+        this.is_drawing = true;
+        const inv_scale = s.cached_inv_scale;
+        const baseEraserSize = s.palmEraserSize * inv_scale;
+        this.current_stroke = {
+            type: 'erase',
+            points: [],
+            color: '#000000',
+            lineWidth: baseEraserSize,
+            eraserSize: baseEraserSize,
+            eraserSizeRaw: s.palmEraserSize,
+            eraserShape: 'square',
+            eraserSpeedEnabled: false,
+            scale: s.scale || 1,
+            bounds: { minX: Infinity, minY: Infinity, maxX: -Infinity, maxY: -Infinity },
+            variableWidths: []
+        };
+
+        this.cached_draw_type = 'erase';
+        this.cached_draw_color = '#000000';
+        this.cached_draw_line_width = baseEraserSize;
+
+        this.batch_draw.batch_draw_init_start();
+        this.batch_draw.eraserShape = 'square';
+    }
+
+    _update_palm_erase(clientX, clientY) {
+        const s = this.bb_state;
+        if (!s.isPalmErasing || !this.draw_canvas_rect) return;
+        const inv = s.cached_inv_scale;
+        const x = (clientX - this.draw_canvas_rect.left) * inv;
+        const y = (clientY - this.draw_canvas_rect.top) * inv;
+        const dx = x - this.last_x;
+        const dy = y - this.last_y;
+
+        this._update_palm_eraser_hint(clientX, clientY, s.palmEraserSize);
+
+        if (dx !== 0 || dy !== 0) {
+            this._save_stroke_point(this.last_x, this.last_y, x, y, 0.5);
+            this.batch_draw.batch_draw_create_command(
+                'erase', this.last_x, this.last_y, x, y,
+                '#000000', s.palmEraserSize * inv
+            );
+            this.last_x = x;
+            this.last_y = y;
+        }
+    }
+
+    async _end_palm_erase() {
+        const s = this.bb_state;
+        if (!s.isPalmErasing) return;
+        s.isPalmErasing = false;
+        this.is_drawing = false;
+        this._hide_palm_eraser_hint();
+
+        await this._submit_stroke();
+        this.draw_mode = s.savedDrawMode || 'comment';
+        s.savedDrawMode = null;
+        this.current_stroke = null;
     }
 
     // ====== 鼠标事件 (MouseEvent) — 无 PointerEvent 时的回退 ======
@@ -779,12 +909,22 @@ class BlackboardManager {
 
         const s = this.bb_state;
 
+        if ((window.DRAW_CONFIG?.palmEraserEnabled !== false) && touches.length >= 4 && is_palm_by_touch_count(touches)) {
+            if (this.is_drawing) {
+                this.is_drawing = false;
+                await this._submit_stroke();
+            }
+            const center = get_palm_center(touches);
+            this._start_palm_erase(center.x, center.y, window.DRAW_CONFIG?.palmEraserSize || 60);
+            return;
+        }
+
         if (window.PointerEvent) {
             if (touches.length === 1) { return; }
         } else {
             if (touches.length === 1 && this.is_drawing) { return; }
         }
-
+        
         if (touches.length === 1) {
             const touch = touches[0];
             s.cached_inv_scale = 1 / this._fetch_safe_scale();
@@ -826,6 +966,12 @@ class BlackboardManager {
     _handle_touch_move(e) {
         e.preventDefault();
         const touches = e.touches;
+
+        if (this.bb_state.isPalmErasing) {
+            const center = get_palm_center(touches);
+            this._update_palm_erase(center.x, center.y);
+            return;
+        }
 
         if (this.draw_mode === 'eraser' && touches.length > 0) {
             const touch = touches[0];
@@ -904,6 +1050,12 @@ class BlackboardManager {
 
     async _handle_touch_end(e) {
         e.preventDefault();
+        if (this.bb_state.isPalmErasing) {
+            if (e.touches.length < 4) {
+                await this._end_palm_erase();
+            }
+            return;
+        }
         if (window.PointerEvent) { return; }
         const s = this.bb_state;
         if (s.is_scaling && e.touches.length < 2) {
