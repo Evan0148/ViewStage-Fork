@@ -2797,7 +2797,7 @@ function main_update_canvas_transform_smooth(targetX, targetY, targetScale, dura
     dom.canvasWrapper.style.transform = `translate3d(${state.canvasX}px, ${state.canvasY}px, 0) scale(${state.scale})`;
 
     if (window.tileRenderer) {
-        window.tileRenderer.update_visible_tile_dpr(state.scale);
+        window.tileRenderer.update_visible_tile_dpr(state.scale, false, true);
     }
     if (window.batchDrawManager) {
         window.batchDrawManager.update_overlay_dpr(state.scale);

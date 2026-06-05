@@ -163,7 +163,7 @@ class BlackboardManager {
         this.bb_wrapper.style.transform = `translate3d(${s.canvas_x}px, ${s.canvas_y}px, 0) scale(${s.scale})`;
 
         if (this.tile_renderer) {
-            this.tile_renderer.update_visible_tile_dpr(s.scale);
+            this.tile_renderer.update_visible_tile_dpr(s.scale, false, true);
         }
 
         this._animate_timer_id = setTimeout(() => {
