@@ -1552,8 +1552,14 @@ function main_setup_click_outside() {
         const isClickInsidePanel = panel.contains(e.target);
         const isClickOnBtnComment = dom.btnComment.contains(e.target);
         const isClickOnBtnEraser = dom.btnEraser.contains(e.target);
+        // 阅读器模式也有自己的笔/橡皮按钮
+        const drCommentBtn = document.getElementById('drBtnComment');
+        const drEraserBtn = document.getElementById('drBtnEraser');
+        const isClickOnDrBtnComment = drCommentBtn?.contains(e.target);
+        const isClickOnDrBtnEraser = drEraserBtn?.contains(e.target);
         
-        if (!isClickInsidePanel && !isClickOnBtnComment && !isClickOnBtnEraser) {
+        if (!isClickInsidePanel && !isClickOnBtnComment && !isClickOnBtnEraser
+            && !isClickOnDrBtnComment && !isClickOnDrBtnEraser) {
             main_hide_pen_control_panel();
         }
         
@@ -1573,14 +1579,30 @@ function main_setup_mode_events() {
         main_update_mode('move');
     });
     dom.btnComment.addEventListener('click', () => {
-        if (state.drawMode === 'comment') {
+        const bb = window.blackboardManager;
+        if (bb?.is_open) {
+            // 小黑板打开时检查 bb.draw_mode
+            if (bb.draw_mode === 'comment') {
+                main_show_pen_control_panel(dom.btnComment, 'comment');
+            } else {
+                main_update_mode('comment');
+            }
+        } else if (state.drawMode === 'comment') {
             main_show_pen_control_panel(dom.btnComment, 'comment');
         } else {
             main_update_mode('comment');
         }
     });
     dom.btnEraser.addEventListener('click', () => {
-        if (state.drawMode === 'eraser' && !DRAW_CONFIG.eraserSpeedEnabled) {
+        const bb = window.blackboardManager;
+        if (bb?.is_open) {
+            // 小黑板打开时检查 bb.draw_mode
+            if (bb.draw_mode === 'eraser' && !DRAW_CONFIG.eraserSpeedEnabled) {
+                main_show_pen_control_panel(dom.btnEraser, 'eraser');
+            } else {
+                main_update_mode('eraser');
+            }
+        } else if (state.drawMode === 'eraser' && !DRAW_CONFIG.eraserSpeedEnabled) {
             main_show_pen_control_panel(dom.btnEraser, 'eraser');
         } else {
             main_update_mode('eraser');
@@ -1687,6 +1709,10 @@ function main_setup_tool_events() {
     dom.btnMenu.addEventListener('click', main_handle_menu_toggle);
     dom.btnExpand.addEventListener('click', main_handle_sidebar_toggle);
     dom.btnBlackboard.addEventListener('click', async () => {
+        // 如果阅读器已打开，先关闭阅读器再打开小黑板
+        if (window.documentReaderManager?.is_open) {
+            await window.documentReaderManager.close();
+        }
         const bb = await window.blackboard_ensure_loaded(dom.canvasContainer);
         if (bb) {
             if (bb.is_open) {

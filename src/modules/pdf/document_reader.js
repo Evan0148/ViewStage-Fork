@@ -2405,6 +2405,18 @@ class DocumentReaderManager {
             }
         });
         if (undo_btn) undo_btn.addEventListener('click', () => this.handle_undo());
+
+        // 小黑板按钮：关闭阅读器后打开小黑板
+        const bb_btn = document.getElementById('drBtnBlackboard');
+        if (bb_btn) {
+            bb_btn.addEventListener('click', async () => {
+                await this.close();
+                const bb = await window.blackboard_ensure_loaded(window.dom.canvasContainer);
+                if (bb && !bb.is_open) {
+                    bb.open();
+                }
+            });
+        }
     }
 
     /**
