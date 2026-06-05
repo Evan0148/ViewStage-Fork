@@ -1340,7 +1340,9 @@ fn config_fetch_default() -> serde_json::Value {
         "eraserSpeedEnabled": false,
         "eraserSizePresets": [5, 15, 25, 38, 50],
         "penEffectMode": "limited",
-        "memreductCleanEnabled": true
+        "memreductCleanEnabled": true,
+        "developerMode": false,
+        "penMinWidthRatio": 0.2
     })
 }
 
@@ -2501,6 +2503,79 @@ fn office_detect_all() -> OfficeDetectionResult {
     }
 }
 
+/// 文档加载运行时检测结果
+#[derive(Debug, Serialize)]
+pub struct OfficeRuntimeResult {
+    pub word: bool,
+    pub wps: bool,
+    pub libreoffice: bool,
+}
+
+/// 检测文档加载时各 Office 软件是否可用（COM/CLI 运行时检测）
+#[tauri::command]
+fn office_check_runtime() -> OfficeRuntimeResult {
+    #[cfg(target_os = "windows")]
+    {
+        OfficeRuntimeResult {
+            word: office_com_check("Word.Application"),
+            wps: office_com_check_wps(),
+            libreoffice: office_cli_check("soffice", "--version"),
+        }
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        OfficeRuntimeResult {
+            word: false,
+            wps: false,
+            libreoffice: office_cli_check("soffice", "--version"),
+        }
+    }
+}
+
+/// Windows：通过 PowerShell 创建 COM 对象来检测 Office COM 接口是否可用
+#[cfg(target_os = "windows")]
+fn office_com_check(prog_id: &str) -> bool {
+    use std::process::Command;
+    let script = format!(
+        "$ErrorActionPreference = 'Stop'; $o = New-Object -ComObject {p}; $o.Quit(); [System.Runtime.Interopservices.Marshal]::ReleaseComObject($o) | Out-Null",
+        p = prog_id
+    );
+    Command::new("powershell")
+        .args(["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", &script])
+        .creation_flags(CREATE_NO_WINDOW)
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
+}
+
+/// Windows：检测 WPS Office COM 接口（优先 Kwps.Application，回退 WPS.Application）
+#[cfg(target_os = "windows")]
+fn office_com_check_wps() -> bool {
+    use std::process::Command;
+    let script = r#"
+        $ErrorActionPreference = 'Stop'
+        $o = $null
+        try { $o = New-Object -ComObject Kwps.Application } catch { try { $o = New-Object -ComObject WPS.Application } catch {} }
+        if ($o) { try { $o.Quit() } catch {}; [System.Runtime.Interopservices.Marshal]::ReleaseComObject($o) | Out-Null; exit 0 } else { exit 1 }
+    "#;
+    Command::new("powershell")
+        .args(["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", script])
+        .creation_flags(CREATE_NO_WINDOW)
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
+}
+
+/// 检测命令行工具是否可用
+fn office_cli_check(cmd: &str, arg: &str) -> bool {
+    use std::process::Command;
+    Command::new(cmd)
+        .arg(arg)
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
+}
+
 /// 通过 LibreOffice 命令行将 docx 转换为 PDF（soffice --headless --convert-to pdf）
 fn office_convert_libreoffice(docx_path: &str, _pdf_path: &str, cache_dir: &std::path::Path) -> Result<(), String> {
     use std::process::Command;
@@ -3363,6 +3438,28 @@ fn memreduct_check_installed() -> bool {
     }
 }
 
+/// 立即清理内存（调用 Mem Reduct /clean /silent）
+#[tauri::command]
+fn memreduct_clean_now() -> bool {
+    #[cfg(target_os = "windows")]
+    {
+        use std::process::Command;
+        if let Some(path) = memreduct_find_executable() {
+            Command::new(&path)
+                .args(["/clean", "/silent"])
+                .creation_flags(CREATE_NO_WINDOW)
+                .spawn()
+                .is_ok()
+        } else {
+            false
+        }
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        false
+    }
+}
+
 /// 应用入口函数
 ///
 /// 初始化日志、注册 Tauri 插件和 IPC 命令，配置 OOBE/主窗口启动流程。
@@ -3522,12 +3619,14 @@ pub fn app_init_run() {
             main_check_loaded,
             app_submit_exit,
             office_detect_all,
+            office_check_runtime,
             office_convert_docx_to_pdf,
             office_convert_docx_to_pdf_bytes,
             filetype_set_icons,
             filetype_delete_icons,
             device_detect_all,
-            memreduct_check_installed
+            memreduct_check_installed,
+            memreduct_clean_now
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

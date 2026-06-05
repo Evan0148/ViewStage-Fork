@@ -103,7 +103,8 @@ const DRAW_CONFIG = {
         '#14b8a6', '#64748b', '#1e293b', '#000000', '#ffffff'
     ],
     penSmoothness: 0.8,
-    penEffectMode: 'limited'
+    penEffectMode: 'limited',
+    penMinWidthRatio: 0.2
 };
 
 // 选中第一号颜色作为默认笔色
@@ -997,6 +998,10 @@ function main_setup_pdf_file_open() {
         }
 
         
+        if (settings.penMinWidthRatio !== undefined && DRAW_CONFIG.developerMode) {
+            DRAW_CONFIG.penMinWidthRatio = settings.penMinWidthRatio;
+        }
+
         if (needRestartCamera && state.isCameraOpen) {
             console.log('摄像头设置已更改，重新初始化摄像头...');
             main_update_camera_state(false).then(() => {

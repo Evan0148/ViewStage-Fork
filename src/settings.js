@@ -707,7 +707,11 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
     
     settings_load_version();
-    settings_load_all();
+    settings_load_all().then(settings => {
+        if (settings.developerMode) {
+            developer_options_activate();
+        }
+    });
     
     const languageSelect = document.getElementById('languageSelect');
     const selectSelected = document.getElementById('selectSelected');
@@ -2354,6 +2358,53 @@ document.addEventListener('DOMContentLoaded', async () => {
                         'error'
                     );
                 }
+            }
+        });
+    }
+
+    // ==================== 开发者选项 ====================
+    let dev_loaded = false;
+
+    function developer_options_activate(navigate) {
+        if (dev_loaded) return;
+        dev_loaded = true;
+
+        const devBtn = document.getElementById('btnDevOptions');
+        const devPage = document.getElementById('pageDevOptions');
+        if (!devBtn || !devPage) return;
+
+        devBtn.style.display = '';
+
+        devBtn.addEventListener('click', () => {
+            sidebarBtns.forEach(b => b.classList.remove('active'));
+            devBtn.classList.add('active');
+            settings_show_page('pageDevOptions');
+        });
+
+        const script = document.createElement('script');
+        script.src = 'developer-options.js';
+        script.onload = () => {
+            if (typeof developer_options_init === 'function') {
+                developer_options_init();
+            }
+            if (navigate) {
+                devBtn.click();
+            }
+        };
+        document.body.appendChild(script);
+    }
+
+    // 点击关于页图标5次打开
+    let dev_click_count = 0;
+    const logoIcon = document.querySelector('.logo-icon');
+    if (logoIcon) {
+        logoIcon.style.cursor = 'pointer';
+        logoIcon.addEventListener('click', () => {
+            dev_click_count++;
+            if (dev_click_count >= 5) {
+                dev_click_count = 0;
+                developer_options_activate(true);
+                settings_save_all_local({ developerMode: true });
             }
         });
     }

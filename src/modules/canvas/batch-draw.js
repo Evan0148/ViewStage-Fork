@@ -321,19 +321,20 @@ class RealtimeBatchDrawManager {
     }
 
     _calc_pen_line_width(speed, baseWidth, lastLineWidth, dist) {
+        const minRatio = window.DRAW_CONFIG?.penMinWidthRatio ?? 0.2;
         const speedScale = Math.max(0.4, Math.min(2.5, baseWidth / 4));
         const maxSpeed = 2.5 * speedScale;
         const minSpeed = 0.2 * speedScale;
 
         let lineWidth;
         if (speed >= maxSpeed) {
-            lineWidth = baseWidth * 0.5;
+            lineWidth = baseWidth * minRatio;
         } else if (speed <= minSpeed) {
             lineWidth = baseWidth;
         } else {
             const ratio = (speed - minSpeed) / (maxSpeed - minSpeed);
             const eased = ratio * ratio * (3 - 2 * ratio);
-            lineWidth = baseWidth - eased * (baseWidth * 0.5);
+            lineWidth = baseWidth - eased * (baseWidth * minRatio);
         }
 
         const blend = Math.max(0.3, Math.min(0.85, 1 - dist / (baseWidth * 3)));

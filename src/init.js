@@ -271,6 +271,11 @@ async function settings_load_camera_config() {
             } else {
                 window.__eraserSpeed = null;
             }
+
+            DRAW_CONFIG.developerMode = settings.developerMode || false;
+            if (settings.developerMode && settings.penMinWidthRatio !== undefined) {
+                DRAW_CONFIG.penMinWidthRatio = settings.penMinWidthRatio;
+            }
         } catch (error) {
             console.error('加载摄像头设置失败:', error);
         }

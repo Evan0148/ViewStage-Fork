@@ -46,6 +46,7 @@ class PenTessellator {
             const speedScale = Math.max(0.4, Math.min(2.5, base_width / 4));
             const maxSpeed = 2.5 * speedScale;
             const minSpeed = 0.2 * speedScale;
+            const minRatio = window.DRAW_CONFIG?.penMinWidthRatio ?? 0.2;
             let last_line_width = base_width;
 
             for (let i = 1; i < raw.length; i++) {
@@ -62,12 +63,12 @@ class PenTessellator {
 
                 let line_width;
                 if (clamped >= 1) {
-                    line_width = base_width * 0.5;
+                    line_width = base_width * minRatio;
                 } else if (clamped <= 0) {
                     line_width = base_width;
                 } else {
                     const eased = clamped * clamped * (3 - 2 * clamped);
-                    line_width = base_width - eased * (base_width * 0.5);
+                    line_width = base_width - eased * (base_width * minRatio);
                 }
 
                 const blend = Math.max(0.3, Math.min(0.85, 1 - dist / (base_width * 3)));
