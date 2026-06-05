@@ -60,7 +60,6 @@ function dom_init_all() {
     dom.btnComment = document.getElementById('btnComment');
     dom.btnEraser = document.getElementById('btnEraser');
     dom.btnUndo = document.getElementById('btnUndo');
-    dom.btnClear = document.getElementById('btnClear');
     dom.btnPhoto = document.getElementById('btnPhoto');
     dom.btnSettings = document.getElementById('btnSettings');
     dom.btnExpand = document.getElementById('btnExpand');
@@ -82,7 +81,6 @@ function dom_init_all() {
     dom.drBtnComment = document.getElementById('drBtnComment');
     dom.drBtnEraser = document.getElementById('drBtnEraser');
     dom.drBtnUndo = document.getElementById('drBtnUndo');
-    dom.drBtnClear = document.getElementById('drBtnClear');
     dom.drBtnClose = document.getElementById('drBtnClose');
     dom.drToolGroup = document.getElementById('drToolGroup');
 

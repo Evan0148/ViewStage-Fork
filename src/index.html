@@ -75,6 +75,11 @@
                     <button class="size-preset-btn" data-value="38" style="--dot-size:20px"></button>
                     <button class="size-preset-btn" data-value="50" style="--dot-size:24px"></button>
                     <span class="pen-size-label" id="eraserSizeValue">15px</span>
+                    <div class="eraser-clear-sep"></div>
+                    <div class="eraser-clear-track" id="eraserClearTrack">
+                        <input type="range" id="eraserClearSlider" min="0" max="100" value="0" class="eraser-clear-slider">
+                        <span class="eraser-hint-text" id="eraserHintText">拖动清空笔迹</span>
+                    </div>
                 </div>
             </div>
             
@@ -155,10 +160,6 @@
                         <img data-icon="undo" width="16" height="16" alt="撤销">
                         <span data-i18n="toolbar.undo">撤销</span>
                     </button>
-                    <button class="toolbar-btn function-btn" id="btnClear">
-                        <img data-icon="clear" width="16" height="16" alt="清空">
-                        <span data-i18n="toolbar.clearAnnotations">清空</span>
-                    </button>
                     
                     <button class="toolbar-btn function-btn" id="btnBlackboard">
                         <img data-icon="blackboard" width="16" height="16" alt="小黑板">
@@ -214,9 +215,6 @@
                         </button>
                         <button class="toolbar-btn function-btn" id="drBtnUndo">
                             <img data-icon="undo" width="16" height="16" alt="撤销">
-                        </button>
-                        <button class="toolbar-btn function-btn" id="drBtnClear">
-                            <img data-icon="clear" width="16" height="16" alt="清空">
                         </button>
                         <div class="toolbar-separator"></div>
                         <button class="toolbar-btn function-btn" id="drPagePrev" disabled>

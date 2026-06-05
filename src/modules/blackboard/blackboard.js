@@ -1127,7 +1127,7 @@ class BlackboardManager {
 
         this.cached_draw_type = type;
         this.cached_draw_color = type === 'draw' ? DRAW_CONFIG.penColor : '#000000';
-        this.cached_draw_line_width = baseEraserSize;
+        this.cached_draw_line_width = type === 'draw' ? DRAW_CONFIG.penWidth : baseEraserSize;
 
         this._last_draw_time = performance.now();
         this._last_draw_x = null;

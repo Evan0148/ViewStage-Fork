@@ -2050,7 +2050,7 @@ class DocumentReaderManager {
 
         this.cached_draw_type = type;
         this.cached_draw_color = type === 'draw' ? DRAW_CONFIG.penColor : '#000000';
-        this.cached_draw_line_width = baseEraserSize;
+        this.cached_draw_line_width = type === 'draw' ? DRAW_CONFIG.penWidth : baseEraserSize;
 
         this._eraser_speed_state = window.__eraserSpeed?.eraser_speed_create_state() ?? null;
 
@@ -2384,7 +2384,6 @@ class DocumentReaderManager {
         const comment_btn = document.getElementById('drBtnComment');
         const eraser_btn = document.getElementById('drBtnEraser');
         const undo_btn = document.getElementById('drBtnUndo');
-        const clear_btn = document.getElementById('drBtnClear');
 
         if (move_btn) move_btn.addEventListener('click', () => this._set_draw_mode('move'));
         if (comment_btn) comment_btn.addEventListener('click', () => {
@@ -2406,7 +2405,6 @@ class DocumentReaderManager {
             }
         });
         if (undo_btn) undo_btn.addEventListener('click', () => this.handle_undo());
-        if (clear_btn) clear_btn.addEventListener('click', () => this.handle_clear());
     }
 
     /**

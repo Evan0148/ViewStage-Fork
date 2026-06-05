@@ -1680,13 +1680,6 @@ function main_setup_tool_events() {
             main_handle_undo();
         }
     });
-    dom.btnClear.addEventListener('click', () => {
-        if (window.blackboardManager?.is_open) {
-            window.blackboardManager.handle_clear();
-        } else {
-            main_delete_all_drawings();
-        }
-    });
     dom.btnPhoto.addEventListener('click', main_save_photo);
     dom.btnSettings.addEventListener('click', main_show_settings);
     dom.btnSave.addEventListener('click', main_handle_file_sidebar_toggle);
@@ -1920,6 +1913,38 @@ function main_setup_pen_control_events() {
         });
     });
     
+    // 橡皮清空滑块 — 滑到最右触发清空
+    const clearSlider = document.getElementById('eraserClearSlider');
+    const hintText = document.getElementById('eraserHintText');
+    if (clearSlider) {
+        const onInput = () => {
+            const pct = clearSlider.value;
+            clearSlider.style.setProperty('--fill', pct + '%');
+            if (hintText) hintText.classList.toggle('hidden', pct !== '0');
+            if (pct === '100') {
+                if (window.blackboardManager?.is_open) {
+                    window.blackboardManager.handle_clear();
+                } else if (window.documentReaderManager?.is_open) {
+                    window.documentReaderManager.handle_clear();
+                } else {
+                    main_delete_all_drawings();
+                }
+                clearSlider.value = '0';
+                clearSlider.style.setProperty('--fill', '0%');
+            }
+        };
+        clearSlider.addEventListener('input', onInput);
+        // 离手后自动退回
+        clearSlider.addEventListener('pointerup', () => {
+            if (clearSlider.value === '100') return;
+            clearSlider.value = '0';
+            clearSlider.style.setProperty('--fill', '0%');
+            if (hintText) hintText.classList.remove('hidden');
+        });
+        // 初始化
+        clearSlider.style.setProperty('--fill', '0%');
+    }
+
     // 初始化颜色按钮
     main_update_color_buttons();
 }
@@ -2857,7 +2882,7 @@ function main_start_stroke(type, eraserShape) {
     
     state.cachedDrawType = type;
     state.cachedDrawColor = type === 'draw' ? DRAW_CONFIG.penColor : '#000000';
-    state.cachedDrawLineWidth = baseEraserSize;
+    state.cachedDrawLineWidth = type === 'draw' ? DRAW_CONFIG.penWidth : baseEraserSize;
     
     state.eraserSpeedState = window.__eraserSpeed?.eraser_speed_create_state() ?? null;
     
