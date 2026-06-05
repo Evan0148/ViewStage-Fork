@@ -145,12 +145,7 @@
     "openLogDirFailed": "Failed to open log directory",
     "noCameraPermission": "No Camera Permission",
     "noCameraDetected": "No Camera Detected",
-    "cameraPermission": "Camera Permission",
-    "requestCameraPermission": "Request Permission",
-    "revokePermission": "Revoke Permission",
-    "revokeCameraPermission": "Revoke Permission",
-    "revokePermissionHint": "Revoking permission will reset the app and delete all settings. Continue?",
-    "cameraPermissionDenied": "Cannot get camera permission. Grant it in system settings.",
+
     "getFailed": "Failed to Get",
     "cannotGet": "Cannot Get",
     "close": "Close",

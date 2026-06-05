@@ -163,12 +163,7 @@
     "openLogDirFailed": "開啟日誌目錄失敗",
     "noCameraPermission": "無攝影機權限",
     "noCameraDetected": "未偵測到攝影機",
-    "cameraPermission": "攝影機權限",
-    "requestCameraPermission": "取得攝影機權限",
-    "revokePermission": "撤銷授權",
-    "revokeCameraPermission": "撤銷授權",
-    "revokePermissionHint": "撤銷攝影機權限需要重置應用，這將刪除所有設定並重啟應用。確定要繼續嗎？",
-    "cameraPermissionDenied": "無法取得攝影機權限，請在系統設定中手動授權",
+
     "getFailed": "取得失敗",
     "cannotGet": "無法取得",
     "close": "關閉",

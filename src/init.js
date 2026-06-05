@@ -274,6 +274,9 @@ async function settings_load_camera_config() {
             if (settings.developerMode && settings.penMinWidthRatio !== undefined) {
                 DRAW_CONFIG.penMinWidthRatio = settings.penMinWidthRatio;
             }
+            if (settings.developerMode && settings.maxScaleImage !== undefined) {
+                DRAW_CONFIG.maxScaleImage = settings.maxScaleImage;
+            }
         } catch (error) {
             console.error('加载摄像头设置失败:', error);
         }
@@ -418,14 +421,17 @@ async function main_init_all() {
                 const err_name = error?.name || '';
                 const handled_codes = ['NotFoundError', 'DevicesNotFoundError', 'NotAllowedError', 'PermissionDeniedError'];
                 if (handled_codes.includes(err_name)) {
-                    console.warn('[init] init_camera handled:', err_name, error?.message);
-                    const msg_key = (err_name === 'NotFoundError' || err_name === 'DevicesNotFoundError')
-                        ? 'camera.notDetected' : 'camera.noPermission';
-                    const fallback = (err_name === 'NotFoundError' || err_name === 'DevicesNotFoundError')
-                        ? '未检测到摄像头' : '无摄像头权限';
+                    const is_not_found = (err_name === 'NotFoundError' || err_name === 'DevicesNotFoundError');
+                    console.warn('[init] init_camera handled:', is_not_found ? 'no device' : 'no permission', error?.message);
+                    const msg_key = is_not_found ? 'camera.notDetected' : 'camera.noPermission';
+                    const fallback = is_not_found ? '未检测到摄像头' : '无摄像头权限';
                     await window.main_init_without_camera(
                         window.i18n?.format_translate(msg_key) || fallback
                     );
+                    // NotAllowedError: 权限未缓存，延迟到首次用户交互再尝试 getUserMedia
+                    if (!is_not_found && window.main_setup_deferred_camera) {
+                        window.main_setup_deferred_camera();
+                    }
                 } else {
                     console.error('[init] 摄像头初始化失败:', error?.name, error?.message);
                     await window.main_init_without_camera(

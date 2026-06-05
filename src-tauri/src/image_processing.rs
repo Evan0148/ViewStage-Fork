@@ -103,18 +103,16 @@ pub fn image_update_rotation(image_data: String, direction: String) -> Result<St
     Ok(result)
 }
 
-/// Tauri IPC: apply brightness and contrast adjustments to an image
-/// brightness: integer -100..100, contrast: float multiplier (e.g. 1.0 normal)
+/// Tauri IPC: apply brightness, contrast, and grayscale adjustments to an image
+/// brightness: integer -100..100, contrast: float multiplier (e.g. 1.0 normal), grayscale: 0.0..1.0
 #[tauri::command]
-pub fn image_update_adjustments(image_data: String, brightness: i32, contrast: f32) -> Result<String, String> {
+pub fn image_update_adjustments(image_data: String, brightness: i32, contrast: f32, grayscale: f32) -> Result<String, String> {
     let img = image_load_base64(&image_data)?;
     let mut rgba = img.to_rgba8();
 
     let add = (brightness as f32) * 255.0 / 100.0;
 
-    // Precompute 256-entry LUT: for each possible u8 input, compute the output byte.
-    // This replaces per-pixel float divisions, multiplications, round(), and clamp()
-    // with a single table lookup per channel.
+    // 预计算 256 项 LUT：亮度+对比度变换
     let mut lut = [0u8; 256];
     for (i, entry) in lut.iter_mut().enumerate() {
         let v = (i as f32) / 255.0;
@@ -122,12 +120,26 @@ pub fn image_update_adjustments(image_data: String, brightness: i32, contrast: f
         *entry = out.round().clamp(0.0, 255.0) as u8;
     }
 
-    // Bulk-process the raw RGBA buffer via mutable slice chunks
-    // This avoids per-pixel get_pixel/put_pixel dispatch overhead
+    let has_grayscale = grayscale > 0.001;
+
+    // 逐像素处理：先亮度/对比度，后灰度混合
     for chunk in rgba.chunks_exact_mut(4) {
+        // Step 1: 亮度/对比度 LUT
         chunk[0] = lut[chunk[0] as usize]; // R
         chunk[1] = lut[chunk[1] as usize]; // G
         chunk[2] = lut[chunk[2] as usize]; // B
+
+        // Step 2: 灰度混合（模拟 CSS grayscale filter）
+        if has_grayscale {
+            let r = chunk[0] as f32;
+            let g = chunk[1] as f32;
+            let b = chunk[2] as f32;
+            let gray = 0.299 * r + 0.587 * g + 0.114 * b;
+            let inv = 1.0 - grayscale;
+            chunk[0] = (r * inv + gray * grayscale).round().clamp(0.0, 255.0) as u8;
+            chunk[1] = (g * inv + gray * grayscale).round().clamp(0.0, 255.0) as u8;
+            chunk[2] = (b * inv + gray * grayscale).round().clamp(0.0, 255.0) as u8;
+        }
         // chunk[3] = alpha — unchanged
     }
 

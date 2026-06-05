@@ -104,7 +104,7 @@ const DRAW_CONFIG = {
     ],
     penSmoothness: 0.8,
     penEffectMode: 'limited',
-    penMinWidthRatio: 0.2
+    penMinWidthRatio: 0.4
 };
 
 // 选中第一号颜色作为默认笔色
@@ -1000,6 +1000,9 @@ function main_setup_pdf_file_open() {
         
         if (settings.penMinWidthRatio !== undefined && DRAW_CONFIG.developerMode) {
             DRAW_CONFIG.penMinWidthRatio = settings.penMinWidthRatio;
+        }
+        if (settings.maxScaleImage !== undefined && DRAW_CONFIG.developerMode) {
+            DRAW_CONFIG.maxScaleImage = settings.maxScaleImage;
         }
 
         if (needRestartCamera && state.isCameraOpen) {
@@ -3468,54 +3471,50 @@ function main_load_base_image(url) {
 function main_save_photo() {
     if (state.isCameraOpen) {
         main_save_camera_image();
-    } else if (state.currentImageIndex >= 0 && state.imageList.length > 0) {
+        return;
+    }
+
+    // 从图片或文档源切换回摄像头：优先打开摄像头（利用用户手势瞬态激活），再切换源
+    if (state.currentImageIndex >= 0 || state.currentFolderIndex >= 0) {
         (async () => {
+            // 记录当前源类型和清理回调
+            const is_image = state.currentImageIndex >= 0 && state.imageList.length > 0;
             try {
-                main_save_current_source_data();
-                state.currentImageIndex = -1;
-                state.currentImage = null;
-                currentSourceId = null;
-                main_delete_image_layer();
-                main_delete_draw_canvas();
-                await main_update_source('cam');
+                // 1. 先尝试打开摄像头（此时用户手势激活尚未过期）
                 if (!state.isCameraOpen) {
                     await main_update_camera_state(true);
                 }
+                // 2. 摄像头已打开，清理旧源状态
+                // 注意：main_update_camera_state 已通过 main_save_current_source_data + main_update_source('cam')
+                // 完成源保存和切换，此处只需清理额外 UI 状态
+                if (is_image) {
+                    state.currentImageIndex = -1;
+                    state.currentImage = null;
+                } else {
+                    state.currentFolderIndex = -1;
+                    state.currentFolderPageIndex = -1;
+                    state.currentImage = null;
+                }
+                main_delete_image_layer();
+                main_delete_draw_canvas();
                 main_update_sidebar_selection();
                 main_update_photo_button_state();
             } catch (error) {
-                console.error('返回摄像头失败:', error);
+                console.error('返回摄像头失败:', error?.name, error?.message);
                 if (error.name === 'NotFoundError' || error.name === 'DevicesNotFoundError') {
                     main_show_no_camera_message(window.i18n?.format_translate('camera.notDetected') || '未检测到摄像头');
                 } else if (error.name === 'NotAllowedError' || error.name === 'PermissionDeniedError') {
                     main_show_no_camera_message(window.i18n?.format_translate('camera.noPermission') || '无摄像头权限');
-                } else {
+                } else if (error.name !== 'AbortError') {
                     main_show_no_camera_message(window.i18n?.format_translate('camera.initFailed') || '摄像头初始化失败');
                 }
             }
         })();
-    } else if (state.currentFolderIndex >= 0 && state.currentFolderPageIndex >= 0) {
-        (async () => {
-            try {
-                main_save_current_source_data();
-                state.currentFolderIndex = -1;
-                state.currentFolderPageIndex = -1;
-                state.currentImage = null;
-                currentSourceId = null;
-                main_delete_image_layer();
-                main_delete_draw_canvas();
-                await main_update_source('cam');
-                if (!state.isCameraOpen) {
-                    await main_update_camera_state(true);
-                }
-                main_update_photo_button_state();
-            } catch (error) {
-                console.error('返回摄像头失败:', error);
-            }
-        })();
-    } else {
-        main_save_merged_canvas();
+        return;
     }
+
+    // 无摄像头/图片/文档源时：保存画布截图
+    main_save_merged_canvas();
 }
 
 function main_save_merged_canvas() {
@@ -3821,9 +3820,10 @@ function main_show_sidebar() {
         state.imageList.forEach((imgData, index) => {
             const isActive = (state.currentImageIndex >= 0 && index === state.currentImageIndex) ? 'active' : '';
             const imageAlt = window.i18n?.format_translate('sidebar.imageAlt', { n: index + 1 }) || `图片${index + 1}`;
+            const filterStyle = imgData.captureFilter ? ` style="filter: ${imgData.captureFilter.replace(/"/g, '&quot;')}"` : '';
             imageListHTML += `
                 <div class="sidebar-image-item ${isActive}" data-index="${index}">
-                    <img src="${imgData.thumbnail}" class="sidebar-thumbnail" alt="${imageAlt}" loading="lazy">
+                    <img src="${imgData.thumbnail}" class="sidebar-thumbnail" alt="${imageAlt}" loading="lazy"${filterStyle}>
                     <div class="sidebar-image-actions">
                         <button class="sidebar-btn-delete" title="${deleteText}">✕</button>
                     </div>
@@ -3925,6 +3925,11 @@ async function main_update_image_selection(index) {
             await main_update_camera_state(false);
         }
         main_render_image_centered(img);
+        
+        // 恢复拍摄时的 CSS filter，保证与实际效果一致
+        if (imgData.captureFilter) {
+            dom.imageElement.style.filter = imgData.captureFilter;
+        }
         
         await main_render_all_strokes();
         main_update_sidebar_selection();
@@ -4040,9 +4045,10 @@ function main_update_sidebar_content() {
         state.imageList.forEach((imgData, index) => {
             const isActive = (state.currentImageIndex >= 0 && index === state.currentImageIndex) ? 'active' : '';
             const imageAlt = window.i18n?.format_translate('sidebar.imageAlt', { n: index + 1 }) || `图片${index + 1}`;
+            const filterStyle = imgData.captureFilter ? ` style="filter: ${imgData.captureFilter.replace(/"/g, '&quot;')}"` : '';
             imageListHTML += `
                 <div class="sidebar-image-item ${isActive}" data-index="${index}">
-                    <img src="${imgData.thumbnail}" class="sidebar-thumbnail" alt="${imageAlt}" loading="lazy">
+                    <img src="${imgData.thumbnail}" class="sidebar-thumbnail" alt="${imageAlt}" loading="lazy"${filterStyle}>
                     <div class="sidebar-image-actions">
                         <button class="sidebar-btn-delete" title="${deleteText}">✕</button>
                     </div>
@@ -4645,6 +4651,45 @@ async function main_init_camera() {
 }
 
 /**
+ * 延迟摄像头初始化：启动时权限未缓存（NotAllowedError）时注册一次性交互监听器
+ * 用户首次点击/触摸页面时自动重试 getUserMedia（此时拥有用户手势瞬态激活）
+ * 仅在 main_init_camera 因权限拒绝失败后调用，不反复注册
+ */
+let _deferred_camera_setup = false;
+function main_setup_deferred_camera() {
+    if (_deferred_camera_setup) return;
+    _deferred_camera_setup = true;
+
+    const retry = async () => {
+        document.removeEventListener('click', retry);
+        document.removeEventListener('touchstart', retry);
+        _deferred_camera_setup = false;
+
+        try {
+            if (!state.isCameraOpen) {
+                await main_update_camera_state(true);
+            }
+        } catch (error) {
+            const err_name = error?.name || '';
+            if (err_name === 'NotAllowedError' || err_name === 'PermissionDeniedError') {
+                main_show_no_camera_message(
+                    window.i18n?.format_translate('camera.noPermission') || '无摄像头权限'
+                );
+            } else if (err_name === 'NotFoundError' || err_name === 'DevicesNotFoundError') {
+                main_show_no_camera_message(
+                    window.i18n?.format_translate('camera.notDetected') || '未检测到摄像头'
+                );
+            } else {
+                console.warn('[deferred-camera] 摄像头初始化失败:', err_name, error?.message);
+            }
+        }
+    };
+
+    document.addEventListener('click', retry, { once: true });
+    document.addEventListener('touchstart', retry, { once: true });
+}
+
+/**
  * 摄像头不可用时初始化，确保界面正常
  * @param {string} message - 无摄像头提示文字
  */
@@ -4877,6 +4922,15 @@ function main_apply_camera_filters() {
     const img = dom.imageElement;
     if (!video && !img) return;
 
+    // 如果当前显示的是拍摄的图片且带有 captureFilter，不覆盖它的 filter
+    if (img && state.currentImageIndex >= 0 && state.currentImageIndex < state.imageList.length) {
+        const curData = state.imageList[state.currentImageIndex];
+        if (curData && curData.captureFilter) {
+            if (video) video.style.filter = curData.captureFilter;
+            return;
+        }
+    }
+
     const b = state.camera_brightness ?? 10;
     const c = state.camera_contrast ?? 1.4;
     const g = state.camera_grayscale ?? 0;
@@ -4964,33 +5018,34 @@ async function main_save_camera_image() {
     
     tempCtx.restore();
     
-    let blob = await new Promise((resolve, reject) => {
-        tempCanvas.toBlob(b => {
-            if (b) resolve(b);
-            else reject(new Error('Failed to create blob'));
-        }, 'image/png');
-    });
-    
+    // 构建与实时预览完全一致的 CSS filter 字符串（不烘焙，仅附加到图片元素）
+    const b = state.camera_brightness ?? 10;
+    const c = state.camera_contrast ?? 1.4;
+    const g = state.camera_grayscale ?? 0;
+    const brightnessMul = Math.max(0, 1 + b / 100);
+    const contrastMul = Math.max(0, c);
+    const grayscaleFrac = Math.max(0, Math.min(1, g));
+    const captureFilter = `brightness(${brightnessMul}) contrast(${contrastMul}) grayscale(${grayscaleFrac})`;
+
+    // 原始帧数据（旋转+镜像，无 filter），用于侧边栏显示 + 后续通过 CSS filter 匹配实时预览
+    const rawDataUrl = tempCanvas.toDataURL('image/png');
+
     if (window.__TAURI__) {
         try {
             const { invoke } = window.__TAURI__.core;
-            const dataUrl = await main_format_blob_to_data_url(blob);
-
-            // Try to apply server-side adjustments (brightness/contrast) if available
-            let adjustedDataUrl = dataUrl;
-            try {
-                adjustedDataUrl = await invoke('image_update_adjustments', {
-                    imageData: dataUrl,
-                    brightness: state.camera_brightness,
-                    contrast: state.camera_contrast
-                });
-            } catch (e) {
-                // If the backend command doesn't exist or fails, continue with original dataUrl
-                console.warn('image_update_adjustments failed, falling back to original image data', e);
-            }
-
+            // 烘焙 filter 到像素用于存盘（Canvas2D filter，与 CSS 有微小差异但存盘可接受）
+            const bakeCanvas = document.createElement('canvas');
+            bakeCanvas.width = tempCanvas.width;
+            bakeCanvas.height = tempCanvas.height;
+            const bakeCtx = bakeCanvas.getContext('2d');
+            bakeCtx.filter = captureFilter;
+            bakeCtx.drawImage(tempCanvas, 0, 0);
+            const bakeBlob = await new Promise((resolve, reject) => {
+                bakeCanvas.toBlob(b => { if (b) resolve(b); else reject(new Error('Failed to create blob')); }, 'image/png');
+            });
+            const bakeDataUrl = await main_format_blob_to_data_url(bakeBlob);
             const result = await invoke('image_save_file', { 
-                imageData: adjustedDataUrl,
+                imageData: bakeDataUrl,
                 prefix: 'photo'
             });
             console.log('图片已保存:', result.path);
@@ -4998,19 +5053,17 @@ async function main_save_camera_image() {
             console.error('保存图片失败:', error);
         }
     }
-    
-    const blobUrl = URL.createObjectURL(blob);
+
+    // 侧边栏使用原始帧 + captureFilter 字符串（CSS filter 保证与实时预览完全一致）
     const img = new Image();
-    img.src = blobUrl;
+    img.src = rawDataUrl;
     img.onload = () => {
         const photoName = window.i18n?.format_translate('camera.photoName', { n: state.imageList.length + 1 }) || `拍摄${state.imageList.length + 1}`;
-        main_save_image_to_list_no_highlight(img, photoName);
+        main_save_image_to_list_no_highlight(img, photoName, captureFilter);
         main_show_sidebar_if_hidden();
-        URL.revokeObjectURL(blobUrl);
         console.log('已捕获摄像头画面并保存到图片列表');
     };
     img.onerror = () => {
-        URL.revokeObjectURL(blobUrl);
         console.error('加载拍摄的图片失败');
     };
 }
@@ -5184,7 +5237,7 @@ async function main_save_image_to_list(img, name, isLast = true) {
     }
 }
 
-async function main_save_image_to_list_no_highlight(img, name) {
+async function main_save_image_to_list_no_highlight(img, name, captureFilter) {
     const blob = await fetch(img.src).then(r => r.blob());
     const blobUrl = URL.createObjectURL(blob);
     
@@ -5194,7 +5247,8 @@ async function main_save_image_to_list_no_highlight(img, name) {
         name: name,
         width: img.width,
         height: img.height,
-        sourceId: main_create_source_id('pic')
+        sourceId: main_create_source_id('pic'),
+        captureFilter: captureFilter || null
     };
     
     state.imageList.push(imgData);
@@ -5281,6 +5335,7 @@ window.main_setup_pdf_file_open = main_setup_pdf_file_open;
 window.main_init_camera = main_init_camera;
 window.main_update_camera_state = main_update_camera_state;
 window.main_init_without_camera = main_init_without_camera;
+window.main_setup_deferred_camera = main_setup_deferred_camera;
 window.main_show_error_dialog = main_show_error_dialog;
 window.main_handle_resize = main_handle_resize;
 window.main_submit_stroke = main_submit_stroke;

@@ -145,12 +145,7 @@
     "openLogDirFailed": "打开日志目录失败",
     "noCameraPermission": "无摄像头权限",
     "noCameraDetected": "未检测到摄像头",
-    "cameraPermission": "摄像头权限",
-    "requestCameraPermission": "获取摄像头权限",
-    "revokePermission": "撤销授权",
-    "revokeCameraPermission": "撤销授权",
-    "revokePermissionHint": "撤销摄像头权限需要重置应用，这将删除所有设置并重启应用。确定要继续吗？",
-    "cameraPermissionDenied": "无法获取摄像头权限，请在系统设置中手动授权",
+
     "getFailed": "获取失败",
     "cannotGet": "无法获取",
     "close": "关闭",

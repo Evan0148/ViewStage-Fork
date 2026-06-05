@@ -46,7 +46,7 @@ class PenTessellator {
             const speedScale = Math.max(0.4, Math.min(2.5, base_width / 4));
             const maxSpeed = 2.5 * speedScale;
             const minSpeed = 0.2 * speedScale;
-            const minRatio = window.DRAW_CONFIG?.penMinWidthRatio ?? 0.2;
+            const minRatio = window.DRAW_CONFIG?.penMinWidthRatio ?? 0.4;
             let last_line_width = base_width;
 
             for (let i = 1; i < raw.length; i++) {
