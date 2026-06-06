@@ -9,6 +9,7 @@ async function developer_options_init() {
     let savedWidthRatio = 0.4;
     let savedMaxScale = 4;
     let savedPerfMonitor = false;
+    let savedPerfInterval = 200;
 
     if (invoke) {
         try {
@@ -22,6 +23,7 @@ async function developer_options_init() {
                 ?? s.maxScaleImage
                 ?? 4;
             savedPerfMonitor = s.perfMonitorEnabled === true;
+            savedPerfInterval = s.perfMonitorInterval ?? 200;
         } catch (_) {
             savedWidthRatio = window.DRAW_CONFIG?.penMinWidthRatio ?? 0.4;
             savedMaxScale = window.DRAW_CONFIG?.maxScaleImage ?? 4;
@@ -31,10 +33,21 @@ async function developer_options_init() {
         savedMaxScale = window.DRAW_CONFIG?.maxScaleImage ?? 4;
     }
 
-    developer_options_show_main(savedWidthRatio, savedMaxScale, savedPerfMonitor);
+    developer_options_show_main(savedWidthRatio, savedMaxScale, savedPerfMonitor, savedPerfInterval);
 }
 
-function developer_options_show_main(currentWidthRatio, currentMaxScale, perfMonitorEnabled) {
+const PERF_INTERVAL_OPTIONS = [
+    { value: '100', label: '快' },
+    { value: '200', label: '正常' },
+    { value: '500', label: '慢' },
+];
+
+function perf_interval_label(ms) {
+    const opt = PERF_INTERVAL_OPTIONS.find(p => parseInt(p.value) === ms);
+    return opt ? `${opt.label}（${ms}ms）` : `${ms}ms`;
+}
+
+function developer_options_show_main(currentWidthRatio, currentMaxScale, perfMonitorEnabled, perfMonitorInterval) {
     const page = document.getElementById('pageDevOptions');
     if (!page) return;
 
@@ -79,6 +92,17 @@ function developer_options_show_main(currentWidthRatio, currentMaxScale, perfMon
             </label>
         </div>
         <div class="setting-item">
+            <span class="setting-label">监视器更新频率</span>
+            <div class="custom-select" id="devPerfIntervalSelect">
+                <div class="select-selected" id="devPerfIntervalSelected">${perf_interval_label(perfMonitorInterval)}</div>
+                <div class="select-options" id="devPerfIntervalOptions">
+                    ${PERF_INTERVAL_OPTIONS.map(p => `
+                        <div class="select-option${parseInt(p.value) === perfMonitorInterval ? ' selected' : ''}" data-value="${p.value}">${p.label}（${p.value}ms）</div>
+                    `).join('')}
+                </div>
+            </div>
+        </div>
+        <div class="setting-item">
             <span class="setting-label">最快速度时宽度比例</span>
             <div class="custom-select" id="devWidthRatioSelect">
                 <div class="select-selected" id="devWidthRatioSelected">${currentWidthLabel}</div>
@@ -117,8 +141,36 @@ function developer_options_show_main(currentWidthRatio, currentMaxScale, perfMon
         });
     })();
 
+    // 监视器更新频率选择器
+    (function setup_perf_interval_select() {
+        const select = document.getElementById('devPerfIntervalSelect');
+        const selected = document.getElementById('devPerfIntervalSelected');
+        const options = document.querySelectorAll('#devPerfIntervalOptions .select-option');
+
+        if (!select || !selected) return;
+
+        selected.addEventListener('click', (e) => {
+            e.stopPropagation();
+            select.classList.toggle('open');
+        });
+
+        options.forEach(opt => {
+            opt.addEventListener('click', () => {
+                const v = parseInt(opt.dataset.value);
+                selected.textContent = perf_interval_label(v);
+                options.forEach(o => o.classList.remove('selected'));
+                opt.classList.add('selected');
+                select.classList.remove('open');
+
+                const invoke = window.__TAURI__?.core?.invoke;
+                if (invoke) {
+                    invoke('settings_save_all', { settings: { perfMonitorInterval: v, developerMode: true } });
+                }
+            });
+        });
+    })();
+
     // 宽度比例选择器
-    (function setup_width_ratio_select() {
         const select = document.getElementById('devWidthRatioSelect');
         const selected = document.getElementById('devWidthRatioSelected');
         const options = document.querySelectorAll('#devWidthRatioOptions .select-option');

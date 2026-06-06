@@ -281,7 +281,7 @@ async function settings_load_camera_config() {
             if (settings.developerMode && settings.perfMonitorEnabled) {
                 try {
                     window.perfMonitor = await import('./perf-monitor.js');
-                    window.perfMonitor.perf_monitor_init();
+                    window.perfMonitor.perf_monitor_init(settings.perfMonitorInterval || 200);
                 } catch (e) {
                     console.error('[init] perf monitor load error:', e);
                 }

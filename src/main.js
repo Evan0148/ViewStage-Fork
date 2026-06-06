@@ -1008,22 +1008,26 @@ function main_setup_pdf_file_open() {
         // 性能监视器动态开关（仅在开发者模式下生效）
         if (settings.perfMonitorEnabled !== undefined && DRAW_CONFIG.developerMode) {
             DRAW_CONFIG.perfMonitorEnabled = settings.perfMonitorEnabled;
+            const interval = settings.perfMonitorInterval || 200;
             if (settings.perfMonitorEnabled) {
                 if (!window.perfMonitor) {
                     import('./perf-monitor.js').then(mod => {
                         window.perfMonitor = mod;
-                        mod.perf_monitor_init();
+                        mod.perf_monitor_init(interval);
                     }).catch(e => {
                         console.error('动态加载 perf monitor 失败:', e);
                     });
                 } else {
-                    window.perfMonitor.perf_monitor_set_enabled(true);
+                    window.perfMonitor.perf_monitor_set_enabled(true, interval);
                 }
             } else {
                 if (window.perfMonitor) {
                     window.perfMonitor.perf_monitor_set_enabled(false);
                 }
             }
+        } else if (settings.perfMonitorInterval !== undefined && DRAW_CONFIG.developerMode && window.perfMonitor) {
+            // 仅更新频率（不改变开关状态）
+            window.perfMonitor.perf_monitor_set_interval(settings.perfMonitorInterval);
         }
 
         if (needRestartCamera && state.isCameraOpen) {

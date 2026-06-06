@@ -20,11 +20,24 @@ let perf_prev_line1 = '';
 let perf_prev_line2 = '';
 let perf_prev_line3 = '';
 
-const PERF_UPDATE_MS = 200;
+const PERF_UPDATE_MS_DEFAULT = 200;
+let perf_interval_ms = PERF_UPDATE_MS_DEFAULT;
+
+/** 重启定时器（用于动态切换更新频率） */
+function perf_monitor_restart_timer() {
+    if (perf_timer_id != null) {
+        clearInterval(perf_timer_id);
+        perf_timer_id = null;
+    }
+    if (perf_enabled) {
+        perf_timer_id = setInterval(perf_monitor_refresh_display, perf_interval_ms);
+    }
+}
 
 /** 创建监视器 DOM 并启动定时器 */
-function perf_monitor_init() {
+function perf_monitor_init(intervalMs) {
     if (perf_container) return;
+    if (intervalMs > 0) perf_interval_ms = intervalMs;
 
     perf_container = document.createElement('div');
     perf_container.id = 'perf-monitor';
@@ -58,7 +71,7 @@ function perf_monitor_init() {
     document.body.appendChild(perf_container);
 
     perf_enabled = true;
-    perf_timer_id = setInterval(perf_monitor_refresh_display, PERF_UPDATE_MS);
+    perf_timer_id = setInterval(perf_monitor_refresh_display, perf_interval_ms);
 }
 
 /**
@@ -148,16 +161,18 @@ function perf_monitor_refresh_display() {
 /**
  * 开关监视器
  * @param {boolean} enabled - true 显示，false 隐藏
+ * @param {number} [intervalMs] - 可选，同时切换更新频率
  */
-function perf_monitor_set_enabled(enabled) {
+function perf_monitor_set_enabled(enabled, intervalMs) {
     perf_enabled = enabled;
+    if (intervalMs > 0) perf_interval_ms = intervalMs;
 
     if (enabled) {
         if (!perf_container) {
-            perf_monitor_init();
+            perf_monitor_init(perf_interval_ms);
         } else {
             perf_container.style.display = 'block';
-            perf_timer_id = setInterval(perf_monitor_refresh_display, PERF_UPDATE_MS);
+            perf_monitor_restart_timer();
         }
     } else {
         if (perf_timer_id != null) {
@@ -170,4 +185,14 @@ function perf_monitor_set_enabled(enabled) {
     }
 }
 
-export { perf_monitor_init, perf_monitor_set_enabled };
+/**
+ * 动态修改更新频率（监视器开启时即时生效）
+ * @param {number} intervalMs
+ */
+function perf_monitor_set_interval(intervalMs) {
+    if (intervalMs < 50) intervalMs = 50; // 下限保护
+    perf_interval_ms = intervalMs;
+    perf_monitor_restart_timer();
+}
+
+export { perf_monitor_init, perf_monitor_set_enabled, perf_monitor_set_interval };
