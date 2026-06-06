@@ -238,7 +238,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                 if (eraserPresetsItem) {
                     eraserPresetsItem.style.display = eraserSpeedEnabled ? 'none' : '';
                 }
-                const palmEraserEnabled = settings.palmEraserEnabled !== undefined ? settings.palmEraserEnabled : (window.DRAW_CONFIG?.palmEraserEnabled ?? true);
+                const palmEraserEnabled = settings.palmEraserEnabled !== undefined ? settings.palmEraserEnabled : (window.DRAW_CONFIG?.palmEraserEnabled ?? false);
                 const palmEraserToggle = document.getElementById('palmEraserToggle');
                 if (palmEraserToggle) {
                     palmEraserToggle.checked = palmEraserEnabled;

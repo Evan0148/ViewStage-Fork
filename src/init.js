@@ -247,7 +247,7 @@ async function settings_load_camera_config() {
                 dom.btnBlackboard.style.display = '';
             }
 
-            const palmEraserEnabled = settings.palmEraserEnabled !== false;
+            const palmEraserEnabled = settings.palmEraserEnabled === true;
             DRAW_CONFIG.palmEraserEnabled = palmEraserEnabled;
             if (palmEraserEnabled) {
                 try {
