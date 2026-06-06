@@ -120,47 +120,63 @@ class PenTessellator {
         if (!tessellated_stroke || !tessellated_stroke.segments) return;
 
         const { segments, color } = tessellated_stroke;
+        const len = segments.length;
 
         ctx.strokeStyle = color;
         ctx.lineCap = 'round';
         ctx.lineJoin = 'round';
         ctx.globalCompositeOperation = 'source-over';
 
-        for (let i = 0; i < segments.length; i++) {
+        /* 首段独立绘制：x1,y1 → x2,y2 直线 */
+        const s0 = segments[0];
+        ctx.lineWidth = s0.line_width;
+        ctx.beginPath();
+        ctx.moveTo(s0.x1, s0.y1);
+        ctx.lineTo(s0.x2, s0.y2);
+        ctx.stroke();
+        if (len === 1) {
+            const mx = (s0.x1 + s0.x2) / 2;
+            ctx.beginPath();
+            ctx.moveTo(mx, (s0.y1 + s0.y2) / 2);
+            ctx.lineTo(s0.x2, s0.y2);
+            ctx.stroke();
+            return;
+        }
+
+        /* 后续段：合并线宽相近的连续曲线为同一路径，减少 stroke() 调用 */
+        let batchActive = false;
+        let batchWidth = 0;
+
+        for (let i = 1; i < len; i++) {
             const seg = segments[i];
+            const prev = segments[i - 1];
+            const last_x = (prev.x1 + prev.x2) / 2;
+            const last_y = (prev.y1 + prev.y2) / 2;
+            const mid_x = (seg.x1 + seg.x2) / 2;
+            const mid_y = (seg.y1 + seg.y2) / 2;
+            const isTail = (i === len - 1);
 
-            if (i === 0) {
+            if (!batchActive || Math.abs(seg.line_width - batchWidth) >= 0.5) {
+                if (batchActive) ctx.stroke();
                 ctx.lineWidth = seg.line_width;
-                ctx.beginPath();
-                ctx.moveTo(seg.x1, seg.y1);
-                ctx.lineTo(seg.x2, seg.y2);
-                ctx.stroke();
-            } else {
-                const prev = segments[i - 1];
-                const last_x = (prev.x1 + prev.x2) / 2;
-                const last_y = (prev.y1 + prev.y2) / 2;
-                const mid_x = (seg.x1 + seg.x2) / 2;
-                const mid_y = (seg.y1 + seg.y2) / 2;
-
-                ctx.lineWidth = seg.line_width;
+                batchWidth = seg.line_width;
                 ctx.beginPath();
                 ctx.moveTo(last_x, last_y);
                 ctx.quadraticCurveTo(seg.x1, seg.y1, mid_x, mid_y);
-                ctx.stroke();
+            } else {
+                ctx.quadraticCurveTo(seg.x1, seg.y1, mid_x, mid_y);
             }
 
-            // 最后一个 segment：补上 mid → toX/Y 的尖部直线段
-            // 与 batch-draw 中 batch_draw_handle_end 画 _lastMidX/Y → _lastToX/Y 对应
-            if (i === segments.length - 1) {
-                const mid_x = (seg.x1 + seg.x2) / 2;
-                const mid_y = (seg.y1 + seg.y2) / 2;
-                ctx.lineWidth = seg.line_width;
-                ctx.beginPath();
-                ctx.moveTo(mid_x, mid_y);
+            if (isTail) {
+                /* 末段尾线：mid → toX/Y 追加到当前路径一同 stroke */
                 ctx.lineTo(seg.x2, seg.y2);
                 ctx.stroke();
+                batchActive = false;
+            } else {
+                batchActive = true;
             }
         }
+        if (batchActive) ctx.stroke();
     }
 }
 
