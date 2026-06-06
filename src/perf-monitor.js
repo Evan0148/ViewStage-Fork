@@ -63,7 +63,7 @@ function perf_monitor_raf_loop(timestamp) {
     perf_frame_count++;
 
     const elapsed = timestamp - perf_last_time;
-    if (elapsed >= 1000) {
+    if (elapsed >= 200) {
         perf_fps_value = Math.round(perf_frame_count * 1000 / elapsed);
         perf_frame_count = 0;
         perf_last_time = timestamp;
