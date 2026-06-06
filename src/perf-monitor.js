@@ -76,35 +76,41 @@ function perf_monitor_init(intervalMs) {
 
 /**
  * 计算渲染压力综合指标（0-100）
- * 权重：脏 tile 比例 40% + 待绘命令数 30% + 掉帧率 30%
+ * 权重：绘制耗时占比 50% + 待绘命令积压 25% + 掉帧率 25%
+ *
+ * 绘制耗时占比以当前帧时间（1000/currentFps）为基准，
+ * 反映实际绘制开销占帧预算的比例，而非标记脏 tile 这类待办标记。
  */
 function calc_render_pressure(batchStats, tileRenderer) {
     let value = 0;
 
-    // 脏 tile 比例（0-40）
-    if (tileRenderer?.tileInfos) {
-        const ratio = (tileRenderer.dirty?.size || 0) / tileRenderer.tileInfos.length;
-        value += Math.min(40, Math.round(ratio * 40));
+    // 绘制耗时占比（0-50）：当前帧时间中平均绘制消耗了多少
+    const avgDrawTime = batchStats?.avgDrawTime || 0;
+    const fps = batchStats?.currentFps || 60;
+    const frameTime = 1000 / fps;
+    if (avgDrawTime > 0 && frameTime > 0) {
+        const ratio = Math.min(1, avgDrawTime / frameTime);
+        value += Math.round(ratio * 50);
     }
 
-    // 待绘命令积压（0-30）
+    // 待绘命令积压（0-25）：尚未 flush 的手势命令数
     const pending = batchStats?.pendingCount || 0;
     if (pending > 0) {
-        value += Math.min(30, pending * 5);
+        value += Math.min(25, pending * 3);
     }
 
-    // FPS 掉帧率（0-30）
+    // FPS 掉帧率（0-25）：自适应帧率引擎的实际降频程度
     if (batchStats?.targetFps > 0 && batchStats.currentFps < batchStats.targetFps) {
         const drop = 1 - batchStats.currentFps / batchStats.targetFps;
-        value += Math.min(30, Math.round(drop * 30));
+        value += Math.min(25, Math.round(drop * 25));
     }
 
     value = Math.min(100, value);
 
     let label;
-    if (value <= 20) label = '低';
+    if (value <= 25) label = '低';
     else if (value <= 50) label = '中';
-    else if (value <= 80) label = '高';
+    else if (value <= 75) label = '高';
     else label = '严重';
 
     return { value, label };
