@@ -171,6 +171,7 @@ function developer_options_show_main(currentWidthRatio, currentMaxScale, perfMon
     })();
 
     // 宽度比例选择器
+    (function setup_width_ratio_select() {
         const select = document.getElementById('devWidthRatioSelect');
         const selected = document.getElementById('devWidthRatioSelected');
         const options = document.querySelectorAll('#devWidthRatioOptions .select-option');
