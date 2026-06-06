@@ -33,8 +33,9 @@ function perf_monitor_init() {
         pointer-events: none;
         user-select: none;
         white-space: pre;
-        display: ${perf_enabled ? 'block' : 'none'};
     `;
+    // 显式设置 display block，避免因模块级 perf_enabled=false 导致 display:none 写死
+    perf_container.style.display = 'block';
     document.body.appendChild(perf_container);
 
     perf_enabled = true;
