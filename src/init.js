@@ -34,7 +34,7 @@ async function dir_init_cache_path() {
 function app_emit_splash_progress(step, message) {
     if (window.__TAURI__) {
         const { emit } = window.__TAURI__.event;
-        emit('splash-progress', { step, message }).catch(() => {});
+        emit('splash-progress', { step, message }).catch(e => console.warn('发射启动进度失败:', e));
     }
 }
 
@@ -101,13 +101,13 @@ function canvas_init_all() {
     const state = window.state;
     const DRAW_CONFIG = window.DRAW_CONFIG;
     const container = dom.canvasContainer;
-    const screenW = container.clientWidth;
-    const screenH = container.clientHeight;
+    const screenW = Math.max(1, container.clientWidth);
+    const screenH = Math.max(1, container.clientHeight);
 
     DRAW_CONFIG.screenW = screenW;
     DRAW_CONFIG.screenH = screenH;
-    DRAW_CONFIG.canvasW = Math.floor(screenW * 2);
-    DRAW_CONFIG.canvasH = Math.floor(screenH * 2);
+    DRAW_CONFIG.canvasW = Math.max(1, Math.floor(screenW * 2));
+    DRAW_CONFIG.canvasH = Math.max(1, Math.floor(screenH * 2));
 
     DRAW_CONFIG.baseDpr = window.devicePixelRatio || 1;
     DRAW_CONFIG.dpr = window.main_calc_capped_dpr(DRAW_CONFIG.baseDpr, DRAW_CONFIG.dprLimit);
@@ -385,22 +385,23 @@ async function main_init_all() {
         console.log('[init] resize listener');
         window.addEventListener('resize', window.main_handle_resize);
         let blackboard_resize_timer;
-        window.addEventListener('resize', () => {
+        window.__handle_secondary_resize = () => {
             // blackboard resize 去抖（tile_renderer.rebuild_all 较重）
             if (window.blackboardManager && dom.canvasContainer) {
                 clearTimeout(blackboard_resize_timer);
                 blackboard_resize_timer = setTimeout(() => {
-                    const w = dom.canvasContainer.clientWidth;
-                    const h = dom.canvasContainer.clientHeight;
+                    const w = Math.max(1, dom.canvasContainer.clientWidth);
+                    const h = Math.max(1, dom.canvasContainer.clientHeight);
                     window.blackboardManager.resize(w, h);
                 }, 100);
             }
             if (window.documentReaderManager && dom.canvasContainer) {
-                const w = dom.canvasContainer.clientWidth;
-                const h = dom.canvasContainer.clientHeight;
+                const w = Math.max(1, dom.canvasContainer.clientWidth);
+                const h = Math.max(1, dom.canvasContainer.clientHeight);
                 window.documentReaderManager.resize(w, h);
             }
-        });
+        };
+        window.addEventListener('resize', window.__handle_secondary_resize);
 
         app_emit_splash_progress(3, '正在加载主题...');
         console.log('[init] progress 3 emitted');
@@ -562,6 +563,10 @@ document.addEventListener('beforeunload', () => {
         window.documentReaderManager.destroy();
     }
     window.documentReaderManager?.delete_annotation_cache_files?.();
+    // 清理 resize 监听器
+    if (window.__handle_secondary_resize) {
+        window.removeEventListener('resize', window.__handle_secondary_resize);
+    }
 });
 
 // 为按钮添加触摸缩放反馈，并初始化窗口最小化监听

@@ -599,7 +599,7 @@ async function oobe_init_camera_preview() {
                     width: { ideal: width },
                     height: { ideal: height },
                     deviceId: deviceId ? { exact: deviceId } : undefined
-                }).catch(() => {});
+                }).catch(e => console.warn('OOBE 摄像头约束设置失败:', e));
             }
         }
         

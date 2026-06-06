@@ -861,34 +861,53 @@ fn image_save_file(image_data: String, prefix: Option<String>) -> Result<ImageSa
 
 // ==================== 笔画压缩 ====================
 
-/// 解析 #RRGGBB 或 #RRGGBBAA 格式颜色字符串为 RGBA
+/// 解析 #RGB / #RGBA / #RRGGBB / #RRGGBBAA 格式颜色字符串为 RGBA
 fn color_calc_from_hex(color_str: &str) -> Result<Rgba<u8>, String> {
     if !color_str.starts_with('#') {
         return Err(format!("Invalid color format: must start with '#', got: {}", color_str));
     }
     
-    match color_str.len() {
-        7 => {
-            let r = u8::from_str_radix(&color_str[1..3], 16)
+    let hex = &color_str[1..];
+    // 展开简写: #RGB -> #RRGGBB, #RGBA -> #RRGGBBAA
+    let expanded = match hex.len() {
+        3 => {
+            let r = hex.chars().nth(0).unwrap();
+            let g = hex.chars().nth(1).unwrap();
+            let b = hex.chars().nth(2).unwrap();
+            format!("{0}{0}{1}{1}{2}{2}", r, g, b)
+        }
+        4 => {
+            let r = hex.chars().nth(0).unwrap();
+            let g = hex.chars().nth(1).unwrap();
+            let b = hex.chars().nth(2).unwrap();
+            let a = hex.chars().nth(3).unwrap();
+            format!("{0}{0}{1}{1}{2}{2}{3}{3}", r, g, b, a)
+        }
+        _ => hex.to_string()
+    };
+    
+    match expanded.len() {
+        6 => {
+            let r = u8::from_str_radix(&expanded[0..2], 16)
                 .map_err(|_| format!("Invalid red component in color: {}", color_str))?;
-            let g = u8::from_str_radix(&color_str[3..5], 16)
+            let g = u8::from_str_radix(&expanded[2..4], 16)
                 .map_err(|_| format!("Invalid green component in color: {}", color_str))?;
-            let b = u8::from_str_radix(&color_str[5..7], 16)
+            let b = u8::from_str_radix(&expanded[4..6], 16)
                 .map_err(|_| format!("Invalid blue component in color: {}", color_str))?;
             Ok(Rgba([r, g, b, 255]))
         }
-        9 => {
-            let r = u8::from_str_radix(&color_str[1..3], 16)
+        8 => {
+            let r = u8::from_str_radix(&expanded[0..2], 16)
                 .map_err(|_| format!("Invalid red component in color: {}", color_str))?;
-            let g = u8::from_str_radix(&color_str[3..5], 16)
+            let g = u8::from_str_radix(&expanded[2..4], 16)
                 .map_err(|_| format!("Invalid green component in color: {}", color_str))?;
-            let b = u8::from_str_radix(&color_str[5..7], 16)
+            let b = u8::from_str_radix(&expanded[4..6], 16)
                 .map_err(|_| format!("Invalid blue component in color: {}", color_str))?;
-            let a = u8::from_str_radix(&color_str[7..9], 16)
+            let a = u8::from_str_radix(&expanded[6..8], 16)
                 .map_err(|_| format!("Invalid alpha component in color: {}", color_str))?;
             Ok(Rgba([r, g, b, a]))
         }
-        _ => Err(format!("Invalid color format: expected #RRGGBB or #RRGGBBAA, got: {}", color_str))
+        _ => Err(format!("Invalid color format: expected #RGB/#RGBA/#RRGGBB/#RRGGBBAA, got: {}", color_str))
     }
 }
 
@@ -1448,9 +1467,13 @@ async fn settings_fetch_all(app: tauri::AppHandle) -> Result<SettingsResult, Str
     if !recovered.is_empty() {
         let timestamp = chrono::Local::now().format("%Y%m%d_%H%M%S");
         let backup_name = format!("config.json.before_recovery_{}", timestamp);
-        let backup_path = config_path.parent().unwrap().join(&backup_name);
-        let _ = std::fs::write(&backup_path, &config_content);
-        log::info!("恢复前的配置已备份到: {:?}", backup_path);
+        if let Some(parent_dir) = config_path.parent() {
+            let backup_path = parent_dir.join(&backup_name);
+            let _ = std::fs::write(&backup_path, &config_content);
+            log::info!("恢复前的配置已备份到: {:?}", backup_path);
+        } else {
+            log::warn!("配置路径无父目录，跳过备份: {:?}", config_path);
+        }
     }
     
     Ok(SettingsResult { settings: merged_config, recovered })
@@ -3505,13 +3528,23 @@ pub fn app_init_run() {
             }
         }))
         .setup(|app| {
-            let window = app.get_webview_window("main")
-                .expect("Failed to get main window");
+            let window = match app.get_webview_window("main") {
+                Some(w) => w,
+                None => {
+                    log::error!("启动失败: 无法获取主窗口");
+                    return Err("无法获取主窗口".into());
+                }
+            };
             
             let _ = window.set_decorations(false);
             
-            let config_dir = app.path().app_config_dir()
-                .expect("Failed to get config directory");
+            let config_dir = match app.path().app_config_dir() {
+                Ok(d) => d,
+                Err(e) => {
+                    log::error!("启动失败: 无法获取配置目录: {}", e);
+                    return Err(format!("无法获取配置目录: {}", e).into());
+                }
+            };
             let config_path = config_dir.join("config.json");
             
             let is_first_run = !config_path.exists();
@@ -3523,7 +3556,7 @@ pub fn app_init_run() {
                 
                 use tauri::WebviewWindowBuilder;
                 
-                let oobe_window = WebviewWindowBuilder::new(
+                let oobe_window = match WebviewWindowBuilder::new(
                     app,
                     "oobe",
                     tauri::WebviewUrl::App("oobe.html".into())
@@ -3534,8 +3567,13 @@ pub fn app_init_run() {
                 .decorations(false)
                 .center()
                 .always_on_top(true)
-                .build()
-                .expect("Failed to create OOBE window");
+                .build() {
+                    Ok(w) => w,
+                    Err(e) => {
+                        log::error!("启动失败: 无法创建 OOBE 窗口: {}", e);
+                        return Err(format!("无法创建 OOBE 窗口: {}", e).into());
+                    }
+                };
                 
                 let _ = oobe_window.set_focus();
                 
@@ -3629,5 +3667,8 @@ pub fn app_init_run() {
             memreduct_clean_now
         ])
         .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .unwrap_or_else(|e| {
+            log::error!("应用运行失败: {}", e);
+            eprintln!("应用运行失败: {}", e);
+        });
 }

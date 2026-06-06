@@ -57,11 +57,11 @@ class TileRenderer {
     }
 
     _get_canvas_w() {
-        return this._canvasW || window.DRAW_CONFIG.canvasW;
+        return Math.max(1, this._canvasW || window.DRAW_CONFIG.canvasW || 1);
     }
 
     _get_canvas_h() {
-        return this._canvasH || window.DRAW_CONFIG.canvasH;
+        return Math.max(1, this._canvasH || window.DRAW_CONFIG.canvasH || 1);
     }
 
     _init_tile_map() {
@@ -174,11 +174,11 @@ class TileRenderer {
     }
 
     get_tile_dimensions() {
-        const cw = this._get_canvas_w();
-        const ch = this._get_canvas_h();
+        const cw = Math.max(1, this._get_canvas_w());
+        const ch = Math.max(1, this._get_canvas_h());
         return {
-            w: Math.ceil(cw / TILE_COLS),
-            h: Math.ceil(ch / TILE_ROWS)
+            w: Math.max(1, Math.ceil(cw / TILE_COLS)),
+            h: Math.max(1, Math.ceil(ch / TILE_ROWS))
         };
     }
 

@@ -564,7 +564,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                     if (!preview) return;
                     preview.style.background = '';
                     preview.innerHTML = `<img class="theme-card-preview-img" src="${b64}" alt="" loading="lazy">`;
-                }).catch(() => {});
+                }).catch(e => console.warn('加载主题预览失败:', e));
             });
         }
     }
@@ -1635,7 +1635,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                                     if (!preview) return;
                                     preview.style.background = '';
                                     preview.innerHTML = `<img class="theme-card-preview-img" src="${b64}" alt="" loading="lazy">`;
-                                }).catch(() => {});
+                                }).catch(e => console.warn('加载主题预览失败:', e));
                             }
                             grid.querySelectorAll('.theme-card').forEach(c => c.classList.remove('selected'));
                             if (existing) existing.classList.add('selected');

@@ -364,4 +364,30 @@ export function history_format_compact(snapshotCommand, explicitCount) {
     return true;
 }
 
+/**
+ * 安全地重置执行锁定状态
+ * 外部模块（如 blackboard 切换页面）需解锁时调用此方法而非直接修改 history_state
+ */
+export function history_reset_executing() {
+    history_state.is_executing = false;
+}
+
+/**
+ * 裁剪 undo 栈首部 N 条记录（用于文档阅读器限制历史步数）
+ * @param {number} maxSteps - 保留的最大步数
+ */
+export function history_trim_undo_front(maxSteps) {
+    while (history_state.undo_list.length > maxSteps) {
+        history_state.undo_list.shift();
+    }
+}
+
+/**
+ * 获取 undo 栈顶部命令（不移除）
+ * @returns {Command|undefined}
+ */
+export function history_peek_undo() {
+    return history_state.undo_list[history_state.undo_list.length - 1];
+}
+
 export { history_state };

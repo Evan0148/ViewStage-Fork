@@ -6,7 +6,7 @@
 
 import { BlackboardPageManager } from './blackboard-page.js';
 import { DrawingEngine } from './drawing-engine.js';
-import { history_state, history_validate_undo } from '../history.js';
+import { history_state, history_validate_undo, history_reset_executing } from '../history.js';
 import { is_palm_by_touch_count, get_palm_center } from '../palm-eraser/palm-eraser.js';
 
 class BlackboardManager {
@@ -193,8 +193,8 @@ class BlackboardManager {
         const panel = dom.blackboardPanel;
         if (!panel) return;
 
-        this.screen_w = container.clientWidth;
-        this.screen_h = container.clientHeight;
+        this.screen_w = Math.max(1, container.clientWidth);
+        this.screen_h = Math.max(1, container.clientHeight);
 
         const canvas_wrap = dom.blackboardCanvasWrap;
 
@@ -969,7 +969,7 @@ class BlackboardManager {
         // 恢复目标页的 undo/redo 历史
         history_state.undo_list = page.undo_list || [];
         history_state.redo_list = page.redo_list || [];
-        history_state.is_executing = false;
+        history_reset_executing();
 
         // 优先从 tile 快照恢复（像素级精确，保留 batch draw 的擦除效果）
         // 没有快照或标记脏时从 stroke_history 重建

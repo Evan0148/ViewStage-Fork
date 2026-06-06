@@ -11,6 +11,8 @@ import {
     history_validate_undo,
     history_handle_undo,
     history_handle_state_change,
+    history_trim_undo_front,
+    history_peek_undo,
     DrawCommand,
     ClearCommand,
     history_state
@@ -67,6 +69,7 @@ class DocumentReaderManager {
         this._sidebar_overscan = 8;
         this._max_history_steps = 15;
         this._sidebar_thumbnail_cache = new Map(); // 缩略图缓存：page_index -> blob URL
+        this._thumbnail_observer = null;            // 侧边栏缩略图 IntersectionObserver
 
         // 分块渲染相关
         this.batch_draw = null;
@@ -373,6 +376,11 @@ class DocumentReaderManager {
         const page_sidebar = document.getElementById('drPageSidebar');
         if (page_sidebar) page_sidebar.remove();
 
+        // 断开缩略图 IntersectionObserver
+        if (this._thumbnail_observer) {
+            this._thumbnail_observer.disconnect();
+            this._thumbnail_observer = null;
+        }
         // 释放缩略图缓存
         this._release_sidebar_thumbnail_cache();
 
@@ -1334,7 +1342,8 @@ class DocumentReaderManager {
     }
 
     _get_page_aspect(page_data) {
-        return page_data?.aspect_ratio || 0.70710678;
+        const ratio = page_data?.aspect_ratio;
+        return (ratio && ratio > 0 && isFinite(ratio)) ? ratio : 0.70710678;
     }
 
     _set_page_box_size(page_data, width) {
@@ -1440,7 +1449,9 @@ class DocumentReaderManager {
 
     _scale_page_annotations(page_data, sx, sy) {
         if (!page_data || sx === 1 && sy === 1) return;
-        const seen = new WeakSet();
+        // 实例级 WeakSet：跨调用持久化去重，防止同一 stroke 被多次缩放
+        if (!this._scaled_strokes) this._scaled_strokes = new WeakSet();
+        const seen = this._scaled_strokes;
         const scale_stroke = (stroke) => {
             if (!stroke || seen.has(stroke)) return;
             seen.add(stroke);
@@ -2194,9 +2205,7 @@ class DocumentReaderManager {
 
     /** 裁剪全局 undo 栈至 _max_history_steps 上限 */
     _trim_undo_stack() {
-        while (history_state.undo_list.length > this._max_history_steps) {
-            history_state.undo_list.shift();
-        }
+        history_trim_undo_front(this._max_history_steps);
     }
 
     async handle_undo() {
@@ -2204,7 +2213,7 @@ class DocumentReaderManager {
         if (this.is_drawing) return;
 
         // 检查栈顶命令所属页面，若与当前页不同则先切换
-        const top_cmd = history_state.undo_list[history_state.undo_list.length - 1];
+        const top_cmd = history_peek_undo();
         if (top_cmd && typeof top_cmd.page_index === 'number' &&
             top_cmd.page_index !== this.active_page_index) {
             this.active_page_index = top_cmd.page_index;
@@ -2893,12 +2902,17 @@ class DocumentReaderManager {
             return;
         }
 
+        // 断开前一个 observer（防止多次打开侧边栏导致泄漏）
+        if (this._thumbnail_observer) {
+            this._thumbnail_observer.disconnect();
+            this._thumbnail_observer = null;
+        }
         // 使用IntersectionObserver加载可见区域的缩略图
-        const observer = new IntersectionObserver((entries) => {
+        this._thumbnail_observer = new IntersectionObserver((entries) => {
             for (const entry of entries) {
                 if (!entry.isIntersecting) continue;
                 const img = entry.target;
-                observer.unobserve(img);
+                this._thumbnail_observer?.unobserve(img);
                 this._load_page_sidebar_thumbnail(parseInt(img.dataset.page), img);
             }
         }, {
@@ -2907,7 +2921,7 @@ class DocumentReaderManager {
             threshold: 0.01
         });
 
-        deferred_imgs.forEach(img => observer.observe(img));
+        deferred_imgs.forEach(img => this._thumbnail_observer.observe(img));
     }
 
     async _load_page_sidebar_thumbnail(page_index, img) {

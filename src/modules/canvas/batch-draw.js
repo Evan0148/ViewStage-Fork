@@ -93,11 +93,11 @@ class RealtimeBatchDrawManager {
 
     _apply_overlay_dpr(newDpr) {
         if (!this._overlayCanvas) return;
-        const screenW = window.DRAW_CONFIG.screenW;
-        const screenH = window.DRAW_CONFIG.screenH;
+        const screenW = window.DRAW_CONFIG?.screenW || 1;
+        const screenH = window.DRAW_CONFIG?.screenH || 1;
         this._overlayDpr = newDpr;
-        this._overlayCanvas.width = Math.ceil(screenW * newDpr);
-        this._overlayCanvas.height = Math.ceil(screenH * newDpr);
+        this._overlayCanvas.width = Math.ceil(Math.max(1, screenW * newDpr));
+        this._overlayCanvas.height = Math.ceil(Math.max(1, screenH * newDpr));
         this._overlayTransformScale = 0;
         this._overlayTransformX = 0;
         this._overlayTransformY = 0;
@@ -113,6 +113,10 @@ class RealtimeBatchDrawManager {
         this._overlayCanvas.style.height = screenH + 'px';
         container.appendChild(this._overlayCanvas);
         this._overlayCtx = this._overlayCanvas.getContext('2d');
+        if (!this._overlayCtx) {
+            console.error('batch-draw: 无法获取 overlay canvas 上下文');
+            return;
+        }
         this._overlayCtx.imageSmoothingEnabled = false;
         this._overlayTransformScale = 0;
         this._overlayTransformX = 0;

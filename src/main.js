@@ -1341,8 +1341,8 @@ function main_handle_resize() {
     resizeTimeout = setTimeout(() => {
         resizeTimeout = null;
         const container = dom.canvasContainer;
-        const newScreenW = container.clientWidth;
-        const newScreenH = container.clientHeight;
+    const newScreenW = Math.max(1, container.clientWidth);
+    const newScreenH = Math.max(1, container.clientHeight);
         
         if (newScreenW !== DRAW_CONFIG.screenW || newScreenH !== DRAW_CONFIG.screenH) {
             main_update_canvas_size(newScreenW, newScreenH);
@@ -1360,11 +1360,11 @@ async function main_update_canvas_size(newScreenW, newScreenH) {
         window.tileRenderer.destroy_all();
     }
     
-    DRAW_CONFIG.screenW = newScreenW;
-    DRAW_CONFIG.screenH = newScreenH;
+    DRAW_CONFIG.screenW = Math.max(1, newScreenW);
+    DRAW_CONFIG.screenH = Math.max(1, newScreenH);
     
-    DRAW_CONFIG.canvasW = Math.floor(newScreenW * 2);
-    DRAW_CONFIG.canvasH = Math.floor(newScreenH * 2);
+    DRAW_CONFIG.canvasW = Math.max(1, Math.floor(newScreenW * 2));
+    DRAW_CONFIG.canvasH = Math.max(1, Math.floor(newScreenH * 2));
     
     DRAW_CONFIG.dpr = window.main_calc_capped_dpr(DRAW_CONFIG.baseDpr, DRAW_CONFIG.dprLimit);
     
@@ -1458,9 +1458,10 @@ function main_fetch_visible_rect() {
     cachedVisibleRectX = state.canvasX;
     cachedVisibleRectY = state.canvasY;
     
-    const scale = state.scale || 1;
-    const screenW = DRAW_CONFIG.screenW;
-    const screenH = DRAW_CONFIG.screenH;
+    // 确保缩放系数 > 0，防止除以零
+    const scale = Math.max(0.01, state.scale || 1);
+    const screenW = DRAW_CONFIG.screenW || 1;
+    const screenH = DRAW_CONFIG.screenH || 1;
     
     let visibleX = Math.max(0, -state.canvasX / scale);
     let visibleY = Math.max(0, -state.canvasY / scale);
@@ -4776,7 +4777,9 @@ async function main_init_without_camera(message) {
             if (themeColor && typeof themeColor === 'string') {
                 fallbackBgColor = themeColor;
             }
-        } catch (e) {}
+        } catch (e) {
+            console.warn('获取主题背景色失败:', e);
+        }
         main_update_canvas_bg_color(fallbackBgColor);
         
         main_show_no_camera_message(message || '摄像头不可用');
@@ -5120,7 +5123,7 @@ function main_update_camera_frame_rate(idealFps) {
     const constraints = idealFps !== null
         ? { frameRate: { ideal: idealFps } }
         : { frameRate: { ideal: 30 } };
-    track.applyConstraints(constraints).catch(() => {});
+    track.applyConstraints(constraints).catch(e => console.warn('摄像头帧率约束设置失败:', e));
 }
 
 async function main_format_blob_to_data_url(blob) {
