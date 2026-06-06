@@ -441,7 +441,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                                     memreductCleanHint.style.display = '';
                                 }
                             } else {
-                                memreductCleanToggle.checked = settings.memreductCleanEnabled !== false;
+                                memreductCleanToggle.checked = settings.memreductCleanEnabled === true;
                             }
                         }
                     } catch (_) { /* 忽略平台检测失败 */ }
