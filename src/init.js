@@ -375,11 +375,16 @@ async function main_init_all() {
 
         console.log('[init] resize listener');
         window.addEventListener('resize', window.main_handle_resize);
+        let blackboard_resize_timer;
         window.addEventListener('resize', () => {
+            // blackboard resize 去抖（tile_renderer.rebuild_all 较重）
             if (window.blackboardManager && dom.canvasContainer) {
-                const w = dom.canvasContainer.clientWidth;
-                const h = dom.canvasContainer.clientHeight;
-                window.blackboardManager.resize(w, h);
+                clearTimeout(blackboard_resize_timer);
+                blackboard_resize_timer = setTimeout(() => {
+                    const w = dom.canvasContainer.clientWidth;
+                    const h = dom.canvasContainer.clientHeight;
+                    window.blackboardManager.resize(w, h);
+                }, 100);
             }
             if (window.documentReaderManager && dom.canvasContainer) {
                 const w = dom.canvasContainer.clientWidth;
@@ -518,14 +523,14 @@ function show_config_recovery_dialog(recoveredFields) {
 
 window.blackboard_ensure_loaded = (async (container) => {
     if (window.blackboardManager) {
-        if (!window.blackboardManager.canvas) {
+        if (!window.blackboardManager.bb_wrapper) {
             window.blackboardManager.init(container);
         }
         return window.blackboardManager;
     }
     try {
         await import('./modules/blackboard/blackboard.js');
-        if (!window.blackboardManager.canvas) {
+        if (!window.blackboardManager.bb_wrapper) {
             window.blackboardManager.init(container);
         }
         return window.blackboardManager;

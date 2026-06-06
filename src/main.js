@@ -1560,9 +1560,15 @@ function main_setup_click_outside() {
         const drEraserBtn = document.getElementById('drBtnEraser');
         const isClickOnDrBtnComment = drCommentBtn?.contains(e.target);
         const isClickOnDrBtnEraser = drEraserBtn?.contains(e.target);
+        // 小黑板自己的笔/橡皮按钮
+        const bbCommentBtn = document.getElementById('bbBtnComment');
+        const bbEraserBtn = document.getElementById('bbBtnEraser');
+        const isClickOnBbBtnComment = bbCommentBtn?.contains(e.target);
+        const isClickOnBbBtnEraser = bbEraserBtn?.contains(e.target);
         
         if (!isClickInsidePanel && !isClickOnBtnComment && !isClickOnBtnEraser
-            && !isClickOnDrBtnComment && !isClickOnDrBtnEraser) {
+            && !isClickOnDrBtnComment && !isClickOnDrBtnEraser
+            && !isClickOnBbBtnComment && !isClickOnBbBtnEraser) {
             main_hide_pen_control_panel();
         }
         
@@ -1582,30 +1588,14 @@ function main_setup_mode_events() {
         main_update_mode('move');
     });
     dom.btnComment.addEventListener('click', () => {
-        const bb = window.blackboardManager;
-        if (bb?.is_open) {
-            // 小黑板打开时检查 bb.draw_mode
-            if (bb.draw_mode === 'comment') {
-                main_show_pen_control_panel(dom.btnComment, 'comment');
-            } else {
-                main_update_mode('comment');
-            }
-        } else if (state.drawMode === 'comment') {
+        if (state.drawMode === 'comment') {
             main_show_pen_control_panel(dom.btnComment, 'comment');
         } else {
             main_update_mode('comment');
         }
     });
     dom.btnEraser.addEventListener('click', () => {
-        const bb = window.blackboardManager;
-        if (bb?.is_open) {
-            // 小黑板打开时检查 bb.draw_mode
-            if (bb.draw_mode === 'eraser' && !DRAW_CONFIG.eraserSpeedEnabled) {
-                main_show_pen_control_panel(dom.btnEraser, 'eraser');
-            } else {
-                main_update_mode('eraser');
-            }
-        } else if (state.drawMode === 'eraser' && !DRAW_CONFIG.eraserSpeedEnabled) {
+        if (state.drawMode === 'eraser' && !DRAW_CONFIG.eraserSpeedEnabled) {
             main_show_pen_control_panel(dom.btnEraser, 'eraser');
         } else {
             main_update_mode('eraser');
@@ -1617,11 +1607,15 @@ function main_setup_mode_events() {
 async function main_update_mode(mode) {
     const bb = window.blackboardManager;
     if (bb?.is_open) {
-        if (bb.is_drawing) {
-            bb.is_drawing = false;
-            await bb._submit_stroke();
+        // 通过 DrawingEngine 提交未完成笔画
+        if (bb.drawing_engine?.is_drawing) {
+            bb.drawing_engine.is_drawing = false;
+            if (bb.drawing_engine.current_stroke) {
+                await bb.drawing_engine._submit_stroke();
+            }
         }
         bb.draw_mode = mode;
+        bb.drawing_engine?.set_draw_mode(mode);
 
         [dom.btnMove, dom.btnComment, dom.btnEraser].forEach(btn => {
             btn.classList.remove('primary-btn');
@@ -1631,18 +1625,18 @@ async function main_update_mode(mode) {
             case 'move':
                 if (dom.btnMove) dom.btnMove.classList.add('primary-btn');
                 if (bb.bb_wrapper) bb.bb_wrapper.style.cursor = 'grab';
-                bb._hide_eraser_hint();
+                bb.drawing_engine?._hide_eraser_hint();
                 break;
             case 'comment':
                 if (dom.btnComment) dom.btnComment.classList.add('primary-btn');
                 if (bb.bb_wrapper) bb.bb_wrapper.style.cursor = 'crosshair';
-                bb._hide_eraser_hint();
+                bb.drawing_engine?._hide_eraser_hint();
                 main_update_pen_style();
                 break;
             case 'eraser':
                 if (dom.btnEraser) dom.btnEraser.classList.add('primary-btn');
                 if (bb.bb_wrapper) bb.bb_wrapper.style.cursor = 'none';
-                bb._show_eraser_hint();
+                bb.drawing_engine?._show_eraser_hint();
                 main_update_eraser_style();
                 break;
         }
@@ -2075,6 +2069,8 @@ function main_hide_eraser_hint() {
 
 function main_show_pen_control_panel(targetBtn, mode) {
     const panel = dom.penControlPanel;
+    if (!panel) return;
+    
     const btnRect = targetBtn.getBoundingClientRect();
     const containerRect = document.querySelector('.main-function').getBoundingClientRect();
     

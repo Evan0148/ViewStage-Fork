@@ -10,6 +10,7 @@
     <meta name="apple-mobile-web-app-capable" content="yes">
     <title>ViewStage</title>
     <link rel="stylesheet" href="styles.css">
+    <link rel="stylesheet" href="blackboard.css">
     <script src="modules/pdf/pdf.min.js" defer></script>
     <script src="modules/i18n.js" defer></script>
     <script>
@@ -45,42 +46,6 @@
                 </div>
                 <div class="eraser-hint" id="eraserHint"></div>
                 <div class="palm-eraser-hint" id="palmEraserHint"></div>
-            </div>
-            
-            <div class="pen-control-panel" id="penControlPanel">
-                <div class="pen-size-presets" id="penSizePresets">
-                    <span class="pen-size-label" id="penSizeValue">5px</span>
-                </div>
-                <div class="pen-color-buttons" id="penColorButtons">
-                    <button class="pen-color-btn" data-index="0" title="颜色1"></button>
-                    <button class="pen-color-btn" data-index="1" title="颜色2"></button>
-                    <button class="pen-color-btn" data-index="2" title="颜色3"></button>
-                    <button class="pen-color-btn" data-index="3" title="颜色4"></button>
-                    <button class="pen-color-btn" data-index="4" title="颜色5"></button>
-                    <button class="pen-color-btn" data-index="5" title="颜色6"></button>
-                    <button class="pen-color-btn" data-index="6" title="颜色7"></button>
-                    <button class="pen-color-btn" data-index="7" title="颜色8"></button>
-                    <button class="pen-color-btn" data-index="8" title="颜色9"></button>
-                    <button class="pen-color-btn" data-index="9" title="颜色10"></button>
-                    <button class="pen-color-btn" data-index="10" title="颜色11"></button>
-                    <button class="pen-color-btn" data-index="11" title="颜色12"></button>
-                    <button class="pen-color-btn" data-index="12" title="颜色13"></button>
-                    <button class="pen-color-btn" data-index="13" title="颜色14"></button>
-                    <button class="pen-color-btn" data-index="14" title="颜色15"></button>
-                </div>
-                <div class="pen-size-presets" id="eraserSizePresets">
-                    <button class="size-preset-btn" data-value="5" style="--dot-size:8px"></button>
-                    <button class="size-preset-btn" data-value="15" style="--dot-size:12px"></button>
-                    <button class="size-preset-btn" data-value="25" style="--dot-size:16px"></button>
-                    <button class="size-preset-btn" data-value="38" style="--dot-size:20px"></button>
-                    <button class="size-preset-btn" data-value="50" style="--dot-size:24px"></button>
-                    <span class="pen-size-label" id="eraserSizeValue">15px</span>
-                    <div class="eraser-clear-sep"></div>
-                    <div class="eraser-clear-track" id="eraserClearTrack">
-                        <input type="range" id="eraserClearSlider" min="0" max="100" value="0" class="eraser-clear-slider">
-                        <span class="eraser-hint-text" id="eraserHintText">拖动清空笔迹</span>
-                    </div>
-                </div>
             </div>
             
             <div class="settings-panel" id="settingsPanel">
@@ -122,11 +87,87 @@
             </div>
             
             <div class="blackboard-panel" id="blackboardPanel">
+                <div class="bb-toolbar" id="bbToolbar">
+                    <div class="bb-mode-group">
+                        <button class="toolbar-btn function-btn" data-bb-mode="move" id="bbBtnMove">
+                            <img data-icon="move" width="16" height="16" alt="移动">
+                            <span data-i18n="toolbar.move">移动</span>
+                        </button>
+                        <button class="toolbar-btn function-btn active" data-bb-mode="comment" id="bbBtnComment">
+                            <img data-icon="pen" width="16" height="16" alt="批注">
+                            <span data-i18n="toolbar.comment">批注</span>
+                        </button>
+                        <button class="toolbar-btn function-btn" data-bb-mode="eraser" id="bbBtnEraser">
+                            <img data-icon="eraser" width="16" height="16" alt="橡皮">
+                            <span data-i18n="toolbar.eraser">橡皮</span>
+                        </button>
+                        <button class="toolbar-btn" id="bbUndo">
+                            <img data-icon="undo" width="16" height="16" alt="撤销">
+                            <span data-i18n="toolbar.undo">撤销</span>
+                        </button>
+                        <button class="toolbar-btn" id="bbClear">
+                            <img data-icon="clear" width="16" height="16" alt="清空">
+                            <span data-i18n="toolbar.clear">清空</span>
+                        </button>
+                        <div class="toolbar-separator"></div>
+                        <button class="toolbar-btn" id="bbPagePrev" disabled>
+                            <img data-icon="chevron-left" width="16" height="16" alt="上一页">
+                        </button>
+                        <span class="dr-page-indicator" id="bbPageIndicator">1 / 1</span>
+                        <button class="toolbar-btn" id="bbPageNext">
+                            <img data-icon="chevron-right" width="16" height="16" alt="下一页">
+                        </button>
+                        <button class="toolbar-btn" id="bbPageAdd">
+                            <img data-icon="add" width="16" height="16" alt="添加页面">
+                        </button>
+                        <div class="toolbar-separator"></div>
+                        <button class="toolbar-btn" id="bbClose" style="color:var(--color-error)">
+                            <img data-icon="dismiss" width="16" height="16" alt="关闭">
+                            <span data-i18n="toolbar.close">关闭</span>
+                        </button>
+                    </div>
+                </div>
                 <div class="blackboard-canvas-wrap" id="blackboardCanvasWrap">
                     <canvas id="blackboardCanvas"></canvas>
                 </div>
             </div>
 
+            <div class="pen-control-panel" id="penControlPanel">
+                <div class="pen-size-presets" id="penSizePresets">
+                    <span class="pen-size-label" id="penSizeValue">5px</span>
+                </div>
+                <div class="pen-color-buttons" id="penColorButtons">
+                    <button class="pen-color-btn" data-index="0" title="颜色1"></button>
+                    <button class="pen-color-btn" data-index="1" title="颜色2"></button>
+                    <button class="pen-color-btn" data-index="2" title="颜色3"></button>
+                    <button class="pen-color-btn" data-index="3" title="颜色4"></button>
+                    <button class="pen-color-btn" data-index="4" title="颜色5"></button>
+                    <button class="pen-color-btn" data-index="5" title="颜色6"></button>
+                    <button class="pen-color-btn" data-index="6" title="颜色7"></button>
+                    <button class="pen-color-btn" data-index="7" title="颜色8"></button>
+                    <button class="pen-color-btn" data-index="8" title="颜色9"></button>
+                    <button class="pen-color-btn" data-index="9" title="颜色10"></button>
+                    <button class="pen-color-btn" data-index="10" title="颜色11"></button>
+                    <button class="pen-color-btn" data-index="11" title="颜色12"></button>
+                    <button class="pen-color-btn" data-index="12" title="颜色13"></button>
+                    <button class="pen-color-btn" data-index="13" title="颜色14"></button>
+                    <button class="pen-color-btn" data-index="14" title="颜色15"></button>
+                </div>
+                <div class="pen-size-presets" id="eraserSizePresets">
+                    <button class="size-preset-btn" data-value="5" style="--dot-size:8px"></button>
+                    <button class="size-preset-btn" data-value="15" style="--dot-size:12px"></button>
+                    <button class="size-preset-btn" data-value="25" style="--dot-size:16px"></button>
+                    <button class="size-preset-btn" data-value="38" style="--dot-size:20px"></button>
+                    <button class="size-preset-btn" data-value="50" style="--dot-size:24px"></button>
+                    <span class="pen-size-label" id="eraserSizeValue">15px</span>
+                    <div class="eraser-clear-sep"></div>
+                    <div class="eraser-clear-track" id="eraserClearTrack">
+                        <input type="range" id="eraserClearSlider" min="0" max="100" value="0" class="eraser-clear-slider">
+                        <span class="eraser-hint-text" id="eraserHintText">拖动清空笔迹</span>
+                    </div>
+                </div>
+            </div>
+            
             <div class="document-reader-panel" id="documentReaderPanel">
                 <div class="doc-reader-scroll-container" id="docReaderScrollContainer"></div>
             </div>
@@ -178,23 +219,7 @@
                         <span data-i18n="toolbar.settings">设置</span>
                     </button>
                     
-                    <div class="toolbar-bb-group" id="bbToolGroup" style="display:none">
-                        <button class="toolbar-btn function-btn" id="bbPagePrev" disabled>
-                            <img data-icon="chevron-left" width="16" height="16" alt="上一页">
-                        </button>
-                        <span class="bb-page-indicator" id="bbPageIndicator">1 / 1</span>
-                        <button class="toolbar-btn function-btn" id="bbPageNext">
-                            <img data-icon="chevron-right" width="16" height="16" alt="下一页">
-                        </button>
-                        <button class="toolbar-btn function-btn" id="bbPageAdd">
-                            <img data-icon="add" width="16" height="16" alt="添加页面">
-                        </button>
-                        <div class="toolbar-separator"></div>
-                        <button class="toolbar-btn function-btn" id="bbClose">
-                            <img data-icon="dismiss" width="16" height="16" alt="关闭">
-                            <span>关闭</span>
-                        </button>
-                    </div>
+                    <!-- 小黑板独立工具栏已移至 blackboard-panel 内 -->
                 </div>
                 
                 <div class="toolbar-right">
