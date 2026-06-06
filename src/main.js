@@ -3185,10 +3185,11 @@ async function main_render_strokes_to_context(ctx, strokes) {
                     lineWidth: lineWidth
                 });
                 
-                const path = new Path2D();
-                path.moveTo(point.fromX, point.fromY);
-                path.lineTo(point.toX, point.toY);
-                ctx.stroke(path);
+                /* 避免 new Path2D() 每段分配临时对象 */
+                ctx.beginPath();
+                ctx.moveTo(point.fromX, point.fromY);
+                ctx.lineTo(point.toX, point.toY);
+                ctx.stroke();
             }
         } else {
             main_update_context_state(ctx, {

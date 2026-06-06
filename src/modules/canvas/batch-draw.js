@@ -306,6 +306,10 @@ class RealtimeBatchDrawManager {
             if (this.currentFps > targetFps) {
                 this.currentFps = targetFps;
                 this.drawInterval = 1000 / this.currentFps;
+            } else if (this.currentFps < targetFps) {
+                /* 负载已降为单笔，快速恢复帧率降低感知延迟 */
+                this.currentFps = Math.min(targetFps, this.currentFps + this.fpsStep * 2);
+                this.drawInterval = 1000 / this.currentFps;
             }
         }
 
@@ -380,7 +384,6 @@ class RealtimeBatchDrawManager {
         let currentColor = this.lastColor;
         let currentLineWidth = this.lastLineWidth;
 
-        const updateCtx = window.main_update_context_state;
         const getPenEffect = window.get_pen_effect_mode;
         const penEffectActive = getPenEffect ? getPenEffect() !== 'off' : false;
 
@@ -398,7 +401,13 @@ class RealtimeBatchDrawManager {
             this._overlayCtx.lineJoin = 'round';
         }
 
-        const eraseByTile = new Map();
+        let eraseByTile = null;
+        /* 路径批处理状态：连续线宽相近的 segment 合并为同一条路径, stroke() 一次 */
+        let batchActive = false;
+        let batchPrevMidX = 0;
+        let batchPrevMidY = 0;
+        let batchLastLineWidth = 0;
+        let batchLastColor = null;
 
         for (let i = 0; i < count; i++) {
             const cmd = commands[i];
@@ -437,8 +446,14 @@ class RealtimeBatchDrawManager {
             }
 
             if (cmd.type === 'erase') {
+                /* 擦除 —— 提交当前绘制批处理 */
+                if (batchActive) {
+                    this._overlayCtx.stroke();
+                    batchActive = false;
+                }
                 const tr = this._tileRenderer || window.tileRenderer;
                 if (tr) {
+                    if (!eraseByTile) eraseByTile = new Map();
                     const halfWidth = (lineWidth || 20) / 2;
                     const infos = tr.infos_for_segment(fromX, fromY, toX, toY, halfWidth);
                     for (const info of infos) {
@@ -453,28 +468,46 @@ class RealtimeBatchDrawManager {
                 }
             } else if (this._overlayCtx) {
                 const ctx = this._overlayCtx;
-                if (cmd.color) {
-                    ctx.strokeStyle = cmd.color;
-                }
-                ctx.lineWidth = Math.max(0.5, lineWidth);
-
-                const isFirst = (i === 0 && (this._strokeStart || this._lastMidX === null));
-                const lastMX = isFirst ? null : (i === 0 ? this._lastMidX : ((commands[i - 1].fromX + commands[i - 1].toX) / 2));
-                const lastMY = isFirst ? null : (i === 0 ? this._lastMidY : ((commands[i - 1].fromY + commands[i - 1].toY) / 2));
                 const midX = (fromX + toX) / 2;
                 const midY = (fromY + toY) / 2;
 
-                if (isFirst || lastMX === null) {
+                if (!batchActive) {
+                    /* 开启新批处理路径 */
+                    if (cmd.color) ctx.strokeStyle = cmd.color;
+                    ctx.lineWidth = Math.max(0.5, lineWidth);
                     ctx.beginPath();
-                    ctx.moveTo(fromX, fromY);
-                    ctx.lineTo(midX, midY);
-                    ctx.stroke();
+
+                    const isFirstSeg = (i === 0 && (this._strokeStart || this._lastMidX === null));
+                    if (isFirstSeg) {
+                        ctx.moveTo(fromX, fromY);
+                        ctx.lineTo(midX, midY);
+                    } else {
+                        const prevMx = (i === 0 ? this._lastMidX : ((commands[i - 1].fromX + commands[i - 1].toX) / 2));
+                        const prevMy = (i === 0 ? this._lastMidY : ((commands[i - 1].fromY + commands[i - 1].toY) / 2));
+                        ctx.moveTo(prevMx, prevMy);
+                        ctx.quadraticCurveTo(fromX, fromY, midX, midY);
+                    }
+                    batchActive = true;
+                    batchLastLineWidth = lineWidth;
+                    batchLastColor = cmd.color;
                 } else {
-                    ctx.beginPath();
-                    ctx.moveTo(lastMX, lastMY);
-                    ctx.quadraticCurveTo(fromX, fromY, midX, midY);
-                    ctx.stroke();
+                    /* 线宽/颜色变化时拆分批处理，否则合并到当前路径减少 stroke() 调用 */
+                    if (cmd.color !== batchLastColor || Math.abs(lineWidth - batchLastLineWidth) >= 0.5) {
+                        ctx.stroke();
+                        if (cmd.color !== batchLastColor) ctx.strokeStyle = cmd.color;
+                        ctx.lineWidth = Math.max(0.5, lineWidth);
+                        ctx.beginPath();
+                        ctx.moveTo(batchPrevMidX, batchPrevMidY);
+                        ctx.quadraticCurveTo(fromX, fromY, midX, midY);
+                        batchLastLineWidth = lineWidth;
+                        batchLastColor = cmd.color;
+                    } else {
+                        /* 线宽未显著变化，直接延展路径 */
+                        ctx.quadraticCurveTo(fromX, fromY, midX, midY);
+                    }
                 }
+                batchPrevMidX = midX;
+                batchPrevMidY = midY;
             }
 
             if (i === count - 1) {
@@ -485,7 +518,13 @@ class RealtimeBatchDrawManager {
             }
         }
 
-        if (eraseByTile.size > 0) {
+        /* 提交剩余批处理路径 */
+        if (batchActive) {
+            this._overlayCtx.stroke();
+            batchActive = false;
+        }
+
+        if (eraseByTile && eraseByTile.size > 0) {
             const tr = this._tileRenderer || window.tileRenderer;
             if (tr) {
                 for (const info of tr.tileInfos) {

@@ -507,19 +507,77 @@ class TileRenderer {
             stroke.bounds.maxX, stroke.bounds.maxY,
             halfWidth
         );
+        if (infos.length === 0) return;
+
         const uniqueKeys = new Set(infos.map(i => i.key));
-        for (const info of this.tileInfos) {
-            if (uniqueKeys.has(info.key)) {
+
+        /* 单 tile —— 直接渲染，无需 offscreen 中间层 */
+        if (infos.length === 1) {
+            const info = infos[0];
+            const ctx = info.ctx;
+            const rect = info.rect;
+            const dpr = info.dpr;
+            ctx.save();
+            ctx.setTransform(dpr, 0, 0, dpr, -rect.x * dpr, -rect.y * dpr);
+            window.main_render_strokes_to_context(ctx, [stroke]);
+            ctx.restore();
+            this.dirty.delete(info.key);
+            return;
+        }
+
+        /* 多 tile —— 存在多 DPR 时回退到逐个 tile 直接渲染 */
+        const mainDpr = infos[0].dpr;
+        if (infos.some(i => i.dpr !== mainDpr)) {
+            for (const info of this.tileInfos) {
+                if (!uniqueKeys.has(info.key)) continue;
                 const ctx = info.ctx;
                 const rect = info.rect;
                 const dpr = info.dpr;
                 ctx.save();
                 ctx.setTransform(dpr, 0, 0, dpr, -rect.x * dpr, -rect.y * dpr);
-                // 无需额外 clip：canvas 尺寸即 tile 边界，自动裁切
                 window.main_render_strokes_to_context(ctx, [stroke]);
                 ctx.restore();
                 this.dirty.delete(info.key);
             }
+            return;
+        }
+
+        /* 多 tile 同 DPR —— 预渲染到 offscreen canvas，drawImage 复合各 tile */
+        const sx = stroke.bounds.minX - halfWidth;
+        const sy = stroke.bounds.minY - halfWidth;
+        const sw = stroke.bounds.maxX - stroke.bounds.minX + halfWidth * 2;
+        const sh = stroke.bounds.maxY - stroke.bounds.minY + halfWidth * 2;
+
+        const offscreen = document.createElement('canvas');
+        offscreen.width = Math.ceil(sw * mainDpr);
+        offscreen.height = Math.ceil(sh * mainDpr);
+        const offCtx = offscreen.getContext('2d');
+        offCtx.setTransform(mainDpr, 0, 0, mainDpr, -sx * mainDpr, -sy * mainDpr);
+        window.main_render_strokes_to_context(offCtx, [stroke]);
+
+        /* 将预渲染结果 blit 到各 tile，仅绘制 tile 与 stroke 交集区域 */
+        for (const info of this.tileInfos) {
+            if (!uniqueKeys.has(info.key)) continue;
+            const ctx = info.ctx;
+            const rect = info.rect;
+            const clipX = Math.max(rect.x, sx);
+            const clipY = Math.max(rect.y, sy);
+            const clipR = Math.min(rect.x + rect.width, sx + sw);
+            const clipB = Math.min(rect.y + rect.height, sy + sh);
+            const clipW = clipR - clipX;
+            const clipH = clipB - clipY;
+            if (clipW <= 0 || clipH <= 0) continue;
+
+            ctx.save();
+            ctx.setTransform(mainDpr, 0, 0, mainDpr, -rect.x * mainDpr, -rect.y * mainDpr);
+            ctx.drawImage(
+                offscreen,
+                (clipX - sx) * mainDpr, (clipY - sy) * mainDpr,
+                clipW * mainDpr, clipH * mainDpr,
+                clipX, clipY, clipW, clipH
+            );
+            ctx.restore();
+            this.dirty.delete(info.key);
         }
     }
 }
