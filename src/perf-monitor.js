@@ -125,7 +125,17 @@ function perf_monitor_refresh_display() {
     const pressure = calc_render_pressure(s, tileR);
 
     // 行 1：FPS + 渲染压力 + 实际 tile DPR（随缩放动态变化）
-    const tileDpr = tileR?.tileInfos?.[0]?.dpr ?? window.DRAW_CONFIG?.dpr ?? 1;
+    // 从可见 tile 中读取 DPR，避免读到视口外 tile 的陈旧值或被 shrink 降回 1 的值
+    let tileDpr = window.DRAW_CONFIG?.dpr ?? 1;
+    if (tileR?.tileInfos) {
+        const visibleKeys = tileR.get_visible_keys();
+        for (const info of tileR.tileInfos) {
+            if (visibleKeys.has(info.key)) {
+                tileDpr = info.dpr;
+                break;
+            }
+        }
+    }
     const dprStr = tileDpr.toFixed(1);
     const line1 = `FPS ${fpsValue}  压力 ${pressure.label}(${pressure.value}%)  DPR ${dprStr}`;
     if (line1 !== perf_prev_line1) {
