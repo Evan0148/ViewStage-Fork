@@ -151,7 +151,7 @@ function perf_monitor_refresh_display() {
     const heapStr = mem
         ? `${(mem.usedJSHeapSize / 1048576).toFixed(0)}MB`
         : '--';
-    const line3 = `瓦片 ${dirtyCount}/${totalTiles}  内存 ${heapStr}`;
+    const line3 = `分块 ${dirtyCount}/${totalTiles}  内存 ${heapStr}`;
     if (line3 !== perf_prev_line3) {
         perf_tiles_line.textContent = line3;
         perf_prev_line3 = line3;
