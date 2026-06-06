@@ -118,8 +118,9 @@ function perf_monitor_refresh_display() {
     // 渲染压力
     const pressure = calc_render_pressure(s, tileR);
 
-    // 行 1：FPS + 渲染压力 + DPR
-    const dprStr = (window.DRAW_CONFIG?.dpr || 1).toFixed(1);
+    // 行 1：FPS + 渲染压力 + 实际 tile DPR（随缩放动态变化）
+    const tileDpr = tileR?.tileInfos?.[0]?.dpr ?? window.DRAW_CONFIG?.dpr ?? 1;
+    const dprStr = tileDpr.toFixed(1);
     perf_fps_line.textContent = `FPS ${perf_fps_value}  P ${pressure.label}(${pressure.value}%)  DPR ${dprStr}`;
 
     // 行 2：batch_draw 引擎指标
