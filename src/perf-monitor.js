@@ -2,20 +2,22 @@
  * ViewStage 右上角性能监视器
  * 显示实时 FPS、批绘制引擎状态等指标
  * 仅在开发者模式下通过开关启用
+ *
+ * 使用 setInterval 而非 requestAnimationFrame 以避免强制浏览器
+ * 每帧走合成管线导致 GPU 无法空闲。
  */
 
-let perf_raf_id = null;
+let perf_timer_id = null;
 let perf_container = null;
-let perf_fps_value = 0;
-let perf_frame_count = 0;
-let perf_last_time = 0;
 let perf_enabled = false;
 
 let perf_fps_line = null;
 let perf_batch_line = null;
 let perf_tiles_line = null;
 
-/** 创建监视器 DOM 并启动 RAF 循环 */
+const PERF_UPDATE_MS = 200;
+
+/** 创建监视器 DOM 并启动定时器 */
 function perf_monitor_init() {
     if (perf_container) return;
 
@@ -50,25 +52,7 @@ function perf_monitor_init() {
     document.body.appendChild(perf_container);
 
     perf_enabled = true;
-    perf_last_time = performance.now();
-    perf_frame_count = 0;
-    perf_raf_id = requestAnimationFrame(perf_monitor_raf_loop);
-}
-
-/** RAF 回调：累计帧数，每秒提取一次 stats */
-function perf_monitor_raf_loop(timestamp) {
-    if (!perf_enabled) return;
-
-    perf_raf_id = requestAnimationFrame(perf_monitor_raf_loop);
-    perf_frame_count++;
-
-    const elapsed = timestamp - perf_last_time;
-    if (elapsed >= 200) {
-        perf_fps_value = Math.round(perf_frame_count * 1000 / elapsed);
-        perf_frame_count = 0;
-        perf_last_time = timestamp;
-        perf_monitor_refresh_display();
-    }
+    perf_timer_id = setInterval(perf_monitor_refresh_display, PERF_UPDATE_MS);
 }
 
 /**
@@ -115,13 +99,16 @@ function perf_monitor_refresh_display() {
     const tileR = window.tileRenderer;
     const mem = typeof performance.memory !== 'undefined' ? performance.memory : null;
 
+    // FPS 取自 batch_draw 引擎自报的 currentFps，不再用 RAF 空转计数
+    const fpsValue = s?.currentFps ?? '-';
+
     // 渲染压力
     const pressure = calc_render_pressure(s, tileR);
 
     // 行 1：FPS + 渲染压力 + 实际 tile DPR（随缩放动态变化）
     const tileDpr = tileR?.tileInfos?.[0]?.dpr ?? window.DRAW_CONFIG?.dpr ?? 1;
     const dprStr = tileDpr.toFixed(1);
-    perf_fps_line.textContent = `FPS ${perf_fps_value}  P ${pressure.label}(${pressure.value}%)  DPR ${dprStr}`;
+    perf_fps_line.textContent = `FPS ${fpsValue}  P ${pressure.label}(${pressure.value}%)  DPR ${dprStr}`;
 
     // 行 2：batch_draw 引擎指标
     if (s) {
@@ -152,14 +139,12 @@ function perf_monitor_set_enabled(enabled) {
             perf_monitor_init();
         } else {
             perf_container.style.display = 'block';
-            perf_last_time = performance.now();
-            perf_frame_count = 0;
-            perf_raf_id = requestAnimationFrame(perf_monitor_raf_loop);
+            perf_timer_id = setInterval(perf_monitor_refresh_display, PERF_UPDATE_MS);
         }
     } else {
-        if (perf_raf_id) {
-            cancelAnimationFrame(perf_raf_id);
-            perf_raf_id = null;
+        if (perf_timer_id != null) {
+            clearInterval(perf_timer_id);
+            perf_timer_id = null;
         }
         if (perf_container) {
             perf_container.style.display = 'none';
