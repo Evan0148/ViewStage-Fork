@@ -81,27 +81,18 @@ function developer_options_show_main(currentWidthRatio, currentMaxScale, perfMon
     page.innerHTML = `
         <h2 class="page-title">开发者选项</h2>
         <div class="setting-item">
-            <div class="setting-item-start">
-                <img class="setting-item-icon" data-icon="document-search">
-                <span class="setting-label">文档加载检测</span>
-            </div>
-            <img id="devGoDetection" class="setting-item-icon" data-icon="chevron-right" style="cursor:pointer;">
+            <span class="setting-label">文档加载检测</span>
+            <span id="devGoDetection" style="cursor:pointer;font-size:18px;color:var(--color-muted, #888);padding:4px;">→</span>
         </div>
         <div class="setting-item">
-            <div class="setting-item-start">
-                <img class="setting-item-icon" data-icon="gauge">
-                <span class="setting-label">性能监视器</span>
-            </div>
+            <span class="setting-label">性能监视器</span>
             <label class="toggle-switch">
                 <input type="checkbox" id="devPerfMonitorToggle"${perfMonitorEnabled ? ' checked' : ''}>
                 <span class="toggle-slider"></span>
             </label>
         </div>
         <div class="setting-item">
-            <div class="setting-item-start">
-                <img class="setting-item-icon" data-icon="gauge">
-                <span class="setting-label">监视器更新频率</span>
-            </div>
+            <span class="setting-label">监视器更新频率</span>
             <div class="custom-select" id="devPerfIntervalSelect">
                 <div class="select-selected" id="devPerfIntervalSelected">${perf_interval_label(perfMonitorInterval)}</div>
                 <div class="select-options" id="devPerfIntervalOptions">
@@ -112,10 +103,7 @@ function developer_options_show_main(currentWidthRatio, currentMaxScale, perfMon
             </div>
         </div>
         <div class="setting-item">
-            <div class="setting-item-start">
-                <img class="setting-item-icon" data-icon="line-thickness">
-                <span class="setting-label">最快速度时宽度比例</span>
-            </div>
+            <span class="setting-label">最快速度时宽度比例</span>
             <div class="custom-select" id="devWidthRatioSelect">
                 <div class="select-selected" id="devWidthRatioSelected">${currentWidthLabel}</div>
                 <div class="select-options" id="devWidthRatioOptions">
@@ -126,10 +114,7 @@ function developer_options_show_main(currentWidthRatio, currentMaxScale, perfMon
             </div>
         </div>
         <div class="setting-item">
-            <div class="setting-item-start">
-                <img class="setting-item-icon" data-icon="arrow-maximize">
-                <span class="setting-label">允许缩放的最大大小</span>
-            </div>
+            <span class="setting-label">允许缩放的最大大小</span>
             <div class="custom-select" id="devMaxScaleSelect">
                 <div class="select-selected" id="devMaxScaleSelected">${currentScaleLabel}</div>
                 <div class="select-options" id="devMaxScaleOptions">
@@ -140,8 +125,6 @@ function developer_options_show_main(currentWidthRatio, currentMaxScale, perfMon
             </div>
         </div>
     `;
-
-    window.ThemeManager?.theme_load_icons?.();
 
     document.getElementById('devGoDetection')?.addEventListener('click', developer_options_show_detection);
 
@@ -263,7 +246,7 @@ function developer_options_show_detection() {
 
     page.innerHTML = `
         <div style="display:flex;align-items:center;gap:8px;margin-bottom:16px;">
-            <img id="devBackToMain" class="setting-item-icon" data-icon="chevron-left" style="cursor:pointer;">
+            <span id="devBackToMain" style="cursor:pointer;font-size:18px;color:var(--color-muted, #888);padding:4px;">←</span>
             <h2 class="page-title" style="margin:0;">文档加载检测</h2>
         </div>
         <div class="setting-item">
@@ -300,7 +283,6 @@ function developer_options_show_detection() {
     `;
 
     document.getElementById('devBackToMain')?.addEventListener('click', developer_options_init);
-    window.ThemeManager?.theme_load_icons?.();
 
     const cleanBtn = document.getElementById('devCleanMemory');
     if (cleanBtn) {
