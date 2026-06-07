@@ -2379,7 +2379,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         });
 
         const script = document.createElement('script');
-        script.src = 'developer-options.js';
+        script.src = './modules/developer/developer-options.js';
         script.onload = () => {
             if (typeof developer_options_init === 'function') {
                 developer_options_init();

@@ -1018,7 +1018,7 @@ function main_setup_pdf_file_open() {
             const interval = settings.perfMonitorInterval || 200;
             if (settings.perfMonitorEnabled) {
                 if (!window.perfMonitor) {
-                    import('./perf-monitor.js').then(mod => {
+                    import('./modules/developer/perf-monitor.js').then(mod => {
                         window.perfMonitor = mod;
                         mod.perf_monitor_init(interval);
                     }).catch(e => {

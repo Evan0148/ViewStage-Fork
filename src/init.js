@@ -280,7 +280,7 @@ async function settings_load_camera_config() {
             // 仅在开发者模式下才检查并加载性能监视器
             if (settings.developerMode && settings.perfMonitorEnabled) {
                 try {
-                    window.perfMonitor = await import('./perf-monitor.js');
+                    window.perfMonitor = await import('./modules/developer/perf-monitor.js');
                     window.perfMonitor.perf_monitor_init(settings.perfMonitorInterval || 200);
                 } catch (e) {
                     console.error('[init] perf monitor load error:', e);
