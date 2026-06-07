@@ -255,6 +255,11 @@ class DocumentReaderManager {
             clearTimeout(this._smooth_transform_timeout_id);
             this._smooth_transform_timeout_id = null;
         }
+        if (this._zoom_complete_timer !== null) {
+            clearTimeout(this._zoom_complete_timer);
+            this._zoom_complete_timer = null;
+        }
+        this._dr_is_zooming = false;
 
         // 清理预渲染队列
         this._cancel_prerender();

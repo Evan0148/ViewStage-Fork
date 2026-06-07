@@ -28,6 +28,44 @@ let currentAnimationId = null;
 let pending_transform = null;
 let transform_raf_id = null;
 let wheel_smooth_timer_id = null;
+let zoom_complete_timer_id = null;   // 双指缩放结束后延迟批量更新 tile 的定时器
+
+/** 标记缩放进行中，重置延迟批量更新定时器（缩放期间跳过 tile/overlay 逐帧更新） */
+function main_set_zooming() {
+    state.isZooming = true;
+    if (zoom_complete_timer_id !== null) {
+        clearTimeout(zoom_complete_timer_id);
+    }
+    zoom_complete_timer_id = setTimeout(() => {
+        zoom_complete_timer_id = null;
+        state.isZooming = false;
+        if (window.tileRenderer) {
+            window.tileRenderer.update_visible_tile_dpr(state.scale, false, true);
+        }
+        if (window.batchDrawManager) {
+            window.batchDrawManager.update_overlay_dpr(state.scale);
+        }
+    }, 300);
+}
+
+/** 取消缩放延迟更新（缩放结束时立即更新） */
+function main_cancel_zoom_debounce() {
+    if (zoom_complete_timer_id !== null) {
+        clearTimeout(zoom_complete_timer_id);
+        zoom_complete_timer_id = null;
+    }
+    state.isZooming = false;
+}
+
+/** 取消缓动动画，移除 CSS transition，防止与新手势冲突 */
+function main_cancel_smooth_transform() {
+    if (currentAnimationId !== null) {
+        clearTimeout(currentAnimationId);
+        currentAnimationId = null;
+    }
+    dom.canvasWrapper.classList.remove('smooth-transform');
+    dom.canvasWrapper.style.transitionDuration = '';
+}
 
 function main_update_transform_schedule(x, y, scale) {
     if (!pending_transform) {
@@ -45,12 +83,15 @@ function main_update_transform_schedule(x, y, scale) {
                 last_canvas_transform.x = pt.x;
                 last_canvas_transform.y = pt.y;
                 last_canvas_transform.scale = pt.scale;
-                if (window.tileRenderer) {
-                    window.tileRenderer.cancel_idle_shrink();
-                    window.tileRenderer.update_visible_tile_dpr(pt.scale);
-                }
-                if (window.batchDrawManager) {
-                    window.batchDrawManager.update_overlay_dpr(pt.scale);
+                // 缩放进行中时跳过 tile/overlay 更新，由缩放结束定时器统一处理
+                if (!state.isZooming) {
+                    if (window.tileRenderer) {
+                        window.tileRenderer.cancel_idle_shrink();
+                        window.tileRenderer.update_visible_tile_dpr(pt.scale);
+                    }
+                    if (window.batchDrawManager) {
+                        window.batchDrawManager.update_overlay_dpr(pt.scale);
+                    }
                 }
             }
             transform_raf_id = null;
@@ -474,6 +515,7 @@ let state = {
     isDrawing: false,
     isDragging: false,
     isScaling: false,
+    isZooming: false,         // 双指缩放进行中，用于延迟 tile/overlay 更新
     canvasX: 0,
     canvasY: 0,
     scale: 1,
@@ -494,6 +536,8 @@ let state = {
     startScaleY: 0,
     startCanvasX: 0,
     startCanvasY: 0,
+    touchStartCenterX: 0,   // 双指缩放起始中心 X
+    touchStartCenterY: 0,   // 双指缩放起始中心 Y
     strokeHistory: [],
     baseImageURL: null,
     baseImageObj: null,
@@ -1690,6 +1734,7 @@ async function main_update_mode(mode) {
     }
     state.isDragging = false;
     state.isScaling = false;
+    main_cancel_zoom_debounce();
     
     main_hide_pen_control_panel();
     
@@ -2335,6 +2380,9 @@ function main_setup_canvas_mouse_events() {
 function main_handle_pointer_down(e) {
     if (window.tileRenderer) window.tileRenderer.cancel_idle_shrink();
     e.preventDefault();
+    main_cancel_smooth_transform();
+    // 缩放进行中禁止指针开始绘制，防止第三根手指意外触屏
+    if (state.isScaling) return;
     state.drawCanvasRect = dom.canvasWrapper.getBoundingClientRect();
 
     const palmResult = main_is_palm_pointer(e);
@@ -2625,6 +2673,7 @@ function main_setup_canvas_touch_events() {
 
 async function main_handle_touch_start(e) {
     e.preventDefault();
+    main_cancel_smooth_transform();
     const touches = e.touches;
     state.drawCanvasRect = dom.canvasWrapper.getBoundingClientRect();
 
@@ -2682,11 +2731,11 @@ async function main_handle_touch_start(e) {
             main_start_stroke('erase');
         }
     } else if (touches.length === 2) {
-        // 双指缩放前先提交当前未完成的笔画
+        // 双指缩放前先丢弃当前未完成的笔画（避免误绘制）
         if (state.isDrawing) {
             state.isDrawing = false;
             main_hide_drawing_mode();
-            await main_submit_stroke();
+            state.currentStroke = null;
             batchDrawManager.batch_draw_delete_all();
             state.cachedInvScale = 1 / main_fetch_safe_scale();
         }
@@ -2698,6 +2747,8 @@ async function main_handle_touch_start(e) {
         state.startScaleY = (touches[0].clientY + touches[1].clientY) / 2;
         state.startCanvasX = state.canvasX;
         state.startCanvasY = state.canvasY;
+        state.touchStartCenterX = state.startScaleX;
+        state.touchStartCenterY = state.startScaleY;
         dom.canvasWrapper.classList.add('dragging');
     }
 }
@@ -2777,7 +2828,15 @@ function main_handle_touch_move(e) {
     } else if (touches.length === 2 && state.isScaling) {
         const currentDistanceSq = main_calc_touch_distance_squared(touches[0], touches[1]);
         const scaleRatio = Math.sqrt(currentDistanceSq / state.startDistanceSq);
-        let newScale = state.startScale * scaleRatio;
+        // 死区：缩放比变化小于 1.5% 时不触发缩放，防止手指微动导致画面抖动
+        const ZOOM_DEAD_ZONE = 0.015;
+        const scaleChange = Math.abs(scaleRatio - 1);
+        let newScale;
+        if (scaleChange > ZOOM_DEAD_ZONE) {
+            newScale = state.startScale * scaleRatio;
+        } else {
+            newScale = state.startScale;
+        }
         const maxScale = state.isCameraOpen ? DRAW_CONFIG.maxScaleCamera : DRAW_CONFIG.maxScaleImage;
         newScale = newScale < DRAW_CONFIG.minScale ? DRAW_CONFIG.minScale : (newScale > maxScale ? maxScale : newScale);
         
@@ -2785,14 +2844,18 @@ function main_handle_touch_move(e) {
         const centerY = (touches[0].clientY + touches[1].clientY) / 2;
         
         const finalRatio = newScale / state.startScale;
-        state.canvasX = centerX - (state.startScaleX - state.startCanvasX) * finalRatio;
-        state.canvasY = centerY - (state.startScaleY - state.startCanvasY) * finalRatio;
+        const panDx = centerX - state.touchStartCenterX;
+        const panDy = centerY - state.touchStartCenterY;
+        state.canvasX = state.startScaleX - (state.startScaleX - state.startCanvasX) * finalRatio + panDx;
+        state.canvasY = state.startScaleY - (state.startScaleY - state.startCanvasY) * finalRatio + panDy;
         state.scale = newScale;
         
         // 缩放/平移过程中实时进行边界钳制，防止画布越界
         main_update_move_bound();
         main_update_canvas_position();
         
+        // 标记缩放进行中，延迟 tile/overlay 批量更新
+        main_set_zooming();
         main_update_transform_schedule(state.canvasX, state.canvasY, state.scale);
         
         main_update_eraser_hint_size();
@@ -2822,15 +2885,10 @@ async function main_handle_touch_end(e) {
         main_update_canvas_position();
         
         if (state.isScaling) {
-            // 捏合缩放结束 → 缓动动画归位
+            // 捏合缩放结束 → 取消延迟更新定时器，立即批量更新
+            main_cancel_zoom_debounce();
+            // 缓动动画归位（内部已包含 tile mark_all + overlay 更新）
             main_update_canvas_transform_smooth(state.canvasX, state.canvasY, state.scale, 200);
-            if (window.tileRenderer) {
-                window.tileRenderer.update_visible_tile_dpr(state.scale, false, true);
-                window.tileRenderer.mark_all();
-            }
-            if (window.batchDrawManager) {
-                window.batchDrawManager.update_overlay_dpr(state.scale);
-            }
         } else if (state.isDrawing) {
             state.isDrawing = false;
             dom.canvasWrapper.style.transform = `translate3d(${state.canvasX}px, ${state.canvasY}px, 0) scale(${state.scale})`;
@@ -2847,6 +2905,7 @@ async function main_handle_touch_end(e) {
         state.isScaling = false;
     } else if (e.touches.length === 1) {
         state.isScaling = false;
+        main_cancel_zoom_debounce();
         main_update_move_bound();
         main_update_canvas_position();
         dom.canvasWrapper.style.transform = `translate3d(${state.canvasX}px, ${state.canvasY}px, 0) scale(${state.scale})`;
@@ -2912,8 +2971,10 @@ function main_update_canvas_transform_smooth(targetX, targetY, targetScale, dura
     dom.canvasWrapper.classList.add('smooth-transform');
     dom.canvasWrapper.style.transform = `translate3d(${state.canvasX}px, ${state.canvasY}px, 0) scale(${state.scale})`;
 
+    // 更新瓦片与覆盖层（含 mark_all 确保缩放结束后全量重绘）
     if (window.tileRenderer) {
         window.tileRenderer.update_visible_tile_dpr(state.scale, false, true);
+        window.tileRenderer.mark_all();
     }
     if (window.batchDrawManager) {
         window.batchDrawManager.update_overlay_dpr(state.scale);

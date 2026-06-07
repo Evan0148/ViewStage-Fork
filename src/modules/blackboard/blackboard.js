@@ -49,6 +49,13 @@ class BlackboardManager {
         this._cached_visible_rect_y = null;
         this._animate_timer_id = null;
 
+        // 触摸手势优化
+        this._touch_raf_id = null;               // 捏合缩放 rAF 节流 ID
+        this._touch_pending_data = null;          // 待处理的触摸数据 { t0, t1 }
+        this._touch_start_center_x = 0;           // 捏合起始中心 X
+        this._touch_start_center_y = 0;           // 捏合起始中心 Y
+        this._smooth_transform_timeout_id = null; // will-change 延迟移除定时器
+
         this.draw_mode = 'comment';
 
         this.screen_w = 0;
@@ -148,6 +155,30 @@ class BlackboardManager {
             this.bb_wrapper.classList.remove('smooth-transform');
             this.bb_wrapper.style.transitionDuration = '';
         }, duration);
+    }
+
+    /** 触控交互时启用 GPU 合成层（will-change: transform 内联样式，不使用带 transition 的 class） */
+    _touch_enable_gpu() {
+        if (this._smooth_transform_timeout_id !== null) {
+            clearTimeout(this._smooth_transform_timeout_id);
+            this._smooth_transform_timeout_id = null;
+        }
+        if (this.bb_wrapper) {
+            this.bb_wrapper.style.willChange = 'transform';
+        }
+    }
+
+    /** 触控交互结束后延迟释放 GPU 合成层 */
+    _touch_schedule_disable_gpu() {
+        if (this._smooth_transform_timeout_id !== null) {
+            clearTimeout(this._smooth_transform_timeout_id);
+        }
+        this._smooth_transform_timeout_id = setTimeout(() => {
+            this._smooth_transform_timeout_id = null;
+            if (this.bb_wrapper) {
+                this.bb_wrapper.style.willChange = '';
+            }
+        }, 150);
     }
 
     _fetch_visible_rect() {
@@ -429,7 +460,12 @@ class BlackboardManager {
         }
         if (this.bb_wrapper) {
             this.bb_wrapper.classList.remove('smooth-transform');
+            this.bb_wrapper.style.willChange = '';
         }
+        // 清理触摸手势状态
+        this._cleanup_touch_gesture();
+        this.bb_state.is_scaling = false;
+        this.bb_state.is_dragging = false;
 
         // 通过 DrawingEngine 提交未完成的笔画
         if (this.drawing_engine.is_drawing || this.drawing_engine.current_stroke) {
@@ -750,6 +786,7 @@ class BlackboardManager {
                 s.is_dragging = true;
                 s.start_drag_x = touch.clientX - s.canvas_x;
                 s.start_drag_y = touch.clientY - s.canvas_y;
+                this._touch_enable_gpu();
             } else if (this.draw_mode === 'comment' || this.draw_mode === 'eraser') {
                 this.drawing_engine.is_drawing = true;
                 const inv = s.cached_inv_scale;
@@ -775,6 +812,9 @@ class BlackboardManager {
             s.start_scale_y = (touches[0].clientY + touches[1].clientY) / 2;
             s.start_canvas_x = s.canvas_x;
             s.start_canvas_y = s.canvas_y;
+            this._touch_start_center_x = s.start_scale_x;
+            this._touch_start_center_y = s.start_scale_y;
+            this._touch_enable_gpu();
         }
     }
 
@@ -811,23 +851,49 @@ class BlackboardManager {
         }
 
         if (touches.length === 2 && s.is_scaling) {
-            const current_dist_sq = this._calc_touch_dist_sq(touches[0], touches[1]);
-            const scale_ratio = Math.sqrt(current_dist_sq / s.start_distance_sq);
-            let new_scale = s.start_scale * scale_ratio;
-            const max_scale = window.DRAW_CONFIG ? window.DRAW_CONFIG.maxScaleImage : 3;
-            new_scale = Math.max(window.DRAW_CONFIG ? window.DRAW_CONFIG.minScale : 0.5, Math.min(max_scale, new_scale));
+            // 缓存触摸数据，由 rAF 节流处理（保证 60fps 平滑输出）
+            this._touch_pending_data = {
+                t0: { clientX: touches[0].clientX, clientY: touches[0].clientY },
+                t1: { clientX: touches[1].clientX, clientY: touches[1].clientY }
+            };
 
-            const center_x = (touches[0].clientX + touches[1].clientX) / 2;
-            const center_y = (touches[0].clientY + touches[1].clientY) / 2;
+            if (this._touch_raf_id !== null) return;
+            this._touch_raf_id = requestAnimationFrame(() => {
+                this._touch_raf_id = null;
+                const data = this._touch_pending_data;
+                if (!data || !s.is_scaling) return;
+                this._touch_pending_data = null;
 
-            const final_ratio = new_scale / s.start_scale;
-            s.canvas_x = center_x - (s.start_scale_x - s.start_canvas_x) * final_ratio;
-            s.canvas_y = center_y - (s.start_scale_y - s.start_canvas_y) * final_ratio;
-            s.scale = new_scale;
+                const current_dist_sq = this._calc_touch_dist_sq(data.t0, data.t1);
+                const scale_ratio = Math.sqrt(current_dist_sq / s.start_distance_sq);
+                let new_scale = s.start_scale * scale_ratio;
+                const max_scale = window.DRAW_CONFIG ? window.DRAW_CONFIG.maxScaleImage : 3;
+                new_scale = Math.max(window.DRAW_CONFIG ? window.DRAW_CONFIG.minScale : 0.5, Math.min(max_scale, new_scale));
 
-            this._update_move_bound();
-            this._update_canvas_position();
-            this._sync_bb_transform();
+                const center_x = (data.t0.clientX + data.t1.clientX) / 2;
+                const center_y = (data.t0.clientY + data.t1.clientY) / 2;
+
+                if (new_scale !== s.scale) {
+                    const final_ratio = new_scale / s.start_scale;
+                    const pan_dx = center_x - this._touch_start_center_x;
+                    const pan_dy = center_y - this._touch_start_center_y;
+                    s.canvas_x = s.start_scale_x - (s.start_scale_x - s.start_canvas_x) * final_ratio + pan_dx;
+                    s.canvas_y = s.start_scale_y - (s.start_scale_y - s.start_canvas_y) * final_ratio + pan_dy;
+                    s.scale = new_scale;
+                } else {
+                    // 缩放未变化时仅为纯平移
+                    const pan_dx = center_x - this._touch_start_center_x;
+                    const pan_dy = center_y - this._touch_start_center_y;
+                    if (Math.abs(pan_dx) > 0.5 || Math.abs(pan_dy) > 0.5) {
+                        s.canvas_x = s.start_canvas_x + pan_dx;
+                        s.canvas_y = s.start_canvas_y + pan_dy;
+                    }
+                }
+
+                this._update_move_bound();
+                this._update_canvas_position();
+                this._sync_bb_transform();
+            });
         }
     }
 
@@ -839,13 +905,20 @@ class BlackboardManager {
             }
             return;
         }
-        if (window.PointerEvent) return;
+
+        if (window.PointerEvent) {
+            // PointerEvent 设备上 touch 只处理双指缩放，结束时需清理 rAF 和 GPU
+            this._cleanup_touch_gesture();
+            return;
+        }
         const s = this.bb_state;
         if (s.is_scaling && e.touches.length < 2) {
             s.is_scaling = false;
+            this._cleanup_touch_gesture();
         }
         if (s.is_dragging && e.touches.length === 0) {
             s.is_dragging = false;
+            this._touch_schedule_disable_gpu();
         }
         if (e.touches.length === 0) {
             if (this.drawing_engine.is_drawing) {
@@ -854,6 +927,16 @@ class BlackboardManager {
                 await this.drawing_engine._submit_stroke();
             }
         }
+    }
+
+    /** 清理触摸手势的 rAF 节流和 GPU 合成层 */
+    _cleanup_touch_gesture() {
+        if (this._touch_raf_id !== null) {
+            cancelAnimationFrame(this._touch_raf_id);
+            this._touch_raf_id = null;
+        }
+        this._touch_pending_data = null;
+        this._touch_schedule_disable_gpu();
     }
 
     // ====== 快照 ======
