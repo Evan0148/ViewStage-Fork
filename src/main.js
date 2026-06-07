@@ -29,6 +29,7 @@ let pending_transform = null;
 let transform_raf_id = null;
 let wheel_smooth_timer_id = null;
 let zoom_complete_timer_id = null;   // 双指缩放结束后延迟批量更新 tile 的定时器
+let last_tile_update_scale = 1;      // 缩放过程中上次渐进更新 tile 时的 scale 值
 
 /** 标记缩放进行中，重置延迟批量更新定时器（缩放期间跳过 tile/overlay 逐帧更新） */
 function main_set_zooming() {
@@ -2750,6 +2751,8 @@ async function main_handle_touch_start(e) {
         state.touchStartCenterX = state.startScaleX;
         state.touchStartCenterY = state.startScaleY;
         dom.canvasWrapper.classList.add('dragging');
+        // 新缩放手势开始时重置渐进更新标记
+        last_tile_update_scale = state.scale;
     }
 }
 
@@ -2829,13 +2832,14 @@ function main_handle_touch_move(e) {
         const currentDistanceSq = main_calc_touch_distance_squared(touches[0], touches[1]);
         const scaleRatio = Math.sqrt(currentDistanceSq / state.startDistanceSq);
         // 死区：缩放比变化小于 1.5% 时不触发缩放，防止手指微动导致画面抖动
+        // 死区内保持当前缩放值，不回退到起始值，消除缓慢缩放时的振荡
         const ZOOM_DEAD_ZONE = 0.015;
         const scaleChange = Math.abs(scaleRatio - 1);
         let newScale;
         if (scaleChange > ZOOM_DEAD_ZONE) {
             newScale = state.startScale * scaleRatio;
         } else {
-            newScale = state.startScale;
+            newScale = state.scale;
         }
         const maxScale = state.isCameraOpen ? DRAW_CONFIG.maxScaleCamera : DRAW_CONFIG.maxScaleImage;
         newScale = newScale < DRAW_CONFIG.minScale ? DRAW_CONFIG.minScale : (newScale > maxScale ? maxScale : newScale);
@@ -2843,11 +2847,11 @@ function main_handle_touch_move(e) {
         const centerX = (touches[0].clientX + touches[1].clientX) / 2;
         const centerY = (touches[0].clientY + touches[1].clientY) / 2;
         
-        const finalRatio = newScale / state.startScale;
-        const panDx = centerX - state.touchStartCenterX;
-        const panDy = centerY - state.touchStartCenterY;
-        state.canvasX = state.startScaleX - (state.startScaleX - state.startCanvasX) * finalRatio + panDx;
-        state.canvasY = state.startScaleY - (state.startScaleY - state.startCanvasY) * finalRatio + panDy;
+        // 递进式缩放公式：基于当前帧的 canvasX/Y 和 scale 计算
+        // 避免固定快照公式在边界钳制后画面跳变的问题
+        const incrementalRatio = newScale / state.scale;
+        state.canvasX = centerX - (centerX - state.canvasX) * incrementalRatio;
+        state.canvasY = centerY - (centerY - state.canvasY) * incrementalRatio;
         state.scale = newScale;
         
         // 缩放/平移过程中实时进行边界钳制，防止画布越界
@@ -2857,6 +2861,18 @@ function main_handle_touch_move(e) {
         // 标记缩放进行中，延迟 tile/overlay 批量更新
         main_set_zooming();
         main_update_transform_schedule(state.canvasX, state.canvasY, state.scale);
+        
+        // 缩放变化超过 25% 时渐进更新 tile，减少大幅缩放时的模糊时间
+        const TILE_UPDATE_THRESHOLD = 0.25;
+        if (Math.abs(state.scale / last_tile_update_scale - 1) > TILE_UPDATE_THRESHOLD) {
+            last_tile_update_scale = state.scale;
+            if (window.tileRenderer) {
+                window.tileRenderer.update_visible_tile_dpr(state.scale, false, true);
+            }
+            if (window.batchDrawManager) {
+                window.batchDrawManager.update_overlay_dpr(state.scale);
+            }
+        }
         
         main_update_eraser_hint_size();
     }
