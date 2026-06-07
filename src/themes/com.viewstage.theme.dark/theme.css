@@ -668,6 +668,10 @@ body {
     padding: 8px;
 }
 
+:is(.toolbar, .bb-toolbar).hide-text .dr-page-indicator {
+    min-height: 36px;
+}
+
 /* ===== 侧边栏 ===== */
 .sidebar {
     display: flex;
