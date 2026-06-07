@@ -2847,12 +2847,23 @@ function main_handle_touch_move(e) {
         const centerX = (touches[0].clientX + touches[1].clientX) / 2;
         const centerY = (touches[0].clientY + touches[1].clientY) / 2;
         
-        // 递进式缩放公式：基于当前帧的 canvasX/Y 和 scale 计算
-        // 避免固定快照公式在边界钳制后画面跳变的问题
-        const incrementalRatio = newScale / state.scale;
-        state.canvasX = centerX - (centerX - state.canvasX) * incrementalRatio;
-        state.canvasY = centerY - (centerY - state.canvasY) * incrementalRatio;
-        state.scale = newScale;
+        // 两指平移增量（基于起始中心点的偏移）
+        const panDx = centerX - state.touchStartCenterX;
+        const panDy = centerY - state.touchStartCenterY;
+        
+        if (newScale !== state.scale) {
+            // 有缩放变化时：以起始中心为锚点计算缩放偏移，再加上平移增量
+            const ratio = newScale / state.startScale;
+            state.canvasX = state.startScaleX - (state.startScaleX - state.startCanvasX) * ratio + panDx;
+            state.canvasY = state.startScaleY - (state.startScaleY - state.startCanvasY) * ratio + panDy;
+            state.scale = newScale;
+        } else {
+            // 纯平移（缩放未变化时也允许平移）
+            if (Math.abs(panDx) > 0.5 || Math.abs(panDy) > 0.5) {
+                state.canvasX = state.startCanvasX + panDx;
+                state.canvasY = state.startCanvasY + panDy;
+            }
+        }
         
         // 缩放/平移过程中实时进行边界钳制，防止画布越界
         main_update_move_bound();
