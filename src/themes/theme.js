@@ -255,9 +255,15 @@ const ThemeManager = {
 
   /**
    * 根据主题配置切换工具栏文字标签的显隐
+   * JS 直接控制 span 的显隐，CSS 只保留按钮尺寸调整
    */
   theme_update_toolbar_text_visibility() {
     const show = this.theme_fetch_toolbar_text();
+    // JS 直接控制 toolbar 文字显隐
+    document.querySelectorAll('.toolbar .toolbar-btn span:not(img), .bb-toolbar .toolbar-btn span:not(img)').forEach(span => {
+      span.style.display = show ? '' : 'none';
+    });
+    // 保留 .hide-text 类用于按钮尺寸调整（min-height/min-width/padding）
     document.querySelectorAll('.toolbar, .bb-toolbar').forEach(el => {
       el.classList.toggle('hide-text', !show);
     });

@@ -2407,16 +2407,15 @@ class DocumentReaderManager {
             if (left_section) left_section.style.display = 'none';
             if (center_section) center_section.style.display = 'none';
             if (right_section) {
-                right_section.style.position = 'absolute';
-                right_section.style.right = '0';
+                // 用 margin-left:auto 在 flex 流中推到右侧，避免 position:absolute 导致高度/对齐问题
+                right_section.style.marginLeft = 'auto';
             }
         } else {
             // 恢复原始布局
             if (left_section) left_section.style.display = '';
             if (center_section) center_section.style.display = '';
             if (right_section) {
-                right_section.style.position = '';
-                right_section.style.right = '';
+                right_section.style.marginLeft = '';
             }
         }
 
@@ -2424,9 +2423,9 @@ class DocumentReaderManager {
         if (btn_expand) btn_expand.style.display = reader_active ? 'none' : '';
         if (btn_save) btn_save.style.display = reader_active ? 'none' : '';
 
-        // 显示/隐藏文档阅读器控件
+        // 显示/隐藏文档阅读器控件（CSS 已定义 .toolbar-dr-group { display: inline-flex }）
         if (this._dr_tool_group) {
-            this._dr_tool_group.style.display = reader_active ? 'inline-flex' : 'none';
+            this._dr_tool_group.style.display = reader_active ? '' : 'none';
         }
     }
 

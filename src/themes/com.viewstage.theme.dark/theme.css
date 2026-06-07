@@ -587,6 +587,12 @@ body {
     margin-right: 0;
 }
 
+.toolbar-dr-group {
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
+}
+
 .toolbar-separator {
     width: 1px;
     height: 24px;
@@ -660,10 +666,6 @@ body {
     min-height: 36px;
     min-width: 36px;
     padding: 8px;
-}
-
-:is(.toolbar, .bb-toolbar).hide-text .toolbar-btn span:not(img) {
-    display: none;
 }
 
 /* ===== 侧边栏 ===== */

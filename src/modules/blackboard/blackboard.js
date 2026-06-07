@@ -357,8 +357,15 @@ class BlackboardManager {
         if (dom.btnUndo) dom.btnUndo.disabled = !can_undo;
     }
 
-    /** 从主工具栏同步 hide-text 状态，不修改主界面代码 */
+    /** 从主工具栏同步文字显隐状态到黑板工具栏 */
     _sync_hide_text() {
+        // 通过 span display 状态同步，而非 CSS 类
+        const mainSpan = document.querySelector('.toolbar .toolbar-btn span:not(img)');
+        const isHidden = mainSpan && mainSpan.style.display === 'none';
+        document.querySelectorAll('.bb-toolbar .toolbar-btn span:not(img)').forEach(span => {
+            span.style.display = isHidden ? 'none' : '';
+        });
+        // 同步按钮尺寸类
         const main = document.querySelector('.toolbar');
         const bb = document.getElementById('bbToolbar');
         if (main && bb) {
