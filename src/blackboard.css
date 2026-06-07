@@ -35,15 +35,7 @@
     pointer-events: none;
 }
 
-/* 跟随主题隐藏按钮文字（在 blackboard.js 中同步） */
-.bb-toolbar.hide-text .toolbar-btn {
-    min-height: 36px;
-    min-width: 36px;
-    padding: 8px;
-}
-.bb-toolbar.hide-text .toolbar-btn span:not(img) {
-    display: none;
-}
+/* 跟随主题隐藏按钮文字（在 blackboard.js 中同步） —— 规则由主题 CSS 统一管理 */
 
 .bb-mode-group {
     display: inline-flex;

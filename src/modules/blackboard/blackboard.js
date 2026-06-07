@@ -584,13 +584,7 @@ class BlackboardManager {
         if (bb_undo) {
             bb_undo.addEventListener('click', () => this.handle_undo());
         }
-
-        // 清空
-        const bb_clear = document.getElementById('bbClear');
-        if (bb_clear) {
-            bb_clear.addEventListener('click', () => this.handle_clear());
-        }
-
+        
         // 翻页
         const prev_btn = document.getElementById('bbPagePrev');
         const next_btn = document.getElementById('bbPageNext');

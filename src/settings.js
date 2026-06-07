@@ -39,6 +39,46 @@ document.addEventListener('DOMContentLoaded', async () => {
         });
     }
     
+    /**
+     * 显示自定义确认弹窗（确定/取消）
+     * @param {string} title - 标题
+     * @param {string} message - 消息内容
+     * @returns {Promise<boolean>} true=确认, false=取消
+     */
+    function settings_show_confirm(title, message) {
+        return new Promise((resolve) => {
+            const existing = document.querySelector('.modal-overlay.confirm-dialog');
+            if (existing) existing.remove();
+            
+            const overlay = document.createElement('div');
+            overlay.className = 'modal-overlay confirm-dialog';
+            overlay.innerHTML = `
+                <div class="modal-dialog">
+                    <div class="modal-title">${title}</div>
+                    <div class="modal-message">${message}</div>
+                    <div class="modal-buttons">
+                        <button class="modal-btn modal-btn-cancel" id="confirmCancel">${window.i18n?.format_translate('common.cancel') || '取消'}</button>
+                        <button class="modal-btn modal-btn-confirm" id="confirmOk">${window.i18n?.format_translate('common.confirm') || '确认'}</button>
+                    </div>
+                </div>
+            `;
+            document.body.appendChild(overlay);
+            requestAnimationFrame(() => overlay.classList.add('active'));
+            
+            const cleanup = (result) => {
+                overlay.classList.remove('active');
+                setTimeout(() => overlay.remove(), 300);
+                resolve(result);
+            };
+            
+            overlay.querySelector('#confirmOk').addEventListener('click', () => cleanup(true));
+            overlay.querySelector('#confirmCancel').addEventListener('click', () => cleanup(false));
+            overlay.addEventListener('click', (e) => {
+                if (e.target === overlay) cleanup(false);
+            });
+        });
+    }
+    
     // ==================== DOM 元素引用 ====================
     const btnClose = document.getElementById('btnClose');
     const auroraBg = document.getElementById('auroraBg');
@@ -1348,7 +1388,10 @@ document.addEventListener('DOMContentLoaded', async () => {
             if (btn?.dataset.action === 'delete') {
                 const name = card.dataset.value;
                 const displayName = card.querySelector('.theme-card-name')?.textContent || name;
-                if (!confirm(window.i18n?.format_translate('settings.deleteThemeConfirm')?.replace('{name}', displayName) || `Delete theme "${displayName}"?`)) return;
+                if (!await settings_show_confirm(
+                    window.i18n?.format_translate('settings.deleteTheme') || '删除主题',
+                    window.i18n?.format_translate('settings.deleteThemeConfirm')?.replace('{name}', displayName) || `确定要删除主题"${displayName}"吗？`
+                )) return;
 
                 const { invoke } = window.__TAURI__.core;
                 try {
@@ -1366,7 +1409,11 @@ document.addEventListener('DOMContentLoaded', async () => {
                     }
                 } catch (e) {
                     console.error('Failed to delete theme:', e);
-                    alert(`Failed to delete theme: ${e}`);
+                    settings_show_dialog(
+                        window.i18n?.format_translate('settings.deleteFailed') || '删除失败',
+                        window.i18n?.format_translate('settings.deleteThemeError')?.replace('{error}', e) || `删除主题失败: ${e}`,
+                        'error'
+                    );
                 }
                 return;
             }
@@ -1566,7 +1613,10 @@ document.addEventListener('DOMContentLoaded', async () => {
                     } catch (err) {
                         // 主题已存在，询问是否覆盖
                         if (String(err).includes('already exists')) {
-                            if (!confirm(window.i18n?.format_translate('settings.themeOverwriteConfirm') || 'Theme already exists. Overwrite?')) {
+                            if (!await settings_show_confirm(
+                                window.i18n?.format_translate('settings.importTheme') || '导入主题',
+                                window.i18n?.format_translate('settings.themeOverwriteConfirm') || '主题已存在，是否覆盖？'
+                            )) {
                                 return;
                             }
                             themeResult = await invoke('theme_import_vst', { filePath, force: true });

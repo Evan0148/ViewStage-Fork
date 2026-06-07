@@ -57,7 +57,8 @@ const ThemeManager = {
         if (!this.userThemePath) {
           const { invoke } = window.__TAURI__.core;
           try {
-            this.userThemePath = await invoke('dir_fetch_theme');
+            const rawPath = await invoke('dir_fetch_theme');
+            this.userThemePath = rawPath.replace(/\\/g, '/');
           } catch (e) {
             console.warn('无法获取用户主题目录:', e);
           }
@@ -112,8 +113,10 @@ const ThemeManager = {
     if (!window.__TAURI__) return false;
     
     const { fs } = window.__TAURI__;
+    // 统一路径分隔符为正斜杠
+    const normalizedThemeDir = themeDir.replace(/\\/g, '/');
     try {
-      const configPath = `${themeDir}/theme.json`;
+      const configPath = `${normalizedThemeDir}/theme.json`;
       const content = await fs.readTextFile(configPath);
       return !!content;
     } catch {
@@ -122,12 +125,16 @@ const ThemeManager = {
   },
 
   async theme_load_user(themeDir, themeName) {
-    const { fs, convertFileSrc } = window.__TAURI__;
+    const { fs } = window.__TAURI__;
+    const { convertFileSrc } = window.__TAURI__.core;
+
+    // 统一路径分隔符为正斜杠
+    const normalizedThemeDir = themeDir.replace(/\\/g, '/');
 
     let mergedConfig = {};
 
     try {
-      const themeJsonPath = `${themeDir}/theme.json`;
+      const themeJsonPath = `${normalizedThemeDir}/theme.json`;
       const themeJsonContent = await fs.readTextFile(themeJsonPath);
       const themeJson = JSON.parse(themeJsonContent);
       mergedConfig = { ...themeJson };
@@ -136,7 +143,7 @@ const ThemeManager = {
     }
 
     try {
-      const configPath = `${themeDir}/config.json`;
+      const configPath = `${normalizedThemeDir}/config.json`;
       const configContent = await fs.readTextFile(configPath);
       const config = JSON.parse(configContent);
       mergedConfig = { ...mergedConfig, ...config };
@@ -147,18 +154,23 @@ const ThemeManager = {
     return {
       name: themeName,
       config: mergedConfig,
-      themeDir: themeDir,
+      themeDir: normalizedThemeDir,
       
-      async load_theme() {
+      async load_theme(isSettingsPage = false) {
         const link = document.createElement('link');
         link.rel = 'stylesheet';
-        link.href = convertFileSrc(`${this.themeDir}/theme.css`);
+        const cssFile = isSettingsPage ? 'settings.css' : 'theme.css';
+        // convertFileSrc 需要系统路径格式（Windows 用反斜杠）
+        const cssPath = `${this.themeDir}/${cssFile}`.replace(/\//g, '\\');
+        link.href = convertFileSrc(cssPath);
         document.head.appendChild(link);
       },
       
       fetch_icon_path(iconName) {
         const actualName = this.config?.icons?.[iconName] || iconName;
-        return convertFileSrc(`${this.themeDir}/icons/${actualName}.svg`);
+        // convertFileSrc 需要系统路径格式（Windows 用反斜杠）
+        const iconPath = `${this.themeDir}/icons/${actualName}.svg`.replace(/\//g, '\\');
+        return convertFileSrc(iconPath);
       },
       
       fetch_toolbar_text() {
@@ -167,6 +179,15 @@ const ThemeManager = {
       
       fetch_canvas_bg_color() {
         return this.config?.canvasBgColor || '#2a2a2a';
+      },
+      
+      fetch_no_camera_style() {
+        return this.config?.noCameraMessage || {
+          textColor: '#ffffff',
+          secondaryTextColor: 'rgba(255,255,255,0.8)',
+          tertiaryTextColor: 'rgba(255,255,255,0.5)',
+          textShadow: '0 1px 3px rgba(0,0,0,0.5)'
+        };
       },
       
       fetch_aurora_effect() {
@@ -236,14 +257,10 @@ const ThemeManager = {
    * 根据主题配置切换工具栏文字标签的显隐
    */
   theme_update_toolbar_text_visibility() {
-    const toolbar = document.querySelector('.toolbar');
-    if (toolbar) {
-      if (this.theme_fetch_toolbar_text()) {
-        toolbar.classList.remove('hide-text');
-      } else {
-        toolbar.classList.add('hide-text');
-      }
-    }
+    const show = this.theme_fetch_toolbar_text();
+    document.querySelectorAll('.toolbar, .bb-toolbar').forEach(el => {
+      el.classList.toggle('hide-text', !show);
+    });
   },
 
   /**

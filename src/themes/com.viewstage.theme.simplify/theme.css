@@ -656,13 +656,13 @@ body {
     box-shadow: none;
 }
 
-.toolbar.hide-text .toolbar-btn {
+:is(.toolbar, .bb-toolbar).hide-text .toolbar-btn {
     min-height: 36px;
     min-width: 36px;
     padding: 8px;
 }
 
-.toolbar.hide-text .toolbar-btn span:not(img) {
+:is(.toolbar, .bb-toolbar).hide-text .toolbar-btn span:not(img) {
     display: none;
 }
 
@@ -680,7 +680,7 @@ body {
     box-shadow: var(--shadow-md);
     flex: none;
     transition: all 0.2s ease;
-    width: 220px;
+    width: 288px;
     height: calc(100vh - 80px);
     max-height: calc(100vh - 80px);
     overflow-y: auto;
@@ -693,7 +693,7 @@ body {
 }
 
 .sidebar.file-sidebar {
-    width: 220px;
+    width: 288px;
     overflow-x: hidden;
 }
 

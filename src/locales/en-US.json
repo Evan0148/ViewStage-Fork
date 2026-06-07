@@ -19,7 +19,10 @@
     "download": "Download",
     "import": "Import",
     "yes": "Yes",
-    "no": "No"
+    "no": "No",
+    "prevPage": "Prev Page",
+    "nextPage": "Next Page",
+    "addPage": "Add Page"
   },
   "loading": {
     "detectingOffice": "Detecting Office software...",
@@ -52,7 +55,8 @@
     "photo": "Capture",
     "settings": "Settings",
     "image": "Image",
-    "file": "File"
+    "file": "File",
+    "close": "Close"
   },
   "settings": {
     "title": "Settings",
@@ -74,6 +78,9 @@
     "themeBuiltinSuffix": " (Built-in)",
     "apply": "Apply",
     "delete": "Delete",
+    "deleteTheme": "Delete Theme",
+    "deleteFailed": "Delete Failed",
+    "deleteThemeError": "Failed to delete theme: {error}",
     "deleteThemeConfirm": "Delete theme \"{name}\"?",
     "about": "About",
     "language": "Language",

@@ -19,7 +19,10 @@
     "download": "下載",
     "import": "匯入",
     "yes": "是",
-    "no": "否"
+    "no": "否",
+    "prevPage": "上一頁",
+    "nextPage": "下一頁",
+    "addPage": "添加頁面"
   },
   "loading": {
     "detectingOffice": "正在偵測 Office 軟體...",
@@ -52,7 +55,8 @@
     "photo": "拍照",
     "settings": "設定",
     "image": "圖片",
-    "file": "檔案"
+    "file": "檔案",
+    "close": "關閉"
   },
   "settings": {
     "title": "設定",
@@ -74,6 +78,9 @@
     "themeBuiltinSuffix": "（內建主題）",
     "apply": "應用",
     "delete": "刪除",
+    "deleteTheme": "刪除主題",
+    "deleteFailed": "刪除失敗",
+    "deleteThemeError": "刪除主題失敗: {error}",
     "deleteThemeConfirm": "確定要刪除主題\"{name}\"嗎？",
     "about": "關於",
     "language": "語言",

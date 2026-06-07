@@ -1122,11 +1122,11 @@ body {
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    min-width: 48px;
-    min-height: 40px;
-    padding: 0 8px;
-    font-size: 12px;
-    font-weight: 500;
+    min-width: 56px;
+    min-height: 48px;
+    padding: 0 12px;
+    font-size: 14px;
+    font-weight: 600;
     color: var(--color-body);
     user-select: none;
     white-space: nowrap;
@@ -1134,16 +1134,16 @@ body {
 
 /* 页码跳转输入框 */
 .dr-page-jump-input {
-    width: 48px;
-    height: 26px;
+    width: 60px;
+    height: 32px;
     border: 1px solid var(--color-border, #666);
     border-radius: 4px;
     background: var(--color-surface, #333);
     color: var(--color-body, #eee);
-    font-size: 12px;
+    font-size: 14px;
     text-align: center;
     outline: none;
-    padding: 0 2px;
+    padding: 0 4px;
     -moz-appearance: textfield;
 }
 .dr-page-jump-input::-webkit-inner-spin-button,

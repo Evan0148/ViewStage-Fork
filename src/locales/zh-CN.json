@@ -19,7 +19,10 @@
     "download": "下载",
     "import": "导入",
     "yes": "是",
-    "no": "否"
+    "no": "否",
+    "prevPage": "上一页",
+    "nextPage": "下一页",
+    "addPage": "添加页面"
   },
   "loading": {
     "detectingOffice": "正在检测 Office 软件...",
@@ -52,7 +55,8 @@
     "photo": "拍照",
     "settings": "设置",
     "image": "图片",
-    "file": "文件"
+    "file": "文件",
+    "close": "关闭"
   },
   "settings": {
     "title": "设置",
@@ -74,6 +78,9 @@
     "themeBuiltinSuffix": "（内置主题）",
     "apply": "应用",
     "delete": "删除",
+    "deleteTheme": "删除主题",
+    "deleteFailed": "删除失败",
+    "deleteThemeError": "删除主题失败: {error}",
     "deleteThemeConfirm": "确定要删除主题\"{name}\"吗？",
     "about": "关于",
     "language": "语言",
