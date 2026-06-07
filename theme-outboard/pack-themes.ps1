@@ -24,6 +24,11 @@ $ScriptDir   = Split-Path -Parent $MyInvocation.MyCommand.Path
 $SourceDir   = $ScriptDir
 $OutputRoot  = if ($OutputDir) { $OutputDir } else { $ScriptDir }
 
+# --- 确保输出目录存在 ---
+if (-not (Test-Path $OutputRoot)) {
+    New-Item -ItemType Directory -Path $OutputRoot -Force | Out-Null
+}
+
 # --- 提前加载 ZIP 程序集 ---
 Add-Type -AssemblyName System.IO.Compression.FileSystem
 
