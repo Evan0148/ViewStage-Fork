@@ -56,10 +56,10 @@ class DocumentReaderManager {
         this._wheel_raf_id = null;               // 滚轮缩放 rAF 节流
         this._smooth_transform_timeout_id = null; // will-change 延迟移除
         this._gpu_cleanup_delay_ms = 800;
-        this._tile_keep_distance = 2;
-        this._image_keep_distance = 2;
-        this._blob_keep_distance = 3;
-        this._prerender_distance = 2;           // 预渲染距离：提前渲染前后2页
+        this._tile_keep_distance = 5;
+        this._image_keep_distance = 5;
+        this._blob_keep_distance = 6;
+        this._prerender_distance = 5;           // 预渲染距离：提前渲染前后5页
         this._prerender_enabled = true;         // 预渲染开关
         this._prerender_queue = [];             // 预渲染队列
         this._prerender_raf_id = null;          // 预渲染 rAF ID
@@ -705,6 +705,9 @@ class DocumentReaderManager {
             }
         }
 
+        // 主动预加载 keep_distance 范围内的图片（避免滚动到时白屏）
+        this._preload_nearby_images(nearest_page);
+
         // 触发预渲染（按距离排序，优先渲染最近的页面）
         if (prerender_pages.length > 0) {
             this._schedule_prerender(prerender_pages, nearest_page);
@@ -727,6 +730,30 @@ class DocumentReaderManager {
         }
     }
 
+    /** 主动预加载 keep_distance 范围内的图片（避免滚动到时白屏） */
+    _preload_nearby_images(active_page) {
+        if (active_page < 0) return;
+        const pages = this.page_manager.pages_list;
+        const start = Math.max(0, active_page - this._image_keep_distance);
+        const end = Math.min(pages.length - 1, active_page + this._image_keep_distance);
+
+        for (let i = start; i <= end; i++) {
+            if (i === active_page) continue;
+            const pd = pages[i];
+            if (!pd || pd.is_virtualized) continue;
+
+            const img = pd.page_element?.querySelector('img');
+            if (img && !img.hasAttribute('src') && img.dataset.src) {
+                img.src = img.dataset.src;
+            }
+
+            // PDF 页面预加载
+            if (!pd.loaded && this.folder_index >= 0) {
+                this._load_pdf_page(i);
+            }
+        }
+    }
+
     // ====== 预渲染调度 ======
 
     /** 调度预渲染任务（按距离排序，使用 requestIdleCallback 或 rAF） */
@@ -739,8 +766,8 @@ class DocumentReaderManager {
             })
             .sort((a, b) => Math.abs(a - active_page) - Math.abs(b - active_page));
 
-        // 限制预渲染队列长度（最多3页）
-        this._prerender_queue = sorted.slice(0, 3);
+        // 限制预渲染队列长度（最多5页）
+        this._prerender_queue = sorted.slice(0, 5);
 
         // 如果没有正在预渲染的任务，启动预渲染
         if (!this._is_prerendering && this._prerender_queue.length > 0) {
@@ -791,7 +818,7 @@ class DocumentReaderManager {
         process_next();
     }
 
-    /** 预渲染单个页面（仅渲染 PDF，不初始化 tiles） */
+    /** 预渲染单个页面（PDF 渲染 / 图片预加载） */
     async _prerender_page(page_index) {
         const page_data = this.page_manager.pages_list[page_index];
         if (!page_data || page_data.is_visible || page_data.pdf_render_promise) return;
@@ -802,6 +829,12 @@ class DocumentReaderManager {
         // 如果是 PDF 页面，提前渲染
         if (page_data.render_mode === 'pdfjs') {
             await this._render_pdf_page_direct(page_index, false, true);
+        } else {
+            // 图片页面：预加载图片（不初始化 tiles，留给 _on_page_visible 处理）
+            const img = page_data.page_element?.querySelector('img');
+            if (img && !img.hasAttribute('src') && img.dataset.src) {
+                img.src = img.dataset.src;
+            }
         }
     }
 
@@ -812,8 +845,8 @@ class DocumentReaderManager {
         const pages = this.page_manager.pages_list;
         const prerender_indices = [];
 
-        // 预渲染目标页的前后各1页
-        for (let offset = -1; offset <= 1; offset++) {
+        // 预渲染目标页的前后各5页
+        for (let offset = -5; offset <= 5; offset++) {
             const idx = target_index + offset;
             if (idx >= 0 && idx < pages.length && idx !== this.active_page_index) {
                 const pd = pages[idx];
@@ -866,24 +899,21 @@ class DocumentReaderManager {
                 page_data.page_height = img.naturalHeight || img.clientHeight;
                 this._refresh_page_aspect(page_data);
                 this._resize_page_layout(page_index, this._get_page_base_width());
-                this._init_page_tiles(page_index);
-                this._update_overlay_size(page_index);
+                if (!page_data.is_tiles_initialized) {
+                    this._init_page_tiles(page_index);
+                    this._update_overlay_size(page_index);
+                }
             };
-        } else if (img && has_img_src && !page_data.is_tiles_initialized) {
-            // 已有图片但 tiles 未初始化 → 延迟初始化（防快速滚动）
-            if (page_data._visible_init_timeout !== null) {
-                clearTimeout(page_data._visible_init_timeout);
-            }
-            page_data._visible_init_timeout = setTimeout(() => {
-                page_data._visible_init_timeout = null;
-                if (!page_data.is_visible) return; // 已隐藏，跳过
-                page_data.page_width = img.naturalWidth || img.clientWidth;
-                page_data.page_height = img.naturalHeight || img.clientHeight;
-                this._refresh_page_aspect(page_data);
-                this._resize_page_layout(page_index, this._get_page_base_width());
+        } else if (img && has_img_src) {
+            // 已有图片 → 立即初始化 tiles（无延迟，避免白屏）
+            page_data.page_width = img.naturalWidth || img.clientWidth;
+            page_data.page_height = img.naturalHeight || img.clientHeight;
+            this._refresh_page_aspect(page_data);
+            this._resize_page_layout(page_index, this._get_page_base_width());
+            if (!page_data.is_tiles_initialized) {
                 this._init_page_tiles(page_index);
                 this._update_overlay_size(page_index);
-            }, 100);
+            }
         }
 
         // PDF 懒加载：如果页面未加载，则加载
@@ -1797,6 +1827,9 @@ class DocumentReaderManager {
         this._scroll_container.addEventListener('touchmove', this._bound_dr_handle_touch_move, { passive: false });
         this._scroll_container.addEventListener('touchend', this._bound_dr_handle_touch_end, { passive: false });
         this._scroll_container.addEventListener('touchcancel', this._bound_dr_handle_touch_end, { passive: false });
+
+        // 跟踪活跃的 pointerId（用于区分两指→一指过渡时的 pointerup）
+        this._active_pointer_id = null;
     }
 
     _setup_keyboard_events() {
@@ -1896,11 +1929,19 @@ class DocumentReaderManager {
     _handle_pointer_down(e) {
         if (!this.is_open) return;
 
+        // 多指触摸时只跟踪第一根手指（后续由 touch 事件处理）
+        if (e.pointerId !== undefined) {
+            if (this._active_pointer_id !== null && this._active_pointer_id !== e.pointerId) return;
+            this._active_pointer_id = e.pointerId;
+        }
+
         const palmEraser = window.__palmEraser;
         const palmResult = palmEraser ? palmEraser.is_palm_by_pointer(e) : { isPalm: false, width: 0, height: 0 };
         if (palmResult.isPalm && (window.DRAW_CONFIG?.palmEraserEnabled !== false)) {
+            // 刚接触时根据接触面积计算大小，之后保持不变
             const contactSize = Math.max(palmResult.width, palmResult.height) * palmEraser.PALM_CONFIG.palmSizeMultiplier * palmEraser.PALM_CONFIG.eraserSizeK;
-            this._start_palm_erase(e.clientX, e.clientY, contactSize);
+            const size = Math.max(40, Math.min(150, contactSize));
+            this._start_palm_erase(e.clientX, e.clientY, size);
             return;
         }
 
@@ -2040,6 +2081,12 @@ class DocumentReaderManager {
     }
 
     async _handle_pointer_up(e) {
+        // 只处理活跃指针的释放（两指→一指过渡时忽略非活跃指针的 pointerup）
+        if (e.pointerId !== undefined && this._active_pointer_id !== null && e.pointerId !== this._active_pointer_id) {
+            return;
+        }
+        this._active_pointer_id = null;
+
         if (this.isPalmErasing) {
             await this._end_palm_erase();
             return;
@@ -2229,7 +2276,6 @@ class DocumentReaderManager {
         }
 
         await history_handle_undo();
-        await this._render_all_strokes();
         this._update_button_status();
     }
 
@@ -2258,7 +2304,6 @@ class DocumentReaderManager {
         await history_execute_command(cmd, false);
         this._trim_undo_stack();
 
-        await this._render_all_strokes();
         this._update_button_status();
     }
 
@@ -3291,6 +3336,9 @@ class DocumentReaderManager {
                 }
             }
 
+            // 清除单指拖拽状态（pointerdown 可能已设置）
+            this.dr_is_dragging = false;
+
             this.dr_is_scaling = true;
             this.dr_is_dragging = false;
             this.dr_start_distance_sq = this._dr_calc_touch_dist_sq(touches[0], touches[1]);
@@ -3385,7 +3433,6 @@ class DocumentReaderManager {
         }
         if (e.touches.length < 2) {
             this.dr_is_scaling = false;
-            this.dr_is_dragging = false;
 
             // 清理捏合缩放 rAF
             if (this._touch_raf_id !== null) {
@@ -3394,9 +3441,62 @@ class DocumentReaderManager {
             }
             this._touch_pending_data = null;
 
+            // 取消缩放延迟，立即刷新可见页
+            this._dr_cancel_zoom_debounce();
+
+            // 松开两指后，如果还剩一指且在移动模式，重新设置拖拽起始位置
+            if (e.touches.length === 1 && this.draw_mode === 'move') {
+                const touch = e.touches[0];
+                this.dr_is_dragging = true;
+                this.dr_start_drag_x = touch.clientX - this.dr_canvas_x;
+                this.dr_start_drag_y = touch.clientY - this.dr_canvas_y;
+                this._drag_last_time = performance.now();
+                this._drag_last_pos = { x: touch.clientX, y: touch.clientY };
+                this._drag_velocity_samples = [];
+            } else {
+                this.dr_is_dragging = false;
+                // 所有手指松开，清除活跃指针 ID
+                this._active_pointer_id = null;
+                // 惯性滚动
+                this._start_inertial_scroll_from_samples();
+            }
+
             // will-change: 延迟释放 GPU 合成层
             this._dr_schedule_disable_smooth_transform();
         }
+    }
+
+    /** 从速度采样启动惯性滚动（复用 _handle_pointer_up 的加权平均逻辑） */
+    _start_inertial_scroll_from_samples() {
+        const samples = this._drag_velocity_samples;
+        let vx = 0, vy = 0;
+        if (samples.length > 0) {
+            let total_weight = 0;
+            const now = performance.now();
+            for (const s of samples) {
+                const age = now - s.t;
+                const weight = Math.max(0.1, 1 - age / 200);
+                vx += s.x * weight;
+                vy += s.y * weight;
+                total_weight += weight;
+            }
+            if (total_weight > 0) {
+                vx /= total_weight;
+                vy /= total_weight;
+            }
+        }
+
+        const vx_frame = vx * 16;
+        const vy_frame = vy * 16;
+        const speed = Math.sqrt(vx_frame * vx_frame + vy_frame * vy_frame);
+
+        if (speed > 0.3) {
+            this._start_inertial_scroll(vx_frame, vy_frame);
+        } else {
+            this._check_page_visibility();
+        }
+
+        this._drag_velocity_samples = [];
     }
 
     /** 启动惯性滚动动画（指数衰减速度，每帧更新位置，到达边界自动停止） */

@@ -363,9 +363,10 @@ export class DrawingEngine {
 
         const palmResult = is_palm_by_pointer(e);
         if (palmResult.isPalm && (window.DRAW_CONFIG?.palmEraserEnabled !== false)) {
-            const contactSize = Math.max(palmResult.width, palmResult.height)
-                * PALM_CONFIG.palmSizeMultiplier * PALM_CONFIG.eraserSizeK;
-            this._start_palm_erase(e.clientX, e.clientY, contactSize);
+            // 刚接触时根据接触面积计算大小，之后保持不变
+            const contactSize = Math.max(palmResult.width, palmResult.height) * PALM_CONFIG.palmSizeMultiplier * PALM_CONFIG.eraserSizeK;
+            const size = Math.max(40, Math.min(150, contactSize));
+            this._start_palm_erase(e.clientX, e.clientY, size);
             return;
         }
 

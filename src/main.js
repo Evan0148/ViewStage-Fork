@@ -2388,8 +2388,10 @@ function main_handle_pointer_down(e) {
 
     const palmResult = main_is_palm_pointer(e);
     if (palmResult.isPalm && DRAW_CONFIG.palmEraserEnabled) {
+        // 刚接触时根据接触面积计算大小，之后保持不变
         const contactSize = Math.max(palmResult.width, palmResult.height) * window.__palmEraser.PALM_CONFIG.palmSizeMultiplier * window.__palmEraser.PALM_CONFIG.eraserSizeK;
-        main_start_palm_erase(e.clientX, e.clientY, contactSize);
+        const size = Math.max(40, Math.min(150, contactSize));
+        main_start_palm_erase(e.clientX, e.clientY, size);
         return;
     }
     
