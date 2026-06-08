@@ -939,6 +939,13 @@ button {
     flex-shrink: 0;
 }
 
+.setting-desc {
+    font-size: 11px;
+    color: var(--color-body-secondary, #888);
+    margin-top: 4px;
+    line-height: 1.4;
+}
+
 .file-associations {
     display: flex;
     flex-direction: column;

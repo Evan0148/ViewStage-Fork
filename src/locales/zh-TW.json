@@ -128,6 +128,8 @@
     "cache": "快取",
     "clearCache": "清除快取",
     "autoClearCache": "自動清除快取",
+    "docStateCleanup": "文件狀態清理",
+    "docStateCleanupDesc": "自動清理超過 15 天未開啟的文件狀態記錄（隨快取清理一起執行）",
     "log": "日誌",
     "openLogDir": "開啟日誌目錄",
     "version": "版本",

@@ -591,6 +591,7 @@ class DocumentReaderManager {
         const folder = window.state?.fileList?.[this.folder_index];
         if (!folder) return;
 
+        const today = new Date().toISOString().split('T')[0];
         const lastDoc = {
             folder_index: this.folder_index,
             file_name: folder.name || null,
@@ -598,7 +599,8 @@ class DocumentReaderManager {
             page_index: this.active_page_index,
             dr_scale: this.dr_scale,
             dr_canvas_x: this.dr_canvas_x,
-            dr_canvas_y: this.dr_canvas_y
+            dr_canvas_y: this.dr_canvas_y,
+            last_open_date: today
         };
 
         try {

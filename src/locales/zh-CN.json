@@ -128,6 +128,8 @@
     "cache": "缓存",
     "clearCache": "清除缓存",
     "autoClearCache": "自动清除缓存",
+    "docStateCleanup": "文档状态清理",
+    "docStateCleanupDesc": "自动清理超过 15 天未打开的文档状态记录（随缓存清理一起执行）",
     "log": "日志",
     "openLogDir": "打开日志目录",
     "version": "版本",

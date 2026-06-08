@@ -314,6 +314,26 @@ fn cache_validate_auto_clear(app: tauri::AppHandle) -> Result<bool, String> {
         
         let mut updated_config = config.clone();
         updated_config["lastCacheClearDate"] = serde_json::json!(today);
+        
+        // 清理超过 15 天未打开的文档状态记录
+        if let Some(last_doc) = config.get("lastOpenDoc") {
+            if last_doc.is_object() && !last_doc.is_null() {
+                let last_open_date = last_doc.get("last_open_date")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
+                
+                if !last_open_date.is_empty() {
+                    if let Ok(doc_date) = chrono::NaiveDate::parse_from_str(last_open_date, "%Y-%m-%d") {
+                        let days_since_open = (today_date - doc_date).num_days();
+                        if days_since_open >= 15 {
+                            log::info!("清理超过 {} 天未打开的文档状态记录", days_since_open);
+                            updated_config["lastOpenDoc"] = serde_json::Value::Null;
+                        }
+                    }
+                }
+            }
+        }
+        
         let temp_path = config_file.with_extension("json.tmp");
         write_atomic(&temp_path, &config_file, &updated_config)?;
         
