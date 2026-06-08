@@ -100,7 +100,6 @@ class DocumentReaderManager {
 
         // 触摸手势优化状态
         this._touch_raf_id = null;               // 捏合缩放 rAF 节流 ID
-        this._touch_pending_data = null;          // 待处理的触摸数据 { t0, t1 }
         this._touch_start_center_x = 0;           // 捏合起始中心 X
         this._touch_start_center_y = 0;           // 捏合起始中心 Y
 
@@ -3512,52 +3511,50 @@ class DocumentReaderManager {
         if (touches.length === 2) {
             e.preventDefault();
 
-            // 缓存最新触摸数据，由 rAF 回调统一处理（保证 60fps 平滑输出）
-            this._touch_pending_data = {
-                t0: { clientX: touches[0].clientX, clientY: touches[0].clientY },
-                t1: { clientX: touches[1].clientX, clientY: touches[1].clientY }
-            };
+            const t0 = touches[0];
+            const t1 = touches[1];
+            const center_x = (t0.clientX + t1.clientX) / 2;
+            const center_y = (t0.clientY + t1.clientY) / 2;
 
-            if (this._touch_raf_id !== null) return;
-            this._touch_raf_id = requestAnimationFrame(() => {
-                this._touch_raf_id = null;
-                const data = this._touch_pending_data;
-                if (!data || !this.dr_is_scaling) return;
-                this._touch_pending_data = null;
-
-                const current_dist_sq = this._dr_calc_touch_dist_sq(data.t0, data.t1);
-                const scale_ratio = Math.sqrt(current_dist_sq / this.dr_start_distance_sq);
-                let new_s = this.dr_start_scale * scale_ratio;
+            const current_dist_sq = this._dr_calc_touch_dist_sq(t0, t1);
+            const scale_ratio = Math.sqrt(current_dist_sq / this.dr_start_distance_sq);
+            // 死区：缩放比变化小于 1.5% 时不触发缩放
+            const ZOOM_DEAD_ZONE = 0.015;
+            const scale_change = Math.abs(scale_ratio - 1);
+            let new_s;
+            if (scale_change > ZOOM_DEAD_ZONE) {
+                new_s = this.dr_start_scale * scale_ratio;
                 new_s = Math.max(this.dr_min_scale, Math.min(this.dr_max_scale, new_s));
+            } else {
+                new_s = this.dr_scale;
+            }
 
-                // 当前捏合中心点
-                const center_x = (data.t0.clientX + data.t1.clientX) / 2;
-                const center_y = (data.t0.clientY + data.t1.clientY) / 2;
+            // 两指平移增量
+            const pan_dx = center_x - this._touch_start_center_x;
+            const pan_dy = center_y - this._touch_start_center_y;
 
-                if (new_s !== this.dr_scale) {
+            if (new_s !== this.dr_scale) {
+                // 缩放 + 平移（用 rAF 节流）
+                if (this._touch_raf_id !== null) return;
+                this._touch_raf_id = requestAnimationFrame(() => {
+                    this._touch_raf_id = null;
+                    if (!this.dr_is_scaling) return;
                     const ratio = new_s / this.dr_start_scale;
-
-                    // 以起始中心为锚点计算缩放偏移，再加上中心点平移增量
-                    const pan_dx = center_x - this._touch_start_center_x;
-                    const pan_dy = center_y - this._touch_start_center_y;
-
                     this.dr_canvas_x = this.dr_start_scale_x - (this.dr_start_scale_x - this.dr_start_canvas_x) * ratio + pan_dx;
                     this.dr_canvas_y = this.dr_start_scale_y - (this.dr_start_scale_y - this.dr_start_canvas_y) * ratio + pan_dy;
                     this.dr_scale = new_s;
                     this._dr_set_zooming();
                     this._dr_apply_scale();
-                } else {
-                    // 纯平移（缩放未变化时也允许平移）
-                    const pan_dx = center_x - this._touch_start_center_x;
-                    const pan_dy = center_y - this._touch_start_center_y;
-                    if (Math.abs(pan_dx) > 0.5 || Math.abs(pan_dy) > 0.5) {
-                        this.dr_canvas_x = this.dr_start_canvas_x + pan_dx;
-                        this.dr_canvas_y = this.dr_start_canvas_y + pan_dy;
-                        this._dr_update_canvas_position();
-                        this._dr_sync_transform();
-                    }
+                });
+            } else {
+                // 纯平移：直接处理，无延迟
+                if (Math.abs(pan_dx) > 0.5 || Math.abs(pan_dy) > 0.5) {
+                    this.dr_canvas_x = this.dr_start_canvas_x + pan_dx;
+                    this.dr_canvas_y = this.dr_start_canvas_y + pan_dy;
+                    this._dr_update_canvas_position();
+                    this._dr_sync_transform();
                 }
-            });
+            }
         }
     }
 
@@ -3576,7 +3573,6 @@ class DocumentReaderManager {
                 cancelAnimationFrame(this._touch_raf_id);
                 this._touch_raf_id = null;
             }
-            this._touch_pending_data = null;
 
             // 取消缩放延迟，立即刷新可见页
             this._dr_cancel_zoom_debounce();
