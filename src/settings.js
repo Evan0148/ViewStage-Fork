@@ -1348,8 +1348,16 @@ document.addEventListener('DOMContentLoaded', async () => {
     const restoreLastDocToggle = document.getElementById('restoreLastDocToggle');
     if (restoreLastDocToggle) {
         restoreLastDocToggle.addEventListener('change', async () => {
-            await settings_save_all_local({ restoreLastDoc: restoreLastDocToggle.checked });
-            window.__restoreLastDocEnabled = restoreLastDocToggle.checked;
+            const enabled = restoreLastDocToggle.checked;
+            await settings_save_all_local({ restoreLastDoc: enabled });
+            window.__restoreLastDocEnabled = enabled;
+            // 关闭时立即清理保存的文档状态和缓存
+            if (!enabled) {
+                await settings_save_all_local({ lastOpenDoc: null });
+                if (window.documentReaderManager) {
+                    await window.documentReaderManager.delete_annotation_cache_files?.();
+                }
+            }
         });
     }
 
