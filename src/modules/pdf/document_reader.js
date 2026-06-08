@@ -428,8 +428,8 @@ class DocumentReaderManager {
     /** 将所有页的批注序列化写入缓存文件（含全局 undo/redo 历史） */
     async _save_annotations_to_cache() {
         if (this.folder_index < 0) return;
-        const cache_dir = window.cacheDir;
-        if (!cache_dir) return;
+        const config_dir = window.configDir;
+        if (!config_dir) return;
         const cache_id = this._get_annotations_cache_id();
         if (!cache_id) return;
 
@@ -460,6 +460,7 @@ class DocumentReaderManager {
             return null;
         };
 
+        const today = new Date().toISOString().split('T')[0];
         const cache_data = {
             version: 4,
             folder_index: this.folder_index,
@@ -468,6 +469,7 @@ class DocumentReaderManager {
             dr_scale: this.dr_scale,
             dr_canvas_x: this.dr_canvas_x,
             dr_canvas_y: this.dr_canvas_y,
+            last_open_date: today,
             pages: pages.map(p => ({
                 stroke_history: p.stroke_history
             })),
@@ -476,8 +478,10 @@ class DocumentReaderManager {
         };
 
         try {
-            const { writeTextFile } = window.__TAURI__.fs;
-            const file_path = `${cache_dir}/doc_annotations_${cache_id}.json`;
+            const { writeTextFile, mkdir } = window.__TAURI__.fs;
+            const doc_state_dir = `${config_dir}/doc_state`;
+            try { await mkdir(doc_state_dir, { recursive: true }); } catch (_) {}
+            const file_path = `${doc_state_dir}/doc_annotations_${cache_id}.json`;
             await writeTextFile(file_path, JSON.stringify(cache_data));
         } catch (err) {
             console.error('[document_reader] 保存批注缓存失败:', err);
@@ -487,15 +491,28 @@ class DocumentReaderManager {
     /** 从缓存文件恢复所有页的批注和全局 undo/redo 历史 */
     async _load_annotations_from_cache() {
         if (this.folder_index < 0) return null;
+        const config_dir = window.configDir;
         const cache_dir = window.cacheDir;
-        if (!cache_dir) return null;
+        if (!config_dir && !cache_dir) return null;
         const cache_id = this._get_annotations_cache_id();
         if (!cache_id) return null;
 
         try {
             const { readTextFile } = window.__TAURI__.fs;
-            const file_path = `${cache_dir}/doc_annotations_${cache_id}.json`;
-            const json_str = await readTextFile(file_path);
+            let json_str;
+            // 优先从 config_dir/doc_state 读取
+            if (config_dir) {
+                try {
+                    json_str = await readTextFile(`${config_dir}/doc_state/doc_annotations_${cache_id}.json`);
+                } catch (_) {}
+            }
+            // 兼容旧版：从缓存目录读取
+            if (!json_str && cache_dir) {
+                try {
+                    json_str = await readTextFile(`${cache_dir}/doc_annotations_${cache_id}.json`);
+                } catch (_) {}
+            }
+            if (!json_str) return null;
             const cache_data = JSON.parse(json_str);
             if (!cache_data || !cache_data.pages) return null;
 

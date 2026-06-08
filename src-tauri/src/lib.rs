@@ -203,23 +203,44 @@ fn cache_delete_all(app: tauri::AppHandle) -> Result<String, String> {
 fn cache_delete_doc_annotations(app: tauri::AppHandle) -> Result<String, String> {
     let paths = AppPaths::new(&app)?;
 
-    if !paths.cache_dir.exists() {
-        return Ok("批注缓存目录不存在".to_string());
-    }
-
     let mut deleted = 0u32;
-    if let Ok(entries) = std::fs::read_dir(&paths.cache_dir) {
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if !path.is_file() {
-                continue;
+    
+    // 删除 config_dir/doc_state 中的文件
+    let doc_state_dir = paths.config_dir.join("doc_state");
+    if doc_state_dir.exists() {
+        if let Ok(entries) = std::fs::read_dir(&doc_state_dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if !path.is_file() {
+                    continue;
+                }
+                let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
+                    continue;
+                };
+                if name.starts_with("doc_annotations_") && name.ends_with(".json") {
+                    if std::fs::remove_file(&path).is_ok() {
+                        deleted += 1;
+                    }
+                }
             }
-            let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
-                continue;
-            };
-            if name.starts_with("doc_annotations_") && name.ends_with(".json") {
-                if std::fs::remove_file(&path).is_ok() {
-                    deleted += 1;
+        }
+    }
+    
+    // 兼容旧版：删除缓存目录中的文件
+    if paths.cache_dir.exists() {
+        if let Ok(entries) = std::fs::read_dir(&paths.cache_dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if !path.is_file() {
+                    continue;
+                }
+                let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
+                    continue;
+                };
+                if name.starts_with("doc_annotations_") && name.ends_with(".json") {
+                    if std::fs::remove_file(&path).is_ok() {
+                        deleted += 1;
+                    }
                 }
             }
         }
@@ -296,6 +317,7 @@ fn cache_validate_auto_clear(app: tauri::AppHandle) -> Result<bool, String> {
         let cache_dir = &paths.cache_dir;
         
         if cache_dir.exists() {
+            // 清理缓存目录
             fn directory_delete_contents(path: &std::path::Path) {
                 if let Ok(entries) = std::fs::read_dir(path) {
                     for entry in entries.flatten() {
@@ -310,6 +332,43 @@ fn cache_validate_auto_clear(app: tauri::AppHandle) -> Result<bool, String> {
                 }
             }
             directory_delete_contents(&cache_dir);
+        }
+        
+        // 清理 config_dir/doc_state 中超过 15 天未打开的文档状态
+        let doc_state_dir = paths.config_dir.join("doc_state");
+        if doc_state_dir.exists() {
+            let today_date = chrono::Local::now().date_naive();
+            if let Ok(entries) = std::fs::read_dir(&doc_state_dir) {
+                for entry in entries.flatten() {
+                    let path = entry.path();
+                    if !path.is_file() {
+                        continue;
+                    }
+                    let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
+                        continue;
+                    };
+                    if !name.starts_with("doc_annotations_") || !name.ends_with(".json") {
+                        continue;
+                    }
+                    // 读取文件检查 last_open_date
+                    if let Ok(content) = std::fs::read_to_string(&path) {
+                        if let Ok(data) = serde_json::from_str::<serde_json::Value>(&content) {
+                            let last_open = data.get("last_open_date")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("");
+                            if !last_open.is_empty() {
+                                if let Ok(open_date) = chrono::NaiveDate::parse_from_str(last_open, "%Y-%m-%d") {
+                                    let days = (today_date - open_date).num_days();
+                                    if days >= 15 {
+                                        let _ = std::fs::remove_file(&path);
+                                        log::info!("清理超过 {} 天未打开的文档状态: {}", days, name);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
         }
         
         let mut updated_config = config.clone();
