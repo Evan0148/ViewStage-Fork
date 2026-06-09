@@ -2275,10 +2275,12 @@ function main_hide_palm_eraser_hint() {
 function main_update_palm_eraser_hint(clientX, clientY, size) {
     if (!dom.palmEraserHint) return;
     const rect = dom.canvasWrapper.getBoundingClientRect();
-    const x = clientX - rect.left;
-    const y = clientY - rect.top;
-    dom.palmEraserHint.style.width = `${size}px`;
-    dom.palmEraserHint.style.height = `${size}px`;
+    const s = main_fetch_safe_scale();
+    const x = (clientX - rect.left) / s;
+    const y = (clientY - rect.top) / s;
+    const sz = size / s;
+    dom.palmEraserHint.style.width = `${sz}px`;
+    dom.palmEraserHint.style.height = `${sz}px`;
     dom.palmEraserHint.style.left = `${x}px`;
     dom.palmEraserHint.style.top = `${y}px`;
     dom.palmEraserHint.style.transform = 'translate(-50%, -50%)';
