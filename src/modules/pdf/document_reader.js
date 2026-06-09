@@ -103,12 +103,6 @@ class DocumentReaderManager {
         this._touch_start_center_x = 0;           // 捏合起始中心 X
         this._touch_start_center_y = 0;           // 捏合起始中心 Y
 
-        this._drag_velocity = { x: 0, y: 0 };    // 拖拽速度（像素/毫秒）
-        this._drag_last_time = 0;                 // 上次拖拽采样时间
-        this._drag_last_pos = { x: 0, y: 0 };    // 上次拖拽采样位置
-        this._drag_velocity_samples = [];          // 最近速度采样（平滑用，最多5个）
-        this._inertia_raf_id = null;              // 惯性滚动 rAF ID
-
         // 自适应 DPR（按缩放级别 + 内存压力动态降级，减少 4K 屏幕 GPU 显存占用）
         this._adaptive_dpr_enabled = true;
 
@@ -262,11 +256,6 @@ class DocumentReaderManager {
         }
         this._touch_pending_data = null;
 
-        if (this._inertia_raf_id !== null) {
-            cancelAnimationFrame(this._inertia_raf_id);
-            this._inertia_raf_id = null;
-        }
-        this._drag_velocity_samples = [];
         if (this._wheel_raf_id !== null) {
             cancelAnimationFrame(this._wheel_raf_id);
             this._wheel_raf_id = null;
@@ -393,10 +382,6 @@ class DocumentReaderManager {
         this._zoom_wrapper = null;
         this._cached_container_rect = null;
 
-        // 重置触摸手势状态
-        this._drag_velocity = { x: 0, y: 0 };
-        this._drag_last_time = 0;
-        this._drag_last_pos = { x: 0, y: 0 };
         const panel = document.getElementById('documentReaderPanel');
         if (panel) panel.classList.remove('active');
 
@@ -2087,12 +2072,6 @@ class DocumentReaderManager {
         const page_index = parseInt(target.dataset.page);
         if (isNaN(page_index)) return;
 
-        // 停止正在进行的惯性滚动
-        if (this._inertia_raf_id !== null) {
-            cancelAnimationFrame(this._inertia_raf_id);
-            this._inertia_raf_id = null;
-        }
-
         // 确保该页的 TileRenderer 已初始化
         const page_data = this.page_manager.pages_list[page_index];
         if (!page_data.is_tiles_initialized) {
@@ -2120,11 +2099,6 @@ class DocumentReaderManager {
 
             // will-change: 按需启用 GPU 合成层
             this._dr_enable_smooth_transform();
-
-            // 初始化速度采样
-            this._drag_last_time = performance.now();
-            this._drag_last_pos = { x: e.clientX, y: e.clientY };
-            this._drag_velocity_samples = [];
         } else if (this.draw_mode === 'comment' || this.draw_mode === 'eraser') {
             e.preventDefault();
             this.is_drawing = true;
@@ -2151,21 +2125,6 @@ class DocumentReaderManager {
         // 拖拽平移
         if (this.dr_is_dragging) {
             e.preventDefault();
-
-            // 采集速度样本（最近5个，用于惯性滚动）
-            const now = performance.now();
-            const dt = now - this._drag_last_time;
-            if (dt > 0) {
-                const vx = (e.clientX - this._drag_last_pos.x) / dt;
-                const vy = (e.clientY - this._drag_last_pos.y) / dt;
-                this._drag_velocity_samples.push({ x: vx, y: vy, t: now });
-                // 保留最近 5 个采样
-                if (this._drag_velocity_samples.length > 5) {
-                    this._drag_velocity_samples.shift();
-                }
-                this._drag_last_time = now;
-                this._drag_last_pos = { x: e.clientX, y: e.clientY };
-            }
 
             this.dr_canvas_x = e.clientX - this.dr_start_drag_x;
             this.dr_canvas_y = e.clientY - this.dr_start_drag_y;
@@ -2227,46 +2186,14 @@ class DocumentReaderManager {
             await this._end_palm_erase();
             return;
         }
-        // 停止拖拽，启动惯性滚动
+        // 停止拖拽
         if (this.dr_is_dragging) {
             this.dr_is_dragging = false;
 
             // will-change: 延迟释放 GPU 合成层
             this._dr_schedule_disable_smooth_transform();
 
-            // 计算平均速度（取最近采样的加权平均）
-            const samples = this._drag_velocity_samples;
-            let vx = 0, vy = 0;
-            if (samples.length > 0) {
-                // 时间加权：越近的采样权重越高
-                let total_weight = 0;
-                const now = performance.now();
-                for (const s of samples) {
-                    const age = now - s.t;
-                    const weight = Math.max(0.1, 1 - age / 200); // 200ms 内线性衰减
-                    vx += s.x * weight;
-                    vy += s.y * weight;
-                    total_weight += weight;
-                }
-                if (total_weight > 0) {
-                    vx /= total_weight;
-                    vy /= total_weight;
-                }
-            }
-
-            // 转换为像素/帧（16ms 一帧），阈值：0.3 像素/帧
-            const vx_frame = vx * 16;
-            const vy_frame = vy * 16;
-            const speed = Math.sqrt(vx_frame * vx_frame + vy_frame * vy_frame);
-
-            if (speed > 0.3) {
-                this._start_inertial_scroll(vx_frame, vy_frame);
-            } else {
-                // 速度不足，直接检查可见性
-                this._check_page_visibility();
-            }
-
-            this._drag_velocity_samples = [];
+            this._check_page_visibility();
             return;
         }
 
@@ -3583,95 +3510,16 @@ class DocumentReaderManager {
                 this.dr_is_dragging = true;
                 this.dr_start_drag_x = touch.clientX - this.dr_canvas_x;
                 this.dr_start_drag_y = touch.clientY - this.dr_canvas_y;
-                this._drag_last_time = performance.now();
-                this._drag_last_pos = { x: touch.clientX, y: touch.clientY };
-                this._drag_velocity_samples = [];
             } else {
                 this.dr_is_dragging = false;
                 // 所有手指松开，清除活跃指针 ID
                 this._active_pointer_id = null;
-                // 惯性滚动
-                this._start_inertial_scroll_from_samples();
+                this._check_page_visibility();
             }
 
             // will-change: 延迟释放 GPU 合成层
             this._dr_schedule_disable_smooth_transform();
         }
-    }
-
-    /** 从速度采样启动惯性滚动（复用 _handle_pointer_up 的加权平均逻辑） */
-    _start_inertial_scroll_from_samples() {
-        const samples = this._drag_velocity_samples;
-        let vx = 0, vy = 0;
-        if (samples.length > 0) {
-            let total_weight = 0;
-            const now = performance.now();
-            for (const s of samples) {
-                const age = now - s.t;
-                const weight = Math.max(0.1, 1 - age / 200);
-                vx += s.x * weight;
-                vy += s.y * weight;
-                total_weight += weight;
-            }
-            if (total_weight > 0) {
-                vx /= total_weight;
-                vy /= total_weight;
-            }
-        }
-
-        const vx_frame = vx * 16;
-        const vy_frame = vy * 16;
-        const speed = Math.sqrt(vx_frame * vx_frame + vy_frame * vy_frame);
-
-        if (speed > 0.3) {
-            this._start_inertial_scroll(vx_frame, vy_frame);
-        } else {
-            this._check_page_visibility();
-        }
-
-        this._drag_velocity_samples = [];
-    }
-
-    /** 启动惯性滚动动画（指数衰减速度，每帧更新位置，到达边界自动停止） */
-    _start_inertial_scroll(vx, vy) {
-        // 停止已有的惯性动画
-        if (this._inertia_raf_id !== null) {
-            cancelAnimationFrame(this._inertia_raf_id);
-            this._inertia_raf_id = null;
-        }
-
-        const decay = 0.95;      // 每帧速度衰减系数
-        const min_speed = 0.5;   // 停止阈值（像素/帧）
-        let cur_vx = vx;
-        let cur_vy = vy;
-
-        const animate = () => {
-            cur_vx *= decay;
-            cur_vy *= decay;
-
-            // 速度低于阈值时停止
-            const speed = Math.sqrt(cur_vx * cur_vx + cur_vy * cur_vy);
-            if (speed < min_speed) {
-                this._inertia_raf_id = null;
-                this._check_page_visibility();
-                return;
-            }
-
-            this.dr_canvas_x += cur_vx;
-            this.dr_canvas_y += cur_vy;
-
-            // 钳制到边界（到达边界时停止对应方向的惯性）
-            const prev_x = this.dr_canvas_x;
-            const prev_y = this.dr_canvas_y;
-            this._dr_update_canvas_position();
-            if (this.dr_canvas_x !== prev_x) cur_vx = 0;
-            if (this.dr_canvas_y !== prev_y) cur_vy = 0;
-
-            this._dr_sync_transform();
-            this._inertia_raf_id = requestAnimationFrame(animate);
-        };
-
-        this._inertia_raf_id = requestAnimationFrame(animate);
     }
 
     /** 计算两点触摸距离平方 */
