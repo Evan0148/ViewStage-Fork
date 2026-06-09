@@ -86,8 +86,6 @@ function developer_options_show_main(currentWidthRatio, currentMaxScale, perfMon
         || `${currentMaxScale}x`;
 
     const frameDeltaPresets = [
-        { value: '10', label: '10px' },
-        { value: '30', label: '30px' },
         { value: '60', label: '60px（默认）' },
         { value: '100', label: '100px' },
         { value: '200', label: '200px' },
