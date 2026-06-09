@@ -1699,16 +1699,15 @@ class DocumentReaderManager {
         overlay_canvas.style.zIndex = '100';
 
         // 计算初始 overlay DPR（与 batch_draw._calc_overlay_dpr 一致）
-        // 覆盖层是屏幕空间画布，DPR 上限为 devicePixelRatio，超出无显示增益
         const init_overlay_dpr = (() => {
             const cfg = window.DRAW_CONFIG;
             if (!cfg || cfg.dynamicDprEnabled === false) return Math.min(cfg?.dpr || 1, 2);
             const baseDpr = cfg.baseDpr || window.devicePixelRatio || 1;
             const minDpr = cfg.dprMin || 1;
+            const maxDpr = cfg.dprMax || 4;
             const step = cfg.dprStep || 0.25;
-            const display_dpr = Math.ceil(window.devicePixelRatio || 2);
             const dpr = Math.ceil(baseDpr / step) * step;
-            return Math.max(minDpr, Math.min(display_dpr, dpr));
+            return Math.max(minDpr, Math.min(maxDpr, dpr));
         })();
 
         // 设置初始尺寸为视口大小（含 DPR，确保清晰）
@@ -1892,6 +1891,9 @@ class DocumentReaderManager {
         const page = this.page_manager.get_current_page();
         if (!page || !page.tile_renderer) return;
 
+        const orig_scale = window.state?.scale;
+        if (window.state) window.state.scale = this.dr_scale;
+
         window.main_reset_context_state?.();
         page.tile_renderer._strokeHistoryRef = page.stroke_history;
         page.tile_renderer.mark_strokes_changed();
@@ -1909,7 +1911,11 @@ class DocumentReaderManager {
             page.tile_renderer.mark_all();
         }
 
-        page.tile_renderer.rebuild_all();
+        try {
+            page.tile_renderer.rebuild_all();
+        } finally {
+            if (window.state) window.state.scale = orig_scale;
+        }
     }
 
     // ====== 绘制事件 ======

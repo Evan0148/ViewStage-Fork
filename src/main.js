@@ -2275,12 +2275,10 @@ function main_hide_palm_eraser_hint() {
 function main_update_palm_eraser_hint(clientX, clientY, size) {
     if (!dom.palmEraserHint) return;
     const rect = dom.canvasWrapper.getBoundingClientRect();
-    const s = main_fetch_safe_scale();
-    const x = (clientX - rect.left) / s;
-    const y = (clientY - rect.top) / s;
-    const sz = size / s;
-    dom.palmEraserHint.style.width = `${sz}px`;
-    dom.palmEraserHint.style.height = `${sz}px`;
+    const x = clientX - rect.left;
+    const y = clientY - rect.top;
+    dom.palmEraserHint.style.width = `${size}px`;
+    dom.palmEraserHint.style.height = `${size}px`;
     dom.palmEraserHint.style.left = `${x}px`;
     dom.palmEraserHint.style.top = `${y}px`;
     dom.palmEraserHint.style.transform = 'translate(-50%, -50%)';
@@ -3280,8 +3278,8 @@ async function main_render_strokes_to_context(ctx, strokes) {
     let batchColor = null;
     let batchLineWidth = 0;
     let batchIsErase = false;
-    let batchPrevToX = 0;
-    let batchPrevToY = 0;
+    let batchPrevMidX = 0;
+    let batchPrevMidY = 0;
 
     const batch_flush = () => {
         if (batchActive) {
@@ -3295,7 +3293,12 @@ async function main_render_strokes_to_context(ctx, strokes) {
 
         const hasVariableWidths = stroke.variableWidths && stroke.variableWidths.length > 0;
         const strokeColor = stroke.color || DRAW_CONFIG.penColor;
-        const baseLineWidth = stroke.lineWidth || (stroke.type === 'erase' ? DRAW_CONFIG.eraserSize : DRAW_CONFIG.penWidth);
+        let baseLineWidth;
+        if (stroke.type === 'erase' && stroke.eraserSizeRaw !== undefined) {
+            baseLineWidth = stroke.eraserSizeRaw / main_fetch_safe_scale();
+        } else {
+            baseLineWidth = stroke.lineWidth || (stroke.type === 'erase' ? DRAW_CONFIG.eraserSize : DRAW_CONFIG.penWidth);
+        }
 
         if (stroke.type === 'erase') {
             /* 擦除与前一批绘制颜色不同，先刷出绘制批 */
@@ -3337,36 +3340,41 @@ async function main_render_strokes_to_context(ctx, strokes) {
         }
 
         if (hasVariableWidths) {
-            /* 可变宽度：分段渲染，连续线宽相近的段合并到同一条路径减少 stroke() */
             batch_flush();
             let varBatchActive = false;
             let varBatchWidth = 0;
-            let lastToX = 0, lastToY = 0;
+            let varPrevMidX = 0, varPrevMidY = 0;
 
             for (let i = 0; i < stroke.points.length; i++) {
                 const point = stroke.points[i];
                 const lineWidth = stroke.variableWidths[i] || baseLineWidth;
+                const midX = (point.fromX + point.toX) / 2;
+                const midY = (point.fromY + point.toY) / 2;
 
                 if (!varBatchActive || Math.abs(lineWidth - varBatchWidth) >= 0.5) {
                     if (varBatchActive) ctx.stroke();
                     main_update_context_state(ctx, { lineWidth });
                     varBatchWidth = lineWidth;
                     ctx.beginPath();
-                    ctx.moveTo(point.fromX, point.fromY);
-                    ctx.lineTo(point.toX, point.toY);
+                    if (!varBatchActive) {
+                        ctx.moveTo(point.fromX, point.fromY);
+                        ctx.lineTo(midX, midY);
+                    } else {
+                        ctx.moveTo(varPrevMidX, varPrevMidY);
+                        ctx.quadraticCurveTo(point.fromX, point.fromY, midX, midY);
+                    }
                     varBatchActive = true;
                 } else {
-                    ctx.lineTo(point.fromX, point.fromY);
-                    ctx.lineTo(point.toX, point.toY);
+                    ctx.quadraticCurveTo(point.fromX, point.fromY, midX, midY);
                 }
-                lastToX = point.toX;
-                lastToY = point.toY;
+                varPrevMidX = midX;
+                varPrevMidY = midY;
             }
             if (varBatchActive) ctx.stroke();
             continue;
         }
 
-        /* 固定宽度：尝试合并连续同色/同线宽笔画到同一条 Path2D */
+        /* 固定宽度：尝试合并连续同色/同线宽笔画 */
         if (!batchActive ||
             batchIsErase !== (stroke.type === 'erase') ||
             batchColor !== strokeColor ||
@@ -3377,31 +3385,45 @@ async function main_render_strokes_to_context(ctx, strokes) {
             batchColor = strokeColor;
             batchIsErase = (stroke.type === 'erase');
 
+            const pts = stroke.points;
             const path = new Path2D();
-            const firstPoint = stroke.points[0];
-            path.moveTo(firstPoint.fromX, firstPoint.fromY);
-            path.lineTo(firstPoint.toX, firstPoint.toY);
-            for (let i = 1; i < stroke.points.length; i++) {
-                path.lineTo(stroke.points[i].fromX, stroke.points[i].fromY);
-                path.lineTo(stroke.points[i].toX, stroke.points[i].toY);
+            let midX = (pts[0].fromX + pts[0].toX) / 2;
+            let midY = (pts[0].fromY + pts[0].toY) / 2;
+            path.moveTo(pts[0].fromX, pts[0].fromY);
+            path.lineTo(midX, midY);
+            for (let i = 1; i < pts.length; i++) {
+                const nmidX = (pts[i].fromX + pts[i].toX) / 2;
+                const nmidY = (pts[i].fromY + pts[i].toY) / 2;
+                path.moveTo(midX, midY);
+                path.quadraticCurveTo(pts[i].fromX, pts[i].fromY, nmidX, nmidY);
+                midX = nmidX;
+                midY = nmidY;
             }
             ctx.stroke(path);
+            batchPrevMidX = midX;
+            batchPrevMidY = midY;
         } else {
-            /* 与上一笔画样式一致：利用 canvas 路径累积延迟 stroke()，合并笔段 */
+            const pts = stroke.points;
             if (!batchActive) {
                 batchActive = true;
                 ctx.beginPath();
-                ctx.moveTo(batchPrevToX, batchPrevToY);
+                ctx.moveTo(batchPrevMidX, batchPrevMidY);
             }
-            ctx.moveTo(batchPrevToX, batchPrevToY);
-            for (let i = 0; i < stroke.points.length; i++) {
-                ctx.lineTo(stroke.points[i].fromX, stroke.points[i].fromY);
-                ctx.lineTo(stroke.points[i].toX, stroke.points[i].toY);
+            ctx.lineTo(pts[0].fromX, pts[0].fromY);
+            let midX = (pts[0].fromX + pts[0].toX) / 2;
+            let midY = (pts[0].fromY + pts[0].toY) / 2;
+            ctx.lineTo(midX, midY);
+            for (let i = 1; i < pts.length; i++) {
+                const nmidX = (pts[i].fromX + pts[i].toX) / 2;
+                const nmidY = (pts[i].fromY + pts[i].toY) / 2;
+                ctx.moveTo(midX, midY);
+                ctx.quadraticCurveTo(pts[i].fromX, pts[i].fromY, nmidX, nmidY);
+                midX = nmidX;
+                midY = nmidY;
             }
+            batchPrevMidX = midX;
+            batchPrevMidY = midY;
         }
-        const lastPoint = stroke.points[stroke.points.length - 1];
-        batchPrevToX = lastPoint.toX;
-        batchPrevToY = lastPoint.toY;
     }
 
     batch_flush();
