@@ -206,43 +206,6 @@ class RealPenManager {
         return baseWidth * speedFactor * pressureFactor;
     }
 
-    _build_smooth_points(rawPoints, smoothness) {
-        if (rawPoints.length < 2) return rawPoints;
-
-        const result = [];
-        const steps = Math.max(3, Math.round(smoothness * 10));
-        const ctrl = rawPoints;
-
-        for (let i = 0; i < ctrl.length - 1; i++) {
-            const p0 = ctrl[Math.max(0, i - 1)];
-            const p1 = ctrl[i];
-            const p2 = ctrl[Math.min(ctrl.length - 1, i + 1)];
-            const p3 = ctrl[Math.min(ctrl.length - 1, i + 2)];
-
-            for (let j = 0; j <= steps; j++) {
-                if (i > 0 && j === 0) continue;
-                const t = j / steps;
-                const t2 = t * t;
-                const t3 = t2 * t;
-                const x = 0.5 * (
-                    (2 * p1.x) +
-                    (-p0.x + p2.x) * t +
-                    (2 * p0.x - 5 * p1.x + 4 * p2.x - p3.x) * t2 +
-                    (-p0.x + 3 * p1.x - 3 * p2.x + p3.x) * t3
-                );
-                const y = 0.5 * (
-                    (2 * p1.y) +
-                    (-p0.y + p2.y) * t +
-                    (2 * p0.y - 5 * p1.y + 4 * p2.y - p3.y) * t2 +
-                    (-p0.y + 3 * p1.y - 3 * p2.y + p3.y) * t3
-                );
-                result.push({ x, y });
-            }
-        }
-
-        return result;
-    }
-
     build_tessellated_stroke(stroke, mode = null) {
         this.init_tessellator();
         if (!this.tessellator) return null;
@@ -275,7 +238,7 @@ class RealPenManager {
                 segments.push({
                     x1: raw[i].x, y1: raw[i].y,
                     x2: raw[i + 1].x, y2: raw[i + 1].y,
-                    line_width: Math.max(0.5, storedWidths[i])
+                    line_width: storedWidths[i]
                 });
             }
 
@@ -305,22 +268,26 @@ class RealPenManager {
         }
         if (filtered.length < 2) return null;
 
-        let input_points;
-        let density = 1;
-        if (effect_mode === 'full') {
-            const smoothness = DRAW_CONFIG.penSmoothness ?? 0.8;
-            const steps = Math.max(3, Math.round(smoothness * 10));
-            density = steps;
-            input_points = this._build_smooth_points(filtered, smoothness);
-        } else if (effect_mode === 'limited') {
-            const smoothness = (DRAW_CONFIG.penSmoothness ?? 0.8) * 0.5;
-            const steps = Math.max(3, Math.round(smoothness * 10));
-            density = Math.max(2, steps);
-            input_points = this._build_smooth_points(filtered, smoothness);
-        } else {
-            input_points = filtered;
+        const input_points = filtered;
+        if (input_points.length < 2) return null;
+
+        // limited 模式回退：使用常量宽度，不经过速度重算
+        if (effect_mode === 'limited') {
+            const segments = [];
+            for (let i = 0; i < input_points.length - 1; i++) {
+                segments.push({
+                    x1: input_points[i].x, y1: input_points[i].y,
+                    x2: input_points[i + 1].x, y2: input_points[i + 1].y,
+                    line_width: base_width
+                });
+            }
+            if (segments.length > 0) {
+                const result = { segments, color };
+                this.cached_tessellated.set(stroke, result);
+                return result;
+            }
+            return null;
         }
-        if (!input_points || input_points.length < 2) return null;
 
         const stroke_data = [];
         for (let i = 0; i < input_points.length; i++) {
@@ -334,7 +301,7 @@ class RealPenManager {
 
         const result = this.tessellator.tessellator_build_stroke_from_stroke_data(
             { points: stroke_data, lineWidth: base_width, color },
-            { density, noStartTaper: stroke.noStartTaper }
+            { density: 1, noStartTaper: stroke.noStartTaper }
         );
         
         if (result) {
@@ -3066,7 +3033,7 @@ function main_start_stroke(type, eraserShape) {
     
     state.cachedDrawType = type;
     state.cachedDrawColor = type === 'draw' ? DRAW_CONFIG.penColor : '#000000';
-    state.cachedDrawLineWidth = type === 'draw' ? DRAW_CONFIG.penWidth : baseEraserSize;
+    state.cachedDrawLineWidth = type === 'draw' ? DRAW_CONFIG.penWidth * invScale : baseEraserSize;
     
     state.eraserSpeedState = window.__eraserSpeed?.eraser_speed_create_state() ?? null;
     
@@ -3110,10 +3077,15 @@ async function main_submit_stroke() {
     if (state.currentStroke && state.currentStroke.points.length > 0) {
         // 强制刷新待处理命令，确保 _storedWidths 包含所有段的线宽
         batchDrawManager.batch_draw_handle_flush();
+        // limited 模式：末尾添加收尾渐变
+        const penMode = window.get_pen_effect_mode ? window.get_pen_effect_mode() : 'off';
+        if (penMode === 'limited' && batchDrawManager._storedWidths.length > 0) {
+            const baseW = state.currentStroke.lineWidth || DRAW_CONFIG.penWidth || 5;
+            batchDrawManager._apply_speed_taper(batchDrawManager._storedWidths, state.currentStroke.points, baseW);
+        }
         // 捕获实时绘制的逐段宽度，确保离线渲染与实时预览一致
         const storedWidths = batchDrawManager._storedWidths;
-        if (storedWidths && storedWidths.length > 0 &&
-            storedWidths.length === state.currentStroke.points.length) {
+        if (storedWidths && storedWidths.length === state.currentStroke.points.length) {
             state.currentStroke.storedWidths = [...storedWidths];
         }
         

@@ -358,7 +358,7 @@ class RealtimeBatchDrawManager {
         const maxDelta = baseWidth * 0.12;
         lineWidth = Math.min(lastLineWidth + maxDelta, Math.max(lastLineWidth - maxDelta, lineWidth));
 
-        return Math.max(0.5, lineWidth);
+        return lineWidth;
     }
 
     _apply_start_taper(lineWidth, baseWidth, segmentIndex, totalInBatch) {
@@ -388,7 +388,7 @@ class RealtimeBatchDrawManager {
         let currentLineWidth = this.lastLineWidth;
 
         const getPenEffect = window.get_pen_effect_mode;
-        const penEffectActive = getPenEffect ? getPenEffect() !== 'off' : false;
+        this._penEffectMode = getPenEffect ? getPenEffect() : 'off';
 
         let lastLineWidth = currentLineWidth || 5;
         let lastMoveTime = this.lastBatchMoveTime || performance.now() - 16;
@@ -405,12 +405,13 @@ class RealtimeBatchDrawManager {
         }
 
         let eraseByTile = null;
-        /* 路径批处理状态：连续线宽相近的 segment 合并为同一条路径, stroke() 一次 */
-        let batchActive = false;
-        let batchPrevMidX = 0;
-        let batchPrevMidY = 0;
-        let batchLastLineWidth = 0;
-        let batchLastColor = null;
+
+        if (this._penEffectMode === 'limited') {
+            const prev = this._segmentTimes.length > 0 ? this._segmentTimes[this._segmentTimes.length - 1] : 0;
+            for (let i = 0; i < count; i++) {
+                this._segmentTimes.push(prev + perSegTime * (i + 1));
+            }
+        }
 
         for (let i = 0; i < count; i++) {
             const cmd = commands[i];
@@ -419,7 +420,7 @@ class RealtimeBatchDrawManager {
             const toX = cmd.toX, toY = cmd.toY;
 
             let lineWidth = cmd.lineWidth;
-            if (penEffectActive && cmd.type === 'draw') {
+            if (this._penEffectMode === 'full' && cmd.type === 'draw') {
                 const dx = toX - fromX;
                 const dy = toY - fromY;
                 const dist = Math.sqrt(dx * dx + dy * dy);
@@ -436,7 +437,7 @@ class RealtimeBatchDrawManager {
                 }
             }
 
-            if (penEffectActive && cmd.type === 'draw') {
+            if (cmd.type === 'draw') {
                 this._storedWidths.push(lineWidth);
             } else if (cmd.type === 'erase') {
                 this._storedWidths.push(lineWidth);
@@ -449,11 +450,6 @@ class RealtimeBatchDrawManager {
             }
 
             if (cmd.type === 'erase') {
-                /* 擦除 —— 提交当前绘制批处理 */
-                if (batchActive) {
-                    this._overlayCtx.stroke();
-                    batchActive = false;
-                }
                 const tr = this._tileRenderer || window.tileRenderer;
                 if (tr) {
                     if (!eraseByTile) eraseByTile = new Map();
@@ -471,46 +467,51 @@ class RealtimeBatchDrawManager {
                 }
             } else if (this._overlayCtx) {
                 const ctx = this._overlayCtx;
+                if (cmd.color) ctx.strokeStyle = cmd.color;
+
                 const midX = (fromX + toX) / 2;
                 const midY = (fromY + toY) / 2;
+                const prevW = i > 0 ? lastLineWidth : lineWidth;
+                const curW = lineWidth;
+                const isFirstSeg = (i === 0 && (this._strokeStart || this._lastMidX === null));
 
-                if (!batchActive) {
-                    /* 开启新批处理路径 */
-                    if (cmd.color) ctx.strokeStyle = cmd.color;
-                    ctx.lineWidth = Math.max(0.5, lineWidth);
-                    ctx.beginPath();
-
-                    const isFirstSeg = (i === 0 && (this._strokeStart || this._lastMidX === null));
-                    if (isFirstSeg) {
-                        ctx.moveTo(fromX, fromY);
-                        ctx.lineTo(midX, midY);
-                    } else {
-                        const prevMx = (i === 0 ? this._lastMidX : ((commands[i - 1].fromX + commands[i - 1].toX) / 2));
-                        const prevMy = (i === 0 ? this._lastMidY : ((commands[i - 1].fromY + commands[i - 1].toY) / 2));
-                        ctx.moveTo(prevMx, prevMy);
-                        ctx.quadraticCurveTo(fromX, fromY, midX, midY);
-                    }
-                    batchActive = true;
-                    batchLastLineWidth = lineWidth;
-                    batchLastColor = cmd.color;
+                const SUBDIVS = 3;
+                let sx, sy, ex, ey;
+                if (isFirstSeg) {
+                    sx = fromX; sy = fromY;
+                    ex = midX; ey = midY;
                 } else {
-                    /* 线宽/颜色变化时拆分批处理，否则合并到当前路径减少 stroke() 调用 */
-                    if (cmd.color !== batchLastColor || Math.abs(lineWidth - batchLastLineWidth) >= 0.5) {
-                        ctx.stroke();
-                        if (cmd.color !== batchLastColor) ctx.strokeStyle = cmd.color;
-                        ctx.lineWidth = Math.max(0.5, lineWidth);
-                        ctx.beginPath();
-                        ctx.moveTo(batchPrevMidX, batchPrevMidY);
-                        ctx.quadraticCurveTo(fromX, fromY, midX, midY);
-                        batchLastLineWidth = lineWidth;
-                        batchLastColor = cmd.color;
-                    } else {
-                        /* 线宽未显著变化，直接延展路径 */
-                        ctx.quadraticCurveTo(fromX, fromY, midX, midY);
-                    }
+                    sx = (i === 0 ? this._lastMidX : ((commands[i - 1].fromX + commands[i - 1].toX) / 2));
+                    sy = (i === 0 ? this._lastMidY : ((commands[i - 1].fromY + commands[i - 1].toY) / 2));
+                    ex = midX; ey = midY;
                 }
-                batchPrevMidX = midX;
-                batchPrevMidY = midY;
+
+                for (let j = 0; j < SUBDIVS; j++) {
+                    const t0 = j / SUBDIVS;
+                    const t1 = (j + 1) / SUBDIVS;
+                    const w = prevW + (curW - prevW) * ((t0 + t1) / 2);
+
+                    let p0x, p0y, p1x, p1y;
+                    if (isFirstSeg) {
+                        p0x = sx + (ex - sx) * t0;
+                        p0y = sy + (ey - sy) * t0;
+                        p1x = sx + (ex - sx) * t1;
+                        p1y = sy + (ey - sy) * t1;
+                    } else {
+                        const omt0 = 1 - t0;
+                        const omt1 = 1 - t1;
+                        p0x = omt0 * omt0 * sx + 2 * omt0 * t0 * fromX + t0 * t0 * ex;
+                        p0y = omt0 * omt0 * sy + 2 * omt0 * t0 * fromY + t0 * t0 * ey;
+                        p1x = omt1 * omt1 * sx + 2 * omt1 * t1 * fromX + t1 * t1 * ex;
+                        p1y = omt1 * omt1 * sy + 2 * omt1 * t1 * fromY + t1 * t1 * ey;
+                    }
+
+                    ctx.lineWidth = w;
+                    ctx.beginPath();
+                    ctx.moveTo(p0x, p0y);
+                    ctx.lineTo(p1x, p1y);
+                    ctx.stroke();
+                }
             }
 
             if (i === count - 1) {
@@ -519,12 +520,6 @@ class RealtimeBatchDrawManager {
                 this._lastToX = toX;
                 this._lastToY = toY;
             }
-        }
-
-        /* 提交剩余批处理路径 */
-        if (batchActive) {
-            this._overlayCtx.stroke();
-            batchActive = false;
         }
 
         if (eraseByTile && eraseByTile.size > 0) {
@@ -596,6 +591,31 @@ class RealtimeBatchDrawManager {
         }
     }
 
+    _apply_speed_taper(widths, points, baseWidth) {
+        if (!points || points.length < 2 || widths.length !== points.length) return;
+        const tailDuration = window.DRAW_CONFIG?.penTailDuration ?? 50;
+        const totalDuration = this._segmentTimes.length > 0 ? this._segmentTimes[this._segmentTimes.length - 1] : 0;
+        if (totalDuration <= 0) return;
+        const tailStartTime = Math.max(0, totalDuration - tailDuration);
+        let tailStart = -1;
+        for (let i = 0; i < this._segmentTimes.length; i++) {
+            if (this._segmentTimes[i] >= tailStartTime) { tailStart = i; break; }
+        }
+        if (tailStart < 0 || tailStart >= widths.length) return;
+        let lastWidth = tailStart > 0 ? widths[tailStart - 1] : baseWidth;
+        for (let i = tailStart; i < widths.length; i++) {
+            const pt = points[i];
+            const dx = pt.toX - pt.fromX;
+            const dy = pt.toY - pt.fromY;
+            const dist = Math.sqrt(dx * dx + dy * dy);
+            const prevTime = i > 0 ? this._segmentTimes[i - 1] : 0;
+            const segTime = Math.max(1, this._segmentTimes[i] - prevTime);
+            const speed = dist / segTime;
+            widths[i] = this._calc_pen_line_width(speed, baseWidth, lastWidth, dist);
+            lastWidth = widths[i];
+        }
+    }
+
     reset_state() {
         this.pendingCount = 0;
         this.pendingCommands.length = 0;
@@ -607,6 +627,7 @@ class RealtimeBatchDrawManager {
         this.lastColor = null;
         this.lastLineWidth = null;
         this.lastBatchMoveTime = 0;
+        this._penEffectMode = 'off';
         this._strokeStart = true;
         this._totalSegments = 0;
         this._lastMidX = null;
@@ -615,6 +636,7 @@ class RealtimeBatchDrawManager {
         this._lastToY = null;
         this._speedBuffer = [];
         this._storedWidths = [];
+        this._segmentTimes = [];
         this.clear_overlay();
     }
 
@@ -622,6 +644,7 @@ class RealtimeBatchDrawManager {
         this.pendingCount = 0;
         this.pendingCommands.length = 0;
         this.lastDrawTime = performance.now();
+        this._penEffectMode = 'off';
         this._strokeStart = true;
         this._totalSegments = 0;
         this._lastMidX = null;
@@ -630,6 +653,7 @@ class RealtimeBatchDrawManager {
         this._lastToY = null;
         this._speedBuffer = [];
         this._storedWidths = [];
+        this._segmentTimes = [];
         this.eraserShape = 'round';
 
         if (this.is_adaptive) {
@@ -672,13 +696,37 @@ class RealtimeBatchDrawManager {
                 const cfg = window.DRAW_CONFIG || {};
                 ctx.globalCompositeOperation = 'source-over';
                 ctx.strokeStyle = cfg.penColor || '#3498db';
-                ctx.lineWidth = this.lastLineWidth || 5;
                 ctx.lineCap = 'round';
                 ctx.lineJoin = 'round';
-                ctx.beginPath();
-                ctx.moveTo(this._lastMidX, this._lastMidY);
-                ctx.lineTo(this._lastToX, this._lastToY);
-                ctx.stroke();
+                const baseW = this.lastLineWidth || 5;
+                if (this._penEffectMode === 'limited') {
+                    const lastStoredW = this._storedWidths.length > 0 ? this._storedWidths[this._storedWidths.length - 1] : baseW;
+                    const segs = 4;
+                    for (let j = 0; j < segs; j++) {
+                        const t0 = j / segs;
+                        const t1 = (j + 1) / segs;
+                        const midT = (t0 + t1) / 2;
+                        const eased = midT * midT * (3 - 2 * midT);
+                        const w = lastStoredW * (1 - eased * 0.85);
+                        ctx.lineWidth = w;
+                        ctx.beginPath();
+                        ctx.moveTo(
+                            this._lastMidX + (this._lastToX - this._lastMidX) * t0,
+                            this._lastMidY + (this._lastToY - this._lastMidY) * t0
+                        );
+                        ctx.lineTo(
+                            this._lastMidX + (this._lastToX - this._lastMidX) * t1,
+                            this._lastMidY + (this._lastToY - this._lastMidY) * t1
+                        );
+                        ctx.stroke();
+                    }
+                } else {
+                    ctx.lineWidth = baseW;
+                    ctx.beginPath();
+                    ctx.moveTo(this._lastMidX, this._lastMidY);
+                    ctx.lineTo(this._lastToX, this._lastToY);
+                    ctx.stroke();
+                }
             }
         }
 

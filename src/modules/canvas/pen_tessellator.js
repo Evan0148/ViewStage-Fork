@@ -58,7 +58,7 @@ class PenTessellator {
                 const dist = Math.sqrt(dx * dx + dy * dy);
 
                 const safeDist = Math.max(dist, 0.01);
-                const speed = Math.min(safeDist * density, 15) / 8;
+                const speed = safeDist * 0.125;
                 const clamped = Math.max(0, Math.min(1, (speed - minSpeed) / (maxSpeed - minSpeed)));
 
                 let line_width;
@@ -104,7 +104,7 @@ class PenTessellator {
             segments.push({
                 x1: p1.x, y1: p1.y,
                 x2: p2.x, y2: p2.y,
-                line_width: Math.max(0.5, line_widths[i])
+                line_width: line_widths[i]
             });
         }
 
@@ -127,56 +127,66 @@ class PenTessellator {
         ctx.lineJoin = 'round';
         ctx.globalCompositeOperation = 'source-over';
 
-        /* 首段独立绘制：x1,y1 → x2,y2 直线 */
-        const s0 = segments[0];
-        ctx.lineWidth = s0.line_width;
-        ctx.beginPath();
-        ctx.moveTo(s0.x1, s0.y1);
-        ctx.lineTo(s0.x2, s0.y2);
-        ctx.stroke();
-        if (len === 1) {
-            const mx = (s0.x1 + s0.x2) / 2;
-            ctx.beginPath();
-            ctx.moveTo(mx, (s0.y1 + s0.y2) / 2);
-            ctx.lineTo(s0.x2, s0.y2);
-            ctx.stroke();
-            return;
-        }
+        const SUBDIVS = 8;
 
-        /* 后续段：合并线宽相近的连续曲线为同一路径，减少 stroke() 调用 */
-        let batchActive = false;
-        let batchWidth = 0;
+        /* 构建采样点序列，宽度沿曲线线性插值，消除段间阶跃 */
+        const pts = [];
 
-        for (let i = 1; i < len; i++) {
+        for (let i = 0; i < len; i++) {
             const seg = segments[i];
-            const prev = segments[i - 1];
-            const last_x = (prev.x1 + prev.x2) / 2;
-            const last_y = (prev.y1 + prev.y2) / 2;
-            const mid_x = (seg.x1 + seg.x2) / 2;
-            const mid_y = (seg.y1 + seg.y2) / 2;
-            const isTail = (i === len - 1);
+            const prevW = i > 0 ? segments[i - 1].line_width : seg.line_width;
+            const curW = seg.line_width;
 
-            if (!batchActive || Math.abs(seg.line_width - batchWidth) >= 0.5) {
-                if (batchActive) ctx.stroke();
-                ctx.lineWidth = seg.line_width;
-                batchWidth = seg.line_width;
-                ctx.beginPath();
-                ctx.moveTo(last_x, last_y);
-                ctx.quadraticCurveTo(seg.x1, seg.y1, mid_x, mid_y);
+            let sx, sy, cx, cy, ex, ey, tail = false;
+            if (i === 0) {
+                sx = seg.x1; sy = seg.y1;
+                ex = (seg.x1 + seg.x2) / 2; ey = (seg.y1 + seg.y2) / 2;
+                cx = sx; cy = sy;
+                pts.push({ x: sx, y: sy, w: curW });
             } else {
-                ctx.quadraticCurveTo(seg.x1, seg.y1, mid_x, mid_y);
+                const prev = segments[i - 1];
+                sx = (prev.x1 + prev.x2) / 2; sy = (prev.y1 + prev.y2) / 2;
+                ex = (seg.x1 + seg.x2) / 2; ey = (seg.y1 + seg.y2) / 2;
+                cx = seg.x1; cy = seg.y1;
             }
 
-            if (isTail) {
-                /* 末段尾线：mid → toX/Y 追加到当前路径一同 stroke */
-                ctx.lineTo(seg.x2, seg.y2);
-                ctx.stroke();
-                batchActive = false;
-            } else {
-                batchActive = true;
+            for (let j = 1; j <= SUBDIVS; j++) {
+                const t = j / SUBDIVS;
+                const w = prevW + (curW - prevW) * t;
+                let px, py;
+                if (i === 0) {
+                    px = sx + (ex - sx) * t;
+                    py = sy + (ey - sy) * t;
+                } else {
+                    const omt = 1 - t;
+                    px = omt * omt * sx + 2 * omt * t * cx + t * t * ex;
+                    py = omt * omt * sy + 2 * omt * t * cy + t * t * ey;
+                }
+                pts.push({ x: px, y: py, w });
+            }
+
+            if (i === len - 1) {
+                const mx = ex, my = ey;
+                const tx = seg.x2, ty = seg.y2;
+                const segs = 4;
+                for (let j = 1; j <= segs; j++) {
+                    const t = j / segs;
+                    pts.push({ x: mx + (tx - mx) * t, y: my + (ty - my) * t, w: curW });
+                }
             }
         }
-        if (batchActive) ctx.stroke();
+
+        if (pts.length < 2) return;
+
+        for (let i = 1; i < pts.length; i++) {
+            const p0 = pts[i - 1];
+            const p1 = pts[i];
+            ctx.lineWidth = (p0.w + p1.w) / 2;
+            ctx.beginPath();
+            ctx.moveTo(p0.x, p0.y);
+            ctx.lineTo(p1.x, p1.y);
+            ctx.stroke();
+        }
     }
 }
 

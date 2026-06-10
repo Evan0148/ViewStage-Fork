@@ -202,7 +202,7 @@ export class DrawingEngine {
 
         this.cached_draw_type = type;
         this.cached_draw_color = type === 'draw' ? DRAW_CONFIG.penColor : '#000000';
-        this.cached_draw_line_width = type === 'draw' ? DRAW_CONFIG.penWidth : baseEraserSize;
+        this.cached_draw_line_width = type === 'draw' ? DRAW_CONFIG.penWidth * inv_scale : baseEraserSize;
 
         this._last_draw_time = performance.now();
         this._last_draw_x = null;
@@ -277,8 +277,13 @@ export class DrawingEngine {
         if (this.current_stroke && this.current_stroke.points.length > 0) {
             if (this.batch_draw) {
                 this.batch_draw.batch_draw_handle_flush();
+                const penMode = window.get_pen_effect_mode ? window.get_pen_effect_mode() : 'off';
+                if (penMode === 'limited' && this.batch_draw._storedWidths.length > 0) {
+                    const baseW = this.current_stroke.lineWidth || 5;
+                    this.batch_draw._apply_speed_taper(this.batch_draw._storedWidths, this.current_stroke.points, baseW);
+                }
                 const stored_widths = this.batch_draw._storedWidths;
-                if (stored_widths?.length > 0 &&
+                if (stored_widths &&
                     stored_widths.length === this.current_stroke.points.length) {
                     this.current_stroke.storedWidths = [...stored_widths];
                 }

@@ -12,6 +12,7 @@ async function developer_options_init() {
     let savedPerfInterval = 200;
     let savedDevMode = true;
     let savedFrameDelta = 60;
+    let savedTailDuration = 50;
 
     if (invoke) {
         try {
@@ -30,6 +31,9 @@ async function developer_options_init() {
             savedFrameDelta = window.DRAW_CONFIG?.gestureFrameDelta
                 ?? s.gestureFrameDelta
                 ?? 60;
+            savedTailDuration = window.DRAW_CONFIG?.penTailDuration
+                ?? s.penTailDuration
+                ?? 50;
         } catch (_) {
             savedWidthRatio = window.DRAW_CONFIG?.penMinWidthRatio ?? 0.4;
             savedMaxScale = window.DRAW_CONFIG?.maxScaleImage ?? 4;
@@ -39,7 +43,7 @@ async function developer_options_init() {
         savedMaxScale = window.DRAW_CONFIG?.maxScaleImage ?? 4;
     }
 
-    developer_options_show_main(savedWidthRatio, savedMaxScale, savedPerfMonitor, savedPerfInterval, savedDevMode, savedFrameDelta);
+    developer_options_show_main(savedWidthRatio, savedMaxScale, savedPerfMonitor, savedPerfInterval, savedDevMode, savedFrameDelta, savedTailDuration);
 }
 
 const PERF_INTERVAL_OPTIONS = [
@@ -53,7 +57,7 @@ function perf_interval_label(ms) {
     return opt ? `${opt.label}（${ms}ms）` : `${ms}ms`;
 }
 
-function developer_options_show_main(currentWidthRatio, currentMaxScale, perfMonitorEnabled, perfMonitorInterval, devModeEnabled, currentFrameDelta) {
+function developer_options_show_main(currentWidthRatio, currentMaxScale, perfMonitorEnabled, perfMonitorInterval, devModeEnabled, currentFrameDelta, currentTailDuration) {
     const page = document.getElementById('pageDevOptions');
     if (!page) return;
     const devModeOn = devModeEnabled !== false;
@@ -94,6 +98,18 @@ function developer_options_show_main(currentWidthRatio, currentMaxScale, perfMon
     ];
     const currentFrameDeltaLabel = frameDeltaPresets.find(p => parseInt(p.value) === currentFrameDelta)?.label
         || `${currentFrameDelta}px`;
+
+    const tailDurationPresets = [
+        { value: '0', label: '0ms（关闭）' },
+        { value: '30', label: '30ms' },
+        { value: '50', label: '50ms（默认）' },
+        { value: '80', label: '80ms' },
+        { value: '100', label: '100ms' },
+        { value: '150', label: '150ms' },
+        { value: '200', label: '200ms' },
+    ];
+    const currentTailDurationLabel = tailDurationPresets.find(p => parseInt(p.value) === currentTailDuration)?.label
+        || `${currentTailDuration}ms`;
 
     page.innerHTML = `
         <h2 class="page-title">开发者选项</h2>
@@ -155,6 +171,17 @@ function developer_options_show_main(currentWidthRatio, currentMaxScale, perfMon
                 <div class="select-options" id="devFrameDeltaOptions">
                     ${frameDeltaPresets.map(p => `
                         <div class="select-option${parseInt(p.value) === currentFrameDelta ? ' selected' : ''}" data-value="${p.value}">${p.label}</div>
+                    `).join('')}
+                </div>
+            </div>
+        </div>
+        <div class="setting-item">
+            <span class="setting-label">Limited收尾时长</span>
+            <div class="custom-select" id="devTailDurationSelect">
+                <div class="select-selected" id="devTailDurationSelected">${currentTailDurationLabel}</div>
+                <div class="select-options" id="devTailDurationOptions">
+                    ${tailDurationPresets.map(p => `
+                        <div class="select-option${parseInt(p.value) === currentTailDuration ? ' selected' : ''}" data-value="${p.value}">${p.label}</div>
                     `).join('')}
                 </div>
             </div>
@@ -312,6 +339,38 @@ function developer_options_show_main(currentWidthRatio, currentMaxScale, perfMon
                 const invoke = window.__TAURI__?.core?.invoke;
                 if (invoke) {
                     invoke('settings_save_all', { settings: { gestureFrameDelta: v, developerMode: true } });
+                }
+            });
+        });
+    })();
+
+    // 收尾时长选择器
+    (function setup_tail_duration_select() {
+        const select = document.getElementById('devTailDurationSelect');
+        const selected = document.getElementById('devTailDurationSelected');
+        const options = document.querySelectorAll('#devTailDurationOptions .select-option');
+
+        if (!select || !selected) return;
+
+        selected.addEventListener('click', (e) => {
+            e.stopPropagation();
+            select.classList.toggle('open');
+        });
+
+        options.forEach(opt => {
+            opt.addEventListener('click', () => {
+                const v = parseInt(opt.dataset.value);
+                selected.textContent = opt.textContent;
+                options.forEach(o => o.classList.remove('selected'));
+                opt.classList.add('selected');
+                select.classList.remove('open');
+
+                if (window.DRAW_CONFIG) {
+                    window.DRAW_CONFIG.penTailDuration = v;
+                }
+                const invoke = window.__TAURI__?.core?.invoke;
+                if (invoke) {
+                    invoke('settings_save_all', { settings: { penTailDuration: v, developerMode: true } });
                 }
             });
         });

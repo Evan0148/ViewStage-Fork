@@ -280,6 +280,9 @@ async function settings_load_camera_config() {
             if (settings.developerMode && settings.gestureFrameDelta !== undefined) {
                 DRAW_CONFIG.gestureFrameDelta = settings.gestureFrameDelta;
             }
+            if (settings.developerMode && settings.penTailDuration !== undefined) {
+                DRAW_CONFIG.penTailDuration = settings.penTailDuration;
+            }
             // 仅在开发者模式下才检查并加载性能监视器
             if (settings.developerMode && settings.perfMonitorEnabled) {
                 try {

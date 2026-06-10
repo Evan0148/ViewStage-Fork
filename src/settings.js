@@ -1272,7 +1272,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (input) {
             input.addEventListener('change', async () => {
                 let val = parseInt(input.value);
-                if (isNaN(val) || val < 1) val = 1;
+                if (isNaN(val) || val < 0) val = 0;
                 if (val > 100) val = 100;
                 input.value = val;
                 const presets = settings_read_presets_from_ui();
@@ -1309,7 +1309,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (input) {
             input.addEventListener('change', async () => {
                 let val = parseInt(input.value);
-                if (isNaN(val) || val < 1) val = 1;
+                if (isNaN(val) || val < 0) val = 0;
                 if (val > 200) val = 200;
                 input.value = val;
                 const presets = settings_read_eraser_presets_from_ui();
