@@ -178,15 +178,24 @@ class PenTessellator {
 
         if (pts.length < 2) return;
 
+        const WIDTH_EPSILON = 0.5;
+        let batchWidth = pts[0].w;
+        ctx.lineWidth = batchWidth;
+        ctx.beginPath();
+        ctx.moveTo(pts[0].x, pts[0].y);
+
         for (let i = 1; i < pts.length; i++) {
-            const p0 = pts[i - 1];
-            const p1 = pts[i];
-            ctx.lineWidth = (p0.w + p1.w) / 2;
-            ctx.beginPath();
-            ctx.moveTo(p0.x, p0.y);
-            ctx.lineTo(p1.x, p1.y);
-            ctx.stroke();
+            const p = pts[i];
+            if (Math.abs(p.w - batchWidth) >= WIDTH_EPSILON) {
+                ctx.stroke();
+                ctx.lineWidth = p.w;
+                batchWidth = p.w;
+                ctx.beginPath();
+                ctx.moveTo(pts[i - 1].x, pts[i - 1].y);
+            }
+            ctx.lineTo(p.x, p.y);
         }
+        ctx.stroke();
     }
 }
 

@@ -193,6 +193,9 @@ async function settings_load_camera_config() {
             if (settings.dprStep !== undefined) {
                 DRAW_CONFIG.dprStep = settings.dprStep;
             }
+            if (settings.overlayDpr !== undefined) {
+                DRAW_CONFIG.overlayDpr = settings.overlayDpr;
+            }
 
             if (settings.penWidth !== undefined) {
                 DRAW_CONFIG.penWidth = settings.penWidth;

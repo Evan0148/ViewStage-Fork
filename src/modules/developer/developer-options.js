@@ -13,6 +13,7 @@ async function developer_options_init() {
     let savedDevMode = true;
     let savedFrameDelta = 60;
     let savedTailDuration = 50;
+let savedOverlayDpr = 0;
 
     if (invoke) {
         try {
@@ -34,6 +35,9 @@ async function developer_options_init() {
             savedTailDuration = window.DRAW_CONFIG?.penTailDuration
                 ?? s.penTailDuration
                 ?? 30;
+            savedOverlayDpr = window.DRAW_CONFIG?.overlayDpr
+                ?? s.overlayDpr
+                ?? 0;
         } catch (_) {
             savedWidthRatio = window.DRAW_CONFIG?.penMinWidthRatio ?? 0.4;
             savedMaxScale = window.DRAW_CONFIG?.maxScaleImage ?? 4;
@@ -43,7 +47,7 @@ async function developer_options_init() {
         savedMaxScale = window.DRAW_CONFIG?.maxScaleImage ?? 4;
     }
 
-    developer_options_show_main(savedWidthRatio, savedMaxScale, savedPerfMonitor, savedPerfInterval, savedDevMode, savedFrameDelta, savedTailDuration);
+    developer_options_show_main(savedWidthRatio, savedMaxScale, savedPerfMonitor, savedPerfInterval, savedDevMode, savedFrameDelta, savedTailDuration, savedOverlayDpr);
 }
 
 const PERF_INTERVAL_OPTIONS = [
@@ -57,7 +61,7 @@ function perf_interval_label(ms) {
     return opt ? `${opt.label}（${ms}ms）` : `${ms}ms`;
 }
 
-function developer_options_show_main(currentWidthRatio, currentMaxScale, perfMonitorEnabled, perfMonitorInterval, devModeEnabled, currentFrameDelta, currentTailDuration) {
+function developer_options_show_main(currentWidthRatio, currentMaxScale, perfMonitorEnabled, perfMonitorInterval, devModeEnabled, currentFrameDelta, currentTailDuration, currentOverlayDpr) {
     const page = document.getElementById('pageDevOptions');
     if (!page) return;
     const devModeOn = devModeEnabled !== false;
@@ -112,6 +116,16 @@ function developer_options_show_main(currentWidthRatio, currentMaxScale, perfMon
     ];
     const currentTailDurationLabel = tailDurationPresets.find(p => parseInt(p.value) === currentTailDuration)?.label
         || `${currentTailDuration}ms`;
+
+    const overlayDprPresets = [
+        { value: '0', label: '显示器默认' },
+        { value: '0.5', label: '0.5x' },
+        { value: '1', label: '1x' },
+        { value: '1.5', label: '1.5x' },
+        { value: '2', label: '2x' },
+    ];
+    const currentOverlayDprLabel = overlayDprPresets.find(p => parseFloat(p.value) === currentOverlayDpr)?.label
+        || `${currentOverlayDpr}x`;
 
     page.innerHTML = `
         <h2 class="page-title">开发者选项</h2>
@@ -184,6 +198,17 @@ function developer_options_show_main(currentWidthRatio, currentMaxScale, perfMon
                 <div class="select-options" id="devTailDurationOptions">
                     ${tailDurationPresets.map(p => `
                         <div class="select-option${parseInt(p.value) === currentTailDuration ? ' selected' : ''}" data-value="${p.value}">${p.label}</div>
+                    `).join('')}
+                </div>
+            </div>
+        </div>
+        <div class="setting-item">
+            <span class="setting-label">叠加层 DPR（绘制预览）</span>
+            <div class="custom-select" id="devOverlayDprSelect">
+                <div class="select-selected" id="devOverlayDprSelected">${currentOverlayDprLabel}</div>
+                <div class="select-options" id="devOverlayDprOptions">
+                    ${overlayDprPresets.map(p => `
+                        <div class="select-option${parseFloat(p.value) === currentOverlayDpr ? ' selected' : ''}" data-value="${p.value}">${p.label}</div>
                     `).join('')}
                 </div>
             </div>
@@ -373,6 +398,50 @@ function developer_options_show_main(currentWidthRatio, currentMaxScale, perfMon
                 const invoke = window.__TAURI__?.core?.invoke;
                 if (invoke) {
                     invoke('settings_save_all', { settings: { penTailDuration: v, developerMode: true } });
+                }
+            });
+        });
+    })();
+
+    // 叠加层 DPR 选择器
+    (function setup_overlay_dpr_select() {
+        const select = document.getElementById('devOverlayDprSelect');
+        const selected = document.getElementById('devOverlayDprSelected');
+        const options = document.querySelectorAll('#devOverlayDprOptions .select-option');
+
+        if (!select || !selected) return;
+
+        selected.addEventListener('click', (e) => {
+            e.stopPropagation();
+            select.classList.toggle('open');
+        });
+
+        options.forEach(opt => {
+            opt.addEventListener('click', () => {
+                const v = parseFloat(opt.dataset.value);
+                selected.textContent = opt.textContent;
+                options.forEach(o => o.classList.remove('selected'));
+                opt.classList.add('selected');
+                select.classList.remove('open');
+
+                if (window.DRAW_CONFIG) {
+                    window.DRAW_CONFIG.overlayDpr = v;
+                }
+                const invoke = window.__TAURI__?.core?.invoke;
+                if (invoke) {
+                    invoke('settings_save_all', { settings: { overlayDpr: v, developerMode: true } });
+                }
+                // 立即应用
+                if (window.batchDrawManager) {
+                    window.batchDrawManager.resize_overlay(
+                        window.DRAW_CONFIG?.screenW || 800,
+                        window.DRAW_CONFIG?.screenH || 600
+                    );
+                }
+                // 提示重启
+                const restartModal = document.getElementById('restartModal');
+                if (restartModal) {
+                    restartModal.classList.add('active');
                 }
             });
         });

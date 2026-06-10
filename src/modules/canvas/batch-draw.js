@@ -43,6 +43,7 @@ class RealtimeBatchDrawManager {
         this._lastToY = null;
         this._speedBuffer = [];
         this._storedWidths = [];
+        this._dirtyBoundsCanvas = null;
 
         this._overlayCanvas = null;
         this._overlayCtx = null;
@@ -59,21 +60,16 @@ class RealtimeBatchDrawManager {
 
     /**
      * 计算覆盖层 DPR。
-     * 覆盖层是屏幕空间画布（position: fixed 覆盖视口），与 tiles 使用相同的
-     * cfg.dprMax 上限，确保缩放后清晰度一致。
+     * 覆盖层是屏幕空间画布（position: fixed 覆盖视口），DPR 超过 devicePixelRatio
+     * 对显示无增益，仅浪费显存。因此以 display_dpr 作为硬上限。
      * @param {number} scale - 当前画布缩放比例
      * @returns {number} 覆盖层 DPR
      */
     _calc_overlay_dpr(scale) {
         const cfg = window.DRAW_CONFIG;
+        if (cfg.overlayDpr != null && cfg.overlayDpr > 0) return cfg.overlayDpr;
         if (cfg.dynamicDprEnabled === false) return Math.min(cfg.dpr, 2);
-        const baseDpr = cfg.baseDpr || window.devicePixelRatio || 1;
-        const minDpr = cfg.dprMin || 1;
-        const maxDpr = cfg.dprMax || 4;
-        const step = cfg.dprStep || 0.25;
-        let dpr = baseDpr * scale;
-        dpr = Math.ceil(dpr / step) * step;
-        return Math.max(minDpr, Math.min(maxDpr, dpr));
+        return 1;
     }
 
     update_overlay_dpr(scale, force) {
@@ -111,7 +107,7 @@ class RealtimeBatchDrawManager {
         this._overlayCanvas.style.width = screenW + 'px';
         this._overlayCanvas.style.height = screenH + 'px';
         container.appendChild(this._overlayCanvas);
-        this._overlayCtx = this._overlayCanvas.getContext('2d');
+        this._overlayCtx = this._overlayCanvas.getContext('2d', { willReadFrequently: false });
         if (!this._overlayCtx) {
             console.error('batch-draw: 无法获取 overlay canvas 上下文');
             return;
@@ -124,7 +120,7 @@ class RealtimeBatchDrawManager {
 
     resize_overlay(screenW, screenH, dpr) {
         if (this._overlayCanvas) {
-            this._overlayDpr = this._calc_overlay_dpr(window.state.scale || 1);
+        this._overlayDpr = this._calc_overlay_dpr(window.state.scale || 1);
             this._overlayCanvas.width = Math.ceil(screenW * this._overlayDpr);
             this._overlayCanvas.height = Math.ceil(screenH * this._overlayDpr);
             this._overlayCanvas.style.width = screenW + 'px';
@@ -161,30 +157,34 @@ class RealtimeBatchDrawManager {
     }
 
     clear_overlay() {
-        if (this._overlayCtx) {
-            this._overlayCtx.setTransform(1, 0, 0, 1, 0, 0);
+        if (!this._overlayCtx) return;
+        this._overlayCtx.setTransform(1, 0, 0, 1, 0, 0);
+
+        if (this._dirtyBoundsCanvas) {
+            const s = window.state.scale || 1;
+            const dpr = this._overlayDpr;
+            const ox = (window.state.canvasX || 0) * dpr;
+            const oy = (window.state.canvasY || 0) * dpr;
+            const x = Math.floor(this._dirtyBoundsCanvas.x * s * dpr + ox - 1);
+            const y = Math.floor(this._dirtyBoundsCanvas.y * s * dpr + oy - 1);
+            const w = Math.ceil((this._dirtyBoundsCanvas.x2 - this._dirtyBoundsCanvas.x) * s * dpr + 2);
+            const h = Math.ceil((this._dirtyBoundsCanvas.y2 - this._dirtyBoundsCanvas.y) * s * dpr + 2);
+            const cw = this._overlayCanvas.width;
+            const ch = this._overlayCanvas.height;
+            const clampX = Math.max(0, Math.min(x, cw));
+            const clampY = Math.max(0, Math.min(y, ch));
+            const clampW = Math.max(0, Math.min(w, cw - clampX));
+            const clampH = Math.max(0, Math.min(h, ch - clampY));
+            if (clampW > 0 && clampH > 0) {
+                this._overlayCtx.clearRect(clampX, clampY, clampW, clampH);
+            }
+        } else {
             this._overlayCtx.clearRect(0, 0, this._overlayCanvas.width, this._overlayCanvas.height);
         }
+        this._dirtyBoundsCanvas = null;
         this._overlayTransformScale = 0;
         this._overlayTransformX = 0;
         this._overlayTransformY = 0;
-    }
-
-    _each_tile(x1, y1, x2, y2, fn, padding = 0) {
-        const tr = this._tileRenderer || window.tileRenderer;
-        if (!tr) return;
-        const infos = tr.infos_for_segment(x1, y1, x2, y2, padding);
-        for (const info of infos) {
-            const ctx = info.ctx;
-            const dpr = info.dpr;
-            ctx.save();
-            ctx.setTransform(dpr, 0, 0, dpr,
-                -info.rect.x * dpr, -info.rect.y * dpr);
-            ctx.lineCap = 'round';
-            ctx.lineJoin = 'round';
-            fn(ctx);
-            ctx.restore();
-        }
     }
 
     _each_visible_tile(fn) {
@@ -204,6 +204,23 @@ class RealtimeBatchDrawManager {
                 fn(ctx, info);
                 ctx.restore();
             }
+        }
+    }
+
+    _each_tile(x1, y1, x2, y2, fn, padding = 0) {
+        const tr = this._tileRenderer || window.tileRenderer;
+        if (!tr) return;
+        const infos = tr.infos_for_segment(x1, y1, x2, y2, padding);
+        for (const info of infos) {
+            const ctx = info.ctx;
+            const dpr = info.dpr;
+            ctx.save();
+            ctx.setTransform(dpr, 0, 0, dpr,
+                -info.rect.x * dpr, -info.rect.y * dpr);
+            ctx.lineCap = 'round';
+            ctx.lineJoin = 'round';
+            fn(ctx);
+            ctx.restore();
         }
     }
 
@@ -358,7 +375,7 @@ class RealtimeBatchDrawManager {
         const maxDelta = baseWidth * 0.12;
         lineWidth = Math.min(lastLineWidth + maxDelta, Math.max(lastLineWidth - maxDelta, lineWidth));
 
-        return lineWidth;
+        return Math.max(0.5, lineWidth);
     }
 
     _apply_start_taper(lineWidth, baseWidth, segmentIndex, totalInBatch) {
@@ -405,6 +422,9 @@ class RealtimeBatchDrawManager {
         }
 
         let eraseByTile = null;
+        let batchFirst = true;
+        let batchWidth = 0;
+        let batchColor = null;
 
         if (this._penEffectMode === 'limited') {
             const prev = this._segmentTimes.length > 0 ? this._segmentTimes[this._segmentTimes.length - 1] : 0;
@@ -450,6 +470,11 @@ class RealtimeBatchDrawManager {
             }
 
             if (cmd.type === 'erase') {
+                /* 刷出上一个绘制批处理 */
+                if (this._overlayCtx && !batchFirst) {
+                    this._overlayCtx.stroke();
+                    batchFirst = true;
+                }
                 const tr = this._tileRenderer || window.tileRenderer;
                 if (tr) {
                     if (!eraseByTile) eraseByTile = new Map();
@@ -467,51 +492,49 @@ class RealtimeBatchDrawManager {
                 }
             } else if (this._overlayCtx) {
                 const ctx = this._overlayCtx;
-                if (cmd.color) ctx.strokeStyle = cmd.color;
-
                 const midX = (fromX + toX) / 2;
                 const midY = (fromY + toY) / 2;
-                const prevW = i > 0 ? lastLineWidth : lineWidth;
-                const curW = lineWidth;
-                const isFirstSeg = (i === 0 && (this._strokeStart || this._lastMidX === null));
 
-                const SUBDIVS = 3;
-                let sx, sy, ex, ey;
-                if (isFirstSeg) {
-                    sx = fromX; sy = fromY;
-                    ex = midX; ey = midY;
-                } else {
-                    sx = (i === 0 ? this._lastMidX : ((commands[i - 1].fromX + commands[i - 1].toX) / 2));
-                    sy = (i === 0 ? this._lastMidY : ((commands[i - 1].fromY + commands[i - 1].toY) / 2));
-                    ex = midX; ey = midY;
-                }
+                const needsBreak = batchFirst ||
+                    (cmd.color && cmd.color !== batchColor) ||
+                    Math.abs(lineWidth - batchWidth) >= 0.5;
 
-                for (let j = 0; j < SUBDIVS; j++) {
-                    const t0 = j / SUBDIVS;
-                    const t1 = (j + 1) / SUBDIVS;
-                    const w = prevW + (curW - prevW) * ((t0 + t1) / 2);
-
-                    let p0x, p0y, p1x, p1y;
-                    if (isFirstSeg) {
-                        p0x = sx + (ex - sx) * t0;
-                        p0y = sy + (ey - sy) * t0;
-                        p1x = sx + (ex - sx) * t1;
-                        p1y = sy + (ey - sy) * t1;
-                    } else {
-                        const omt0 = 1 - t0;
-                        const omt1 = 1 - t1;
-                        p0x = omt0 * omt0 * sx + 2 * omt0 * t0 * fromX + t0 * t0 * ex;
-                        p0y = omt0 * omt0 * sy + 2 * omt0 * t0 * fromY + t0 * t0 * ey;
-                        p1x = omt1 * omt1 * sx + 2 * omt1 * t1 * fromX + t1 * t1 * ex;
-                        p1y = omt1 * omt1 * sy + 2 * omt1 * t1 * fromY + t1 * t1 * ey;
-                    }
-
-                    ctx.lineWidth = w;
+                if (needsBreak) {
+                    if (!batchFirst) ctx.stroke();
+                    if (cmd.color) ctx.strokeStyle = cmd.color;
+                    ctx.lineWidth = Math.max(0.5, lineWidth);
+                    batchColor = cmd.color;
+                    batchWidth = lineWidth;
                     ctx.beginPath();
-                    ctx.moveTo(p0x, p0y);
-                    ctx.lineTo(p1x, p1y);
-                    ctx.stroke();
+
+                    const isFirstSeg = (i === 0 && (this._strokeStart || this._lastMidX === null));
+                    if (isFirstSeg) {
+                        ctx.moveTo(fromX, fromY);
+                        ctx.lineTo(midX, midY);
+                    } else {
+                        const prevMx = (i === 0 ? this._lastMidX : ((commands[i - 1].fromX + commands[i - 1].toX) / 2));
+                        const prevMy = (i === 0 ? this._lastMidY : ((commands[i - 1].fromY + commands[i - 1].toY) / 2));
+                        ctx.moveTo(prevMx, prevMy);
+                        ctx.quadraticCurveTo(fromX, fromY, midX, midY);
+                    }
+                    batchFirst = false;
+                } else {
+                    ctx.quadraticCurveTo(fromX, fromY, midX, midY);
                 }
+            }
+
+            const halfW = (lineWidth || 5) / 2;
+            const minX = Math.min(fromX, toX) - halfW;
+            const maxX = Math.max(fromX, toX) + halfW;
+            const minY = Math.min(fromY, toY) - halfW;
+            const maxY = Math.max(fromY, toY) + halfW;
+            if (!this._dirtyBoundsCanvas) {
+                this._dirtyBoundsCanvas = { x: minX, y: minY, x2: maxX, y2: maxY };
+            } else {
+                if (minX < this._dirtyBoundsCanvas.x) this._dirtyBoundsCanvas.x = minX;
+                if (minY < this._dirtyBoundsCanvas.y) this._dirtyBoundsCanvas.y = minY;
+                if (maxX > this._dirtyBoundsCanvas.x2) this._dirtyBoundsCanvas.x2 = maxX;
+                if (maxY > this._dirtyBoundsCanvas.y2) this._dirtyBoundsCanvas.y2 = maxY;
             }
 
             if (i === count - 1) {
@@ -520,6 +543,11 @@ class RealtimeBatchDrawManager {
                 this._lastToX = toX;
                 this._lastToY = toY;
             }
+        }
+
+        /* 提交最后一个批处理路径 */
+        if (this._overlayCtx && !batchFirst) {
+            this._overlayCtx.stroke();
         }
 
         if (eraseByTile && eraseByTile.size > 0) {
@@ -637,6 +665,7 @@ class RealtimeBatchDrawManager {
         this._speedBuffer = [];
         this._storedWidths = [];
         this._segmentTimes = [];
+        this._dirtyBoundsCanvas = null;
         this.clear_overlay();
     }
 
@@ -654,6 +683,7 @@ class RealtimeBatchDrawManager {
         this._speedBuffer = [];
         this._storedWidths = [];
         this._segmentTimes = [];
+        this._dirtyBoundsCanvas = null;
         this.eraserShape = 'round';
 
         if (this.is_adaptive) {
@@ -696,37 +726,30 @@ class RealtimeBatchDrawManager {
                 const cfg = window.DRAW_CONFIG || {};
                 ctx.globalCompositeOperation = 'source-over';
                 ctx.strokeStyle = cfg.penColor || '#3498db';
+                ctx.lineWidth = Math.max(0.5, this.lastLineWidth || 5);
                 ctx.lineCap = 'round';
                 ctx.lineJoin = 'round';
-                const baseW = this.lastLineWidth || 5;
-                if (this._penEffectMode === 'limited') {
-                    const lastStoredW = this._storedWidths.length > 0 ? this._storedWidths[this._storedWidths.length - 1] : baseW;
-                    const segs = 4;
-                    for (let j = 0; j < segs; j++) {
-                        const t0 = j / segs;
-                        const t1 = (j + 1) / segs;
-                        const midT = (t0 + t1) / 2;
-                        const eased = midT * midT * (3 - 2 * midT);
-                        const w = lastStoredW * (1 - eased * 0.85);
-                        ctx.lineWidth = w;
-                        ctx.beginPath();
-                        ctx.moveTo(
-                            this._lastMidX + (this._lastToX - this._lastMidX) * t0,
-                            this._lastMidY + (this._lastToY - this._lastMidY) * t0
-                        );
-                        ctx.lineTo(
-                            this._lastMidX + (this._lastToX - this._lastMidX) * t1,
-                            this._lastMidY + (this._lastToY - this._lastMidY) * t1
-                        );
-                        ctx.stroke();
-                    }
-                } else {
-                    ctx.lineWidth = baseW;
-                    ctx.beginPath();
-                    ctx.moveTo(this._lastMidX, this._lastMidY);
-                    ctx.lineTo(this._lastToX, this._lastToY);
-                    ctx.stroke();
-                }
+                ctx.beginPath();
+                ctx.moveTo(this._lastMidX, this._lastMidY);
+                ctx.lineTo(this._lastToX, this._lastToY);
+                ctx.stroke();
+            }
+        }
+
+        const tailW = this.lastLineWidth || 5;
+        const tailHalf = tailW / 2;
+        if (this._lastMidX !== null && this._lastToX !== null) {
+            const tMinX = Math.min(this._lastMidX, this._lastToX) - tailHalf;
+            const tMaxX = Math.max(this._lastMidX, this._lastToX) + tailHalf;
+            const tMinY = Math.min(this._lastMidY, this._lastToY) - tailHalf;
+            const tMaxY = Math.max(this._lastMidY, this._lastToY) + tailHalf;
+            if (!this._dirtyBoundsCanvas) {
+                this._dirtyBoundsCanvas = { x: tMinX, y: tMinY, x2: tMaxX, y2: tMaxY };
+            } else {
+                if (tMinX < this._dirtyBoundsCanvas.x) this._dirtyBoundsCanvas.x = tMinX;
+                if (tMinY < this._dirtyBoundsCanvas.y) this._dirtyBoundsCanvas.y = tMinY;
+                if (tMaxX > this._dirtyBoundsCanvas.x2) this._dirtyBoundsCanvas.x2 = tMaxX;
+                if (tMaxY > this._dirtyBoundsCanvas.y2) this._dirtyBoundsCanvas.y2 = tMaxY;
             }
         }
 
