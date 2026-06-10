@@ -44,6 +44,7 @@ class RealtimeBatchDrawManager {
         this._speedBuffer = [];
         this._storedWidths = [];
         this._dirtyBoundsCanvas = null;
+        this._limitedTailWidth = null;
 
         this._overlayCanvas = null;
         this._overlayCtx = null;
@@ -666,6 +667,7 @@ class RealtimeBatchDrawManager {
         this._storedWidths = [];
         this._segmentTimes = [];
         this._dirtyBoundsCanvas = null;
+        this._limitedTailWidth = null;
         this.clear_overlay();
     }
 
@@ -726,17 +728,38 @@ class RealtimeBatchDrawManager {
                 const cfg = window.DRAW_CONFIG || {};
                 ctx.globalCompositeOperation = 'source-over';
                 ctx.strokeStyle = cfg.penColor || '#3498db';
-                ctx.lineWidth = Math.max(0.5, this.lastLineWidth || 5);
+                this._limitedTailWidth = this.lastLineWidth || 5;
+                if (this._penEffectMode === 'limited') {
+                    const baseW = cfg.penWidth || 5;
+                    const minRatio = cfg.penMinWidthRatio ?? 0.4;
+                    const fromX = 2 * this._lastMidX - this._lastToX;
+                    const fromY = 2 * this._lastMidY - this._lastToY;
+                    const dx = this._lastToX - fromX;
+                    const dy = this._lastToY - fromY;
+                    const dist = Math.sqrt(dx * dx + dy * dy);
+                    if (dist > 0 && this._segmentTimes.length >= 2) {
+                        const prevTime = this._segmentTimes.length > 1
+                            ? this._segmentTimes[this._segmentTimes.length - 2] : 0;
+                        const segTime = Math.max(1, this._segmentTimes[this._segmentTimes.length - 1] - prevTime);
+                        const speed = dist / segTime;
+                        this._limitedTailWidth = this._calc_pen_line_width(speed, baseW, this.lastLineWidth || baseW, dist);
+                    } else {
+                        this._limitedTailWidth = Math.max(this._limitedTailWidth, baseW * minRatio);
+                    }
+                }
+                ctx.lineWidth = Math.max(0.5, this._limitedTailWidth);
                 ctx.lineCap = 'round';
                 ctx.lineJoin = 'round';
                 ctx.beginPath();
                 ctx.moveTo(this._lastMidX, this._lastMidY);
-                ctx.lineTo(this._lastToX, this._lastToY);
+                const endCpx = 2 * this._lastMidX - this._lastToX;
+                const endCpy = 2 * this._lastMidY - this._lastToY;
+                ctx.quadraticCurveTo(endCpx, endCpy, this._lastToX, this._lastToY);
                 ctx.stroke();
             }
         }
 
-        const tailW = this.lastLineWidth || 5;
+        const tailW = this._limitedTailWidth || this.lastLineWidth || 5;
         const tailHalf = tailW / 2;
         if (this._lastMidX !== null && this._lastToX !== null) {
             const tMinX = Math.min(this._lastMidX, this._lastToX) - tailHalf;

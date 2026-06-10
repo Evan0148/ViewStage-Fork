@@ -320,8 +320,6 @@ class BlackboardManager {
         // 覆盖层（实时预览，独立于分块包装器之外）
         this.overlay_canvas = document.createElement('canvas');
         this.overlay_canvas.className = 'blackboard-overlay';
-        this.overlay_canvas.width = Math.ceil(this.screen_w);
-        this.overlay_canvas.height = Math.ceil(this.screen_h);
         this.overlay_canvas.style.width = this.screen_w + 'px';
         this.overlay_canvas.style.height = this.screen_h + 'px';
         canvas_wrap.appendChild(this.overlay_canvas);
@@ -331,6 +329,10 @@ class BlackboardManager {
         // batch_draw 使用覆盖层
         this.drawing_engine.init_batch_draw(this.overlay_canvas, this.overlay_ctx);
         this.drawing_engine.batch_draw._tileRenderer = this.tile_renderer;
+        // 按 DPR 调整 overlay canvas 实际像素尺寸
+        const init_dpr = this.drawing_engine.batch_draw._overlayDpr || 1;
+        this.overlay_canvas.width = Math.ceil(this.screen_w * init_dpr);
+        this.overlay_canvas.height = Math.ceil(this.screen_h * init_dpr);
 
         // 橡皮擦提示
         this.drawing_engine.init_eraser_hint(canvas_wrap);
@@ -1160,8 +1162,9 @@ class BlackboardManager {
 
         // overlay 在首次 open() 前为 null，首次 open 时才会创建
         if (this.overlay_canvas) {
-            this.overlay_canvas.width = Math.ceil(screen_w);
-            this.overlay_canvas.height = Math.ceil(screen_h);
+            const dpr = this.drawing_engine?.batch_draw?._overlayDpr || 1;
+            this.overlay_canvas.width = Math.ceil(screen_w * dpr);
+            this.overlay_canvas.height = Math.ceil(screen_h * dpr);
             this.overlay_canvas.style.width = screen_w + 'px';
             this.overlay_canvas.style.height = screen_h + 'px';
             this.overlay_ctx.imageSmoothingEnabled = false;

@@ -191,7 +191,8 @@ class DocumentReaderManager {
             this._schedule_reader_resize();
             if (!this.batch_draw?._overlayCanvas) return;
             const overlay = this.batch_draw._overlayCanvas;
-            const overlay_dpr = this.batch_draw._overlayDpr || 1;
+            const overlay_dpr = this.batch_draw._calc_overlay_dpr(this.dr_scale || 1);
+            this.batch_draw._overlayDpr = overlay_dpr;
             const target_w = Math.ceil(window.innerWidth * overlay_dpr);
             const target_h = Math.ceil(window.innerHeight * overlay_dpr);
             if (overlay.width !== target_w || overlay.height !== target_h) {
@@ -1698,17 +1699,9 @@ class DocumentReaderManager {
         overlay_canvas.style.pointerEvents = 'none';
         overlay_canvas.style.zIndex = '100';
 
-        // 计算初始 overlay DPR（与 batch_draw._calc_overlay_dpr 一致）
-        const init_overlay_dpr = (() => {
-            const cfg = window.DRAW_CONFIG;
-            if (!cfg || cfg.dynamicDprEnabled === false) return Math.min(cfg?.dpr || 1, 2);
-            const baseDpr = cfg.baseDpr || window.devicePixelRatio || 1;
-            const minDpr = cfg.dprMin || 1;
-            const maxDpr = cfg.dprMax || 4;
-            const step = cfg.dprStep || 0.25;
-            const dpr = Math.ceil(baseDpr / step) * step;
-            return Math.max(minDpr, Math.min(maxDpr, dpr));
-        })();
+        // 先创建 batch_draw 实例，复用 DPR 计算逻辑
+        this.batch_draw = new window.RealtimeBatchDrawManager();
+        const init_overlay_dpr = this.batch_draw._calc_overlay_dpr(this.dr_scale || 1);
 
         // 设置初始尺寸为视口大小（含 DPR，确保清晰）
         overlay_canvas.width = Math.ceil(window.innerWidth * init_overlay_dpr);
@@ -1722,7 +1715,6 @@ class DocumentReaderManager {
         overlay_ctx.imageSmoothingEnabled = false;
 
         // 初始化 batch_draw
-        this.batch_draw = new window.RealtimeBatchDrawManager();
         this.batch_draw._overlayDpr = init_overlay_dpr;
         this.batch_draw._overlayCanvas = overlay_canvas;
         this.batch_draw._overlayCtx = overlay_ctx;

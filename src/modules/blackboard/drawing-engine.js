@@ -100,6 +100,7 @@ export class DrawingEngine {
         this.batch_draw = new window.RealtimeBatchDrawManager();
         this.batch_draw._overlayCanvas = overlay_canvas;
         this.batch_draw._overlayCtx = overlay_ctx;
+        this.batch_draw._overlayDpr = this.batch_draw._calc_overlay_dpr(this.coord.get_scale() || 1);
         this.batch_draw._overlayTransformScale = 0;
         this.batch_draw._overlayTransformX = 0;
         this.batch_draw._overlayTransformY = 0;
@@ -115,7 +116,7 @@ export class DrawingEngine {
         const ctx = this.batch_draw._overlayCtx;
         const s = this.coord.get_scale();
         const origin = this.coord.get_origin();
-        const dpr = Math.min(window.DRAW_CONFIG?.dpr || 1, 1);
+        const dpr = this.batch_draw._overlayDpr || 1;
         const scale = s || 1;
         const ox = origin?.x || 0;
         const oy = origin?.y || 0;

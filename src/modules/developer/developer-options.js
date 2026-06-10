@@ -431,13 +431,8 @@ function developer_options_show_main(currentWidthRatio, currentMaxScale, perfMon
                 if (invoke) {
                     invoke('settings_save_all', { settings: { overlayDpr: v, developerMode: true } });
                 }
-                // 立即应用
-                if (window.batchDrawManager) {
-                    window.batchDrawManager.resize_overlay(
-                        window.DRAW_CONFIG?.screenW || 800,
-                        window.DRAW_CONFIG?.screenH || 600
-                    );
-                }
+                // 立即同步所有 overlay
+                window.sync_all_overlay_dpr?.();
                 // 提示重启
                 const restartModal = document.getElementById('restartModal');
                 if (restartModal) {

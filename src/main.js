@@ -950,14 +950,20 @@ function main_setup_pdf_file_open() {
         if (settings.dprStep !== undefined) {
             DRAW_CONFIG.dprStep = settings.dprStep;
         }
+        if (settings.overlayDpr !== undefined) {
+            DRAW_CONFIG.overlayDpr = settings.overlayDpr;
+        }
         if (settings.dynamicDprEnabled !== undefined || settings.dprMin !== undefined ||
-            settings.dprMax !== undefined || settings.dprStep !== undefined) {
+            settings.dprMax !== undefined || settings.dprStep !== undefined ||
+            settings.overlayDpr !== undefined) {
             if (window.tileRenderer) {
                 window.tileRenderer.update_visible_tile_dpr(state.scale, true, true);
             }
             if (window.batchDrawManager) {
                 window.batchDrawManager.update_overlay_dpr(state.scale, true);
             }
+            // 同步阅读器和黑板
+            window.sync_all_overlay_dpr?.();
         }
 
         if (settings.penColors && Array.isArray(settings.penColors)) {
@@ -5588,3 +5594,35 @@ window.main_reset_context_state = main_reset_context_state;
 window.main_fetch_visible_rect = main_fetch_visible_rect;
 window.main_render_strokes_to_context = main_render_strokes_to_context;
 window.StrokeQuadTree = StrokeQuadTree;
+
+/** 同步所有 overlay DPR（主界面 + 阅读器 + 黑板） */
+window.sync_all_overlay_dpr = function () {
+    const dpr = window.DRAW_CONFIG?.overlayDpr;
+    if (dpr == null || dpr <= 0) return;
+    // 主界面
+    if (window.batchDrawManager) {
+        window.batchDrawManager.resize_overlay(
+            DRAW_CONFIG.screenW || 800,
+            DRAW_CONFIG.screenH || 600
+        );
+    }
+    // 阅读器
+    const reader = window.documentReaderManager;
+    if (reader?.batch_draw?._overlayCanvas) {
+        const overlay = reader.batch_draw._overlayCanvas;
+        reader.batch_draw._overlayDpr = dpr;
+        overlay.width = Math.ceil(window.innerWidth * dpr);
+        overlay.height = Math.ceil(window.innerHeight * dpr);
+        overlay.style.width = window.innerWidth + 'px';
+        overlay.style.height = window.innerHeight + 'px';
+    }
+    // 黑板
+    const bb = window.blackboardManager;
+    if (bb?.overlay_canvas && bb.drawing_engine?.batch_draw) {
+        bb.drawing_engine.batch_draw._overlayDpr = dpr;
+        bb.overlay_canvas.width = Math.ceil(bb.screen_w * dpr);
+        bb.overlay_canvas.height = Math.ceil(bb.screen_h * dpr);
+        bb.overlay_canvas.style.width = bb.screen_w + 'px';
+        bb.overlay_canvas.style.height = bb.screen_h + 'px';
+    }
+};
