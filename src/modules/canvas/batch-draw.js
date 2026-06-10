@@ -593,7 +593,7 @@ class RealtimeBatchDrawManager {
 
     _apply_speed_taper(widths, points, baseWidth) {
         if (!points || points.length < 2 || widths.length !== points.length) return;
-        const tailDuration = window.DRAW_CONFIG?.penTailDuration ?? 50;
+        const tailDuration = window.DRAW_CONFIG?.penTailDuration ?? 30;
         const totalDuration = this._segmentTimes.length > 0 ? this._segmentTimes[this._segmentTimes.length - 1] : 0;
         if (totalDuration <= 0) return;
         const tailStartTime = Math.max(0, totalDuration - tailDuration);

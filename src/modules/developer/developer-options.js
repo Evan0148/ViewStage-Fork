@@ -33,7 +33,7 @@ async function developer_options_init() {
                 ?? 60;
             savedTailDuration = window.DRAW_CONFIG?.penTailDuration
                 ?? s.penTailDuration
-                ?? 50;
+                ?? 30;
         } catch (_) {
             savedWidthRatio = window.DRAW_CONFIG?.penMinWidthRatio ?? 0.4;
             savedMaxScale = window.DRAW_CONFIG?.maxScaleImage ?? 4;
@@ -101,8 +101,10 @@ function developer_options_show_main(currentWidthRatio, currentMaxScale, perfMon
 
     const tailDurationPresets = [
         { value: '0', label: '0ms（关闭）' },
-        { value: '30', label: '30ms' },
-        { value: '50', label: '50ms（默认）' },
+        { value: '15', label: '15ms' },
+        { value: '25', label: '25ms' },
+        { value: '30', label: '30ms（默认）' },
+        { value: '50', label: '50ms' },
         { value: '80', label: '80ms' },
         { value: '100', label: '100ms' },
         { value: '150', label: '150ms' },
