@@ -203,7 +203,8 @@ export class DrawingEngine {
 
         this.cached_draw_type = type;
         this.cached_draw_color = type === 'draw' ? DRAW_CONFIG.penColor : '#000000';
-        this.cached_draw_line_width = type === 'draw' ? DRAW_CONFIG.penWidth * inv_scale : baseEraserSize;
+        const currentScale = this._fetch_safe_scale();
+        this.cached_draw_line_width = type === 'draw' ? DRAW_CONFIG.penWidth / currentScale : DRAW_CONFIG.eraserSize / currentScale;
 
         this._last_draw_time = performance.now();
         this._last_draw_x = null;
@@ -233,12 +234,14 @@ export class DrawingEngine {
         if (to_y > bounds.maxY) bounds.maxY = to_y;
 
         let currentWidth = stroke.lineWidth;
+        const currentScale = this._fetch_safe_scale();
 
         if (stroke.type === 'draw') {
             this.current_pressure = pressure;
             this.last_line_width = this.current_line_width;
             currentWidth = stroke.lineWidth * (0.9 + pressure * 0.2);
             this.current_line_width = currentWidth;
+            this.cached_draw_line_width = DRAW_CONFIG.penWidth / currentScale;
         } else if (stroke.type === 'erase' && stroke.eraserSpeedEnabled) {
             if (this._eraser_speed_state && window.__eraserSpeed) {
                 currentWidth = window.__eraserSpeed.eraser_speed_update(this._eraser_speed_state, stroke, to_x, to_y);
@@ -265,6 +268,8 @@ export class DrawingEngine {
                 this._last_draw_y = to_y;
             }
             this.cached_draw_line_width = currentWidth;
+        } else if (stroke.type === 'erase') {
+            this.cached_draw_line_width = DRAW_CONFIG.eraserSize / currentScale;
         }
 
         stroke.variableWidths.push(currentWidth);

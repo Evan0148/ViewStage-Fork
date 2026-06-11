@@ -40,9 +40,7 @@ class BlackboardManager {
             cached_inv_scale: 1,
             isPalmErasing: false,
             savedDrawMode: null,
-            palmEraserSize: 60,
-            _last_gesture_x: 0,
-            _last_gesture_y: 0
+            palmEraserSize: 60
         };
         this._cached_move_bound_scale = null;
         this._cached_visible_rect = null;
@@ -54,9 +52,15 @@ class BlackboardManager {
         // 触摸手势优化
         this._touch_raf_id = null;               // 捏合缩放 rAF 节流 ID
         this._touch_pending_data = null;          // 待处理的触摸数据 { t0, t1 }
-        this._touch_start_center_x = 0;           // 捏合起始中心 X
-        this._touch_start_center_y = 0;           // 捏合起始中心 Y
+
         this._smooth_transform_timeout_id = null; // will-change 延迟移除定时器
+
+        // 惯性（动量）
+        this._momentum_raf = null;
+        this._gesture_vx = 0;
+        this._gesture_vy = 0;
+        this._last_canvas_x = 0;
+        this._last_canvas_y = 0;
 
         this.draw_mode = 'comment';
 
@@ -157,6 +161,58 @@ class BlackboardManager {
             this.bb_wrapper.classList.remove('smooth-transform');
             this.bb_wrapper.style.transitionDuration = '';
         }, duration);
+    }
+
+    // ====== 惯性系统 ======
+
+    _cancel_momentum() {
+        if (this._momentum_raf !== null) {
+            cancelAnimationFrame(this._momentum_raf);
+            this._momentum_raf = null;
+        }
+    }
+
+    _start_momentum() {
+        this._cancel_momentum();
+        if (this._momentum_raf !== null) return;
+        this._momentum_raf = requestAnimationFrame(() => this._momentum_tick());
+    }
+
+    _momentum_tick() {
+        let vx = this._gesture_vx;
+        let vy = this._gesture_vy;
+        const speed = Math.sqrt(vx * vx + vy * vy);
+        const friction = 0.85 - 0.20 * Math.exp(-speed / 8);
+        vx *= friction;
+        vy *= friction;
+        this._gesture_vx = vx;
+        this._gesture_vy = vy;
+
+        const s = this.bb_state;
+        s.canvas_x += vx;
+        s.canvas_y += vy;
+
+        this._update_move_bound();
+        this._update_canvas_position();
+        this._sync_bb_transform();
+
+        if (Math.abs(vx) > 0.5 || Math.abs(vy) > 0.5) {
+            this._momentum_raf = requestAnimationFrame(() => this._momentum_tick());
+        } else {
+            this._momentum_raf = null;
+            this._sync_bb_transform_smooth(s.canvas_x, s.canvas_y, s.scale, 150);
+        }
+    }
+
+    _update_bb_gesture_velocity() {
+        const s = this.bb_state;
+        const dx = s.canvas_x - this._last_canvas_x;
+        const dy = s.canvas_y - this._last_canvas_y;
+        const alpha = 0.5;
+        this._gesture_vx = this._gesture_vx * (1 - alpha) + dx * alpha;
+        this._gesture_vy = this._gesture_vy * (1 - alpha) + dy * alpha;
+        this._last_canvas_x = s.canvas_x;
+        this._last_canvas_y = s.canvas_y;
     }
 
     /** 触控交互时启用 GPU 合成层（will-change: transform 内联样式，不使用带 transition 的 class） */
@@ -656,12 +712,17 @@ class BlackboardManager {
 
     _handle_pointer_down(e) {
         e.preventDefault();
+        this._cancel_momentum();
         this.bb_state.cached_inv_scale = 1 / this._fetch_safe_scale();
 
         if (this.draw_mode === 'move') {
             this.bb_state.is_dragging = true;
             this.bb_state.start_drag_x = e.clientX - this.bb_state.canvas_x;
             this.bb_state.start_drag_y = e.clientY - this.bb_state.canvas_y;
+            this._last_canvas_x = this.bb_state.canvas_x;
+            this._last_canvas_y = this.bb_state.canvas_y;
+            this._gesture_vx = 0;
+            this._gesture_vy = 0;
         } else {
             this.drawing_engine.handle_pointer_down(e);
         }
@@ -675,6 +736,7 @@ class BlackboardManager {
             s.canvas_x = e.clientX - s.start_drag_x;
             s.canvas_y = e.clientY - s.start_drag_y;
             this._update_canvas_position();
+            this._update_bb_gesture_velocity();
             this._sync_bb_transform();
             return;
         }
@@ -695,6 +757,11 @@ class BlackboardManager {
     async _handle_pointer_up(e) {
         if (this.bb_state.is_dragging) {
             this.bb_state.is_dragging = false;
+            if (this.draw_mode === 'move' && (Math.abs(this._gesture_vx) > 2 || Math.abs(this._gesture_vy) > 2)) {
+                this._update_move_bound();
+                this._update_canvas_position();
+                this._start_momentum();
+            }
             return;
         }
         if (this.drawing_engine.isPalmErasing) {
@@ -763,6 +830,7 @@ class BlackboardManager {
 
     async _handle_touch_start(e) {
         e.preventDefault();
+        this._cancel_momentum();
         const touches = e.touches;
         this.bb_state.cached_inv_scale = 1 / this._fetch_safe_scale();
         this.drawing_engine.draw_canvas_rect = this._get_canvas_rect();
@@ -797,6 +865,10 @@ class BlackboardManager {
                 s.is_dragging = true;
                 s.start_drag_x = touch.clientX - s.canvas_x;
                 s.start_drag_y = touch.clientY - s.canvas_y;
+                this._last_canvas_x = s.canvas_x;
+                this._last_canvas_y = s.canvas_y;
+                this._gesture_vx = 0;
+                this._gesture_vy = 0;
                 this._touch_enable_gpu();
             } else if (this.draw_mode === 'comment' || this.draw_mode === 'eraser') {
                 this.drawing_engine.is_drawing = true;
@@ -823,10 +895,10 @@ class BlackboardManager {
             s.start_scale_y = (touches[0].clientY + touches[1].clientY) / 2;
             s.start_canvas_x = s.canvas_x;
             s.start_canvas_y = s.canvas_y;
-            this._touch_start_center_x = s.start_scale_x;
-            this._touch_start_center_y = s.start_scale_y;
-            s._last_gesture_x = s.canvas_x;
-            s._last_gesture_y = s.canvas_y;
+            this._last_canvas_x = s.canvas_x;
+            this._last_canvas_y = s.canvas_y;
+            this._gesture_vx = 0;
+            this._gesture_vy = 0;
             this._touch_enable_gpu();
         }
     }
@@ -854,6 +926,7 @@ class BlackboardManager {
             s.canvas_x = touch.clientX - s.start_drag_x;
             s.canvas_y = touch.clientY - s.start_drag_y;
             this._update_canvas_position();
+            this._update_bb_gesture_velocity();
             this._sync_bb_transform();
             return;
         }
@@ -879,41 +952,44 @@ class BlackboardManager {
 
                 const current_dist_sq = this._calc_touch_dist_sq(data.t0, data.t1);
                 const scale_ratio = Math.sqrt(current_dist_sq / s.start_distance_sq);
-                let new_scale = s.start_scale * scale_ratio;
-                const max_scale = window.DRAW_CONFIG ? window.DRAW_CONFIG.maxScaleImage : 3;
-                new_scale = Math.max(window.DRAW_CONFIG ? window.DRAW_CONFIG.minScale : 0.5, Math.min(max_scale, new_scale));
+                // 死区：缩放比变化小于 1.5% 时不触发缩放，防止手指微动导致画面抖动
+                const ZOOM_DEAD_ZONE = 0.015;
+                let new_scale;
+                if (Math.abs(scale_ratio - 1) > ZOOM_DEAD_ZONE) {
+                    new_scale = s.start_scale * scale_ratio;
+                    const max_scale = window.DRAW_CONFIG ? window.DRAW_CONFIG.maxScaleImage : 3;
+                    new_scale = Math.max(window.DRAW_CONFIG ? window.DRAW_CONFIG.minScale : 0.5, Math.min(max_scale, new_scale));
+                } else {
+                    new_scale = s.scale;
+                }
 
                 const center_x = (data.t0.clientX + data.t1.clientX) / 2;
                 const center_y = (data.t0.clientY + data.t1.clientY) / 2;
 
-                if (new_scale !== s.scale) {
-                    const final_ratio = new_scale / s.start_scale;
-                    const pan_dx = center_x - this._touch_start_center_x;
-                    const pan_dy = center_y - this._touch_start_center_y;
-                    s.canvas_x = s.start_scale_x - (s.start_scale_x - s.start_canvas_x) * final_ratio + pan_dx;
-                    s.canvas_y = s.start_scale_y - (s.start_scale_y - s.start_canvas_y) * final_ratio + pan_dy;
-                    s.scale = new_scale;
-                } else {
-                    // 缩放未变化时仅为纯平移
-                    const pan_dx = center_x - this._touch_start_center_x;
-                    const pan_dy = center_y - this._touch_start_center_y;
-                    if (Math.abs(pan_dx) > 0.5 || Math.abs(pan_dy) > 0.5) {
-                        s.canvas_x = s.start_canvas_x + pan_dx;
-                        s.canvas_y = s.start_canvas_y + pan_dy;
-                    }
-                }
+                // 统一公式：两指缩放以当前中心为锚点，平移由中心移动自然体现
+                const final_ratio = new_scale / s.start_scale;
+                const target_x = center_x - (s.start_scale_x - s.start_canvas_x) * final_ratio;
+                const target_y = center_y - (s.start_scale_y - s.start_canvas_y) * final_ratio;
 
-                // 限制单帧位移，防止误触/bug 导致画面瞬移
-                const MAX_FRAME_DELTA = window.DRAW_CONFIG?.gestureFrameDelta ?? 60;
-                const dx = s.canvas_x - s._last_gesture_x;
-                const dy = s.canvas_y - s._last_gesture_y;
-                if (Math.abs(dx) > MAX_FRAME_DELTA) s.canvas_x = s._last_gesture_x + Math.sign(dx) * MAX_FRAME_DELTA;
-                if (Math.abs(dy) > MAX_FRAME_DELTA) s.canvas_y = s._last_gesture_y + Math.sign(dy) * MAX_FRAME_DELTA;
+                // 速度限制：限制每帧最大位移量，防止误触/bug 导致画面瞬移
+                const MAX_SPEED = window.DRAW_CONFIG?.gestureFrameDelta ?? 60;
+                const speed_x = target_x - s.canvas_x;
+                const speed_y = target_y - s.canvas_y;
+                if (Math.abs(speed_x) > MAX_SPEED) {
+                    s.canvas_x += Math.sign(speed_x) * MAX_SPEED;
+                } else {
+                    s.canvas_x = target_x;
+                }
+                if (Math.abs(speed_y) > MAX_SPEED) {
+                    s.canvas_y += Math.sign(speed_y) * MAX_SPEED;
+                } else {
+                    s.canvas_y = target_y;
+                }
+                s.scale = new_scale;
 
                 this._update_move_bound();
                 this._update_canvas_position();
-                s._last_gesture_x = s.canvas_x;
-                s._last_gesture_y = s.canvas_y;
+                this._update_bb_gesture_velocity();
                 this._sync_bb_transform();
             });
         }
@@ -930,6 +1006,16 @@ class BlackboardManager {
 
         if (window.PointerEvent) {
             // PointerEvent 设备上 touch 只处理双指缩放，结束时需清理 rAF 和 GPU
+            const s = this.bb_state;
+            if (s.is_scaling && e.touches.length < 2) {
+                s.is_scaling = false;
+                if (this.draw_mode === 'move' && (Math.abs(this._gesture_vx) > 2 || Math.abs(this._gesture_vy) > 2)) {
+                    this._update_move_bound();
+                    this._update_canvas_position();
+                    this._sync_bb_transform();
+                    this._start_momentum();
+                }
+            }
             this._cleanup_touch_gesture();
             return;
         }
@@ -937,10 +1023,21 @@ class BlackboardManager {
         if (s.is_scaling && e.touches.length < 2) {
             s.is_scaling = false;
             this._cleanup_touch_gesture();
+            if (this.draw_mode === 'move' && (Math.abs(this._gesture_vx) > 2 || Math.abs(this._gesture_vy) > 2)) {
+                this._update_move_bound();
+                this._update_canvas_position();
+                this._sync_bb_transform();
+                this._start_momentum();
+            }
         }
         if (s.is_dragging && e.touches.length === 0) {
             s.is_dragging = false;
             this._touch_schedule_disable_gpu();
+            if (this.draw_mode === 'move' && (Math.abs(this._gesture_vx) > 2 || Math.abs(this._gesture_vy) > 2)) {
+                this._update_move_bound();
+                this._update_canvas_position();
+                this._start_momentum();
+            }
         }
         if (e.touches.length === 0) {
             if (this.drawing_engine.is_drawing) {

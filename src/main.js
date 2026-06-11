@@ -66,6 +66,7 @@ function main_cancel_smooth_transform() {
     }
     dom.canvasWrapper.classList.remove('smooth-transform');
     dom.canvasWrapper.style.transitionDuration = '';
+    main_cancel_momentum();
 }
 
 function main_update_transform_schedule(x, y, scale) {
@@ -98,6 +99,83 @@ function main_update_transform_schedule(x, y, scale) {
             transform_raf_id = null;
         });
     }
+}
+
+// ===== 惯性系统（动量/平滑减速）=====
+
+/** 取消惯性动画 */
+function main_cancel_momentum() {
+    if (state._momentumRaf !== null) {
+        cancelAnimationFrame(state._momentumRaf);
+        state._momentumRaf = null;
+    }
+}
+
+/**
+ * 启动惯性动画
+ * @param {'xy'|'xyv'} mode - 'xy': 仅平移动量，'xyv': 平移+缩放动量
+ */
+function main_start_momentum(mode = 'xy') {
+    main_cancel_smooth_transform();
+    if (state._momentumRaf !== null) return;
+    state._momentumRaf = requestAnimationFrame(() => main_momentum_tick(mode));
+}
+
+const MOMENTUM_FRICTION_BASE = 0.65; // 基础摩擦（低速 ≈ 急停）
+const MOMENTUM_FRICTION_MAX = 0.85;  // 极速时摩擦（再快也不会低于此值）
+const MOMENTUM_SPEED_SMOOTH = 8;     // 速度特征尺度（px/帧），控制阻力随速度下降的快慢
+const MOMENTUM_STOP_THRESHOLD = 0.5; // 速度低于此值停止
+
+function main_calc_adaptive_friction(speed) {
+    // 速度越高阻力越小：高速 → 接近 1.0（几乎无衰减），低速 → 接近 BASE（快速停止）
+    return MOMENTUM_FRICTION_MAX - (MOMENTUM_FRICTION_MAX - MOMENTUM_FRICTION_BASE) * Math.exp(-speed / MOMENTUM_SPEED_SMOOTH);
+}
+
+function main_momentum_tick(mode) {
+    let vx = state._gestureVx;
+    let vy = state._gestureVy;
+
+    const speed = Math.sqrt(vx * vx + vy * vy);
+    const friction = main_calc_adaptive_friction(speed);
+
+    // 应用自适应摩擦衰减
+    vx *= friction;
+    vy *= friction;
+    state._gestureVx = vx;
+    state._gestureVy = vy;
+
+    // 应用速度到画布位置
+    state.canvasX += vx;
+    state.canvasY += vy;
+
+    // 边界钳制
+    main_update_move_bound();
+    main_update_canvas_position();
+
+    // 更新渲染
+    main_update_canvas_transform();
+
+    if (Math.abs(vx) > MOMENTUM_STOP_THRESHOLD || Math.abs(vy) > MOMENTUM_STOP_THRESHOLD) {
+        state._momentumRaf = requestAnimationFrame(() => main_momentum_tick(mode));
+    } else {
+        state._momentumRaf = null;
+        // 速度归零后做一次缓动到位
+        main_update_canvas_transform_smooth(state.canvasX, state.canvasY, state.scale, 150);
+    }
+}
+
+/** 在 touchmove 中更新速度追踪（每次调用记录当前帧速度） */
+function main_update_gesture_velocity(isTwoFinger) {
+    const dx = state.canvasX - state._lastCanvasX;
+    const dy = state.canvasY - state._lastCanvasY;
+
+    // EMA 平滑：两指用较大惯性（0.4），单指用较小（0.6）
+    const alpha = isTwoFinger ? 0.4 : 0.6;
+    state._gestureVx = state._gestureVx * (1 - alpha) + dx * alpha;
+    state._gestureVy = state._gestureVy * (1 - alpha) + dy * alpha;
+
+    state._lastCanvasX = state.canvasX;
+    state._lastCanvasY = state.canvasY;
 }
 
 // === PDF.js 配置 ===
@@ -505,10 +583,14 @@ let state = {
     startScaleY: 0,
     startCanvasX: 0,
     startCanvasY: 0,
-    touchStartCenterX: 0,   // 双指缩放起始中心 X
-    touchStartCenterY: 0,   // 双指缩放起始中心 Y
-    _lastGestureX: 0,       // 上一帧合法手势位置 X（防瞬移）
-    _lastGestureY: 0,       // 上一帧合法手势位置 Y（防瞬移）
+
+    // 惯性（动量）系统
+    _gestureVx: 0,
+    _gestureVy: 0,
+    _lastCanvasX: 0,
+    _lastCanvasY: 0,
+    _momentumRaf: null,
+
     strokeHistory: [],
     baseImageURL: null,
     baseImageObj: null,
@@ -2277,10 +2359,10 @@ function main_start_palm_erase(clientX, clientY, eraserWidth) {
     main_start_drawing_mode();
     state.cachedDrawType = 'erase';
     state.cachedDrawColor = '#000000';
-    state.cachedDrawLineWidth = state.palmEraserSize * state.cachedInvScale;
-
     const invScale = state.cachedInvScale;
     const baseEraserSize = state.palmEraserSize * invScale;
+    state.cachedDrawLineWidth = state.palmEraserSize / main_fetch_safe_scale();
+
     state.currentStroke = {
         type: 'erase',
         points: [],
@@ -2380,6 +2462,10 @@ function main_handle_pointer_down(e) {
         state.isDragging = true;
         state.startDragX = e.clientX - state.canvasX;
         state.startDragY = e.clientY - state.canvasY;
+        state._lastCanvasX = state.canvasX;
+        state._lastCanvasY = state.canvasY;
+        state._gestureVx = 0;
+        state._gestureVy = 0;
         dom.canvasWrapper.classList.add('dragging');
     } else if (state.drawMode === 'comment') {
         main_hide_pen_control_panel();
@@ -2422,6 +2508,7 @@ function main_handle_pointer_move(e) {
         state.canvasY = e.clientY - state.startDragY;
         main_update_canvas_position();
         
+        main_update_gesture_velocity(false);
         main_update_transform_schedule(state.canvasX, state.canvasY, state.scale);
     } else if (state.isDrawing) {
         const rect = state.drawCanvasRect;
@@ -2460,6 +2547,11 @@ async function main_handle_pointer_up(e) {
     if (state.isDragging) {
         state.isDragging = false;
         dom.canvasWrapper.classList.remove('dragging');
+        if (state.drawMode === 'move' && (Math.abs(state._gestureVx) > 2 || Math.abs(state._gestureVy) > 2)) {
+            main_update_move_bound();
+            main_update_canvas_position();
+            main_start_momentum('xy');
+        }
     }
     if (state.isDrawing) {
         state.isDrawing = false;
@@ -2693,6 +2785,10 @@ async function main_handle_touch_start(e) {
             state.isDragging = true;
             state.startDragX = touch.clientX - state.canvasX;
             state.startDragY = touch.clientY - state.canvasY;
+            state._lastCanvasX = state.canvasX;
+            state._lastCanvasY = state.canvasY;
+            state._gestureVx = 0;
+            state._gestureVy = 0;
         dom.canvasWrapper.classList.add('dragging');
     } else if (state.drawMode === 'comment') {
         main_hide_pen_control_panel();
@@ -2729,13 +2825,14 @@ async function main_handle_touch_start(e) {
         state.startScaleY = (touches[0].clientY + touches[1].clientY) / 2;
         state.startCanvasX = state.canvasX;
         state.startCanvasY = state.canvasY;
-        state.touchStartCenterX = state.startScaleX;
-        state.touchStartCenterY = state.startScaleY;
-        state._lastGestureX = state.canvasX;
-        state._lastGestureY = state.canvasY;
         dom.canvasWrapper.classList.add('dragging');
         // 新缩放手势开始时重置渐进更新标记
         last_tile_update_scale = state.scale;
+        // 重置惯性速度追踪
+        state._lastCanvasX = state.canvasX;
+        state._lastCanvasY = state.canvasY;
+        state._gestureVx = 0;
+        state._gestureVy = 0;
     }
 }
 
@@ -2779,6 +2876,8 @@ function main_handle_touch_move(e) {
         last_canvas_transform.x = state.canvasX;
         last_canvas_transform.y = state.canvasY;
         last_canvas_transform.scale = state.scale;
+        
+        main_update_gesture_velocity(false);
     } else if (touches.length === 1 && state.isDrawing) {
         const touch = touches[0];
         if (state.drawMode === 'eraser') {
@@ -2830,40 +2929,35 @@ function main_handle_touch_move(e) {
         const centerX = (touches[0].clientX + touches[1].clientX) / 2;
         const centerY = (touches[0].clientY + touches[1].clientY) / 2;
         
-        // 两指平移增量（基于起始中心点的偏移）
-        const panDx = centerX - state.touchStartCenterX;
-        const panDy = centerY - state.touchStartCenterY;
-        
-        if (newScale !== state.scale) {
-            // 有缩放变化时：以起始中心为锚点计算缩放偏移，再加上平移增量
-            const ratio = newScale / state.startScale;
-            state.canvasX = state.startScaleX - (state.startScaleX - state.startCanvasX) * ratio + panDx;
-            state.canvasY = state.startScaleY - (state.startScaleY - state.startCanvasY) * ratio + panDy;
-            state.scale = newScale;
+        // 统一公式：两指缩放以当前中心为锚点，平移由中心移动自然体现
+        // targetX = centerX - (startScaleX - startCanvasX) * (newScale / startScale)
+        const ratio = newScale / state.startScale;
+        const targetX = centerX - (state.startScaleX - state.startCanvasX) * ratio;
+        const targetY = centerY - (state.startScaleY - state.startCanvasY) * ratio;
+
+        // 速度限制：限制每帧最大位移量，防止误触/bug 导致画面瞬移
+        // 不同于传统的 delta-from-last-frame 钳制（会累积滞后），
+        // 此方式直接追赶目标位置，用户停止后画布立刻到位，无拖尾感
+        const MAX_SPEED = DRAW_CONFIG.gestureFrameDelta;
+        const speedX = targetX - state.canvasX;
+        const speedY = targetY - state.canvasY;
+        if (Math.abs(speedX) > MAX_SPEED) {
+            state.canvasX += Math.sign(speedX) * MAX_SPEED;
         } else {
-            // 纯平移（缩放未变化时也允许平移）
-            if (Math.abs(panDx) > 0.5 || Math.abs(panDy) > 0.5) {
-                state.canvasX = state.startCanvasX + panDx;
-                state.canvasY = state.startCanvasY + panDy;
-            }
+            state.canvasX = targetX;
         }
-        
-        // 限制单帧位移，防止误触/bug 导致画面瞬移
-        const MAX_FRAME_DELTA = DRAW_CONFIG.gestureFrameDelta;
-        const frameDx = state.canvasX - state._lastGestureX;
-        const frameDy = state.canvasY - state._lastGestureY;
-        if (Math.abs(frameDx) > MAX_FRAME_DELTA) {
-            state.canvasX = state._lastGestureX + Math.sign(frameDx) * MAX_FRAME_DELTA;
+        if (Math.abs(speedY) > MAX_SPEED) {
+            state.canvasY += Math.sign(speedY) * MAX_SPEED;
+        } else {
+            state.canvasY = targetY;
         }
-        if (Math.abs(frameDy) > MAX_FRAME_DELTA) {
-            state.canvasY = state._lastGestureY + Math.sign(frameDy) * MAX_FRAME_DELTA;
-        }
+        state.scale = newScale;
 
         // 缩放/平移过程中实时进行边界钳制，防止画布越界
         main_update_move_bound();
         main_update_canvas_position();
-        state._lastGestureX = state.canvasX;
-        state._lastGestureY = state.canvasY;
+
+        main_update_gesture_velocity(true);
         
         // 标记缩放进行中，延迟 tile/overlay 批量更新
         main_set_zooming();
@@ -2910,8 +3004,12 @@ async function main_handle_touch_end(e) {
         if (state.isScaling) {
             // 捏合缩放结束 → 取消延迟更新定时器，立即批量更新
             main_cancel_zoom_debounce();
-            // 缓动动画归位（内部已包含 tile mark_all + overlay 更新）
-            main_update_canvas_transform_smooth(state.canvasX, state.canvasY, state.scale, 200);
+            // 有速度时启动惯性滑动，否则直接缓动到位
+            if (state.drawMode === 'move' && (Math.abs(state._gestureVx) > 2 || Math.abs(state._gestureVy) > 2)) {
+                main_start_momentum('xy');
+            } else {
+                main_update_canvas_transform_smooth(state.canvasX, state.canvasY, state.scale, 200);
+            }
         } else if (state.isDrawing) {
             state.isDrawing = false;
             dom.canvasWrapper.style.transform = `translate3d(${state.canvasX}px, ${state.canvasY}px, 0) scale(${state.scale})`;
@@ -2921,8 +3019,12 @@ async function main_handle_touch_end(e) {
             main_hide_drawing_mode();
             await main_submit_stroke();
         } else {
-            // 单指拖动结束 → 缓动动画归位
-            main_update_canvas_transform_smooth(state.canvasX, state.canvasY, state.scale, 200);
+            // 单指拖动结束 → 有速度时启动惯性滑动，否则直接缓动到位
+            if (state.drawMode === 'move' && (Math.abs(state._gestureVx) > 2 || Math.abs(state._gestureVy) > 2)) {
+                main_start_momentum('xy');
+            } else {
+                main_update_canvas_transform_smooth(state.canvasX, state.canvasY, state.scale, 200);
+            }
         }
         
         state.isScaling = false;
@@ -3039,7 +3141,8 @@ function main_start_stroke(type, eraserShape) {
     
     state.cachedDrawType = type;
     state.cachedDrawColor = type === 'draw' ? DRAW_CONFIG.penColor : '#000000';
-    state.cachedDrawLineWidth = type === 'draw' ? DRAW_CONFIG.penWidth * invScale : baseEraserSize;
+    const startScale = main_fetch_safe_scale();
+    state.cachedDrawLineWidth = type === 'draw' ? DRAW_CONFIG.penWidth / startScale : DRAW_CONFIG.eraserSize / startScale;
     
     state.eraserSpeedState = window.__eraserSpeed?.eraser_speed_create_state() ?? null;
     
@@ -3062,15 +3165,19 @@ function main_save_stroke_point(fromX, fromY, toX, toY, pressure = 0.5) {
     if (toY > bounds.maxY) bounds.maxY = toY;
     
     let currentWidth = stroke.lineWidth;
+    const currentScale = main_fetch_safe_scale();
     
     if (stroke.type === 'draw') {
         state.currentPressure = pressure;
         state.lastLineWidth = state.currentLineWidth;
         currentWidth = stroke.lineWidth * (0.9 + pressure * 0.2);
         state.currentLineWidth = currentWidth;
+        state.cachedDrawLineWidth = DRAW_CONFIG.penWidth / currentScale;
     } else if (stroke.type === 'erase' && stroke.eraserSpeedEnabled) {
         currentWidth = window.__eraserSpeed.eraser_speed_update(state.eraserSpeedState, stroke, toX, toY);
         state.cachedDrawLineWidth = currentWidth;
+    } else if (stroke.type === 'erase') {
+        state.cachedDrawLineWidth = DRAW_CONFIG.eraserSize / currentScale;
     }
     
     stroke.variableWidths.push(currentWidth);
@@ -3271,11 +3378,15 @@ async function main_render_strokes_to_context(ctx, strokes) {
 
         const hasVariableWidths = stroke.variableWidths && stroke.variableWidths.length > 0;
         const strokeColor = stroke.color || DRAW_CONFIG.penColor;
+        const renderScale = main_fetch_safe_scale();
+        const strokeScale = stroke.scale || 1;
         let baseLineWidth;
         if (stroke.type === 'erase' && stroke.eraserSizeRaw !== undefined) {
-            baseLineWidth = stroke.eraserSizeRaw / main_fetch_safe_scale();
+            baseLineWidth = stroke.eraserSizeRaw / renderScale;
+        } else if (stroke.type === 'draw') {
+            baseLineWidth = (stroke.lineWidth || DRAW_CONFIG.penWidth) * strokeScale / renderScale;
         } else {
-            baseLineWidth = stroke.lineWidth || (stroke.type === 'erase' ? DRAW_CONFIG.eraserSize : DRAW_CONFIG.penWidth);
+            baseLineWidth = (stroke.lineWidth || (stroke.type === 'erase' ? DRAW_CONFIG.eraserSize : DRAW_CONFIG.penWidth)) * strokeScale / renderScale;
         }
 
         if (stroke.type === 'erase') {
@@ -3325,7 +3436,9 @@ async function main_render_strokes_to_context(ctx, strokes) {
 
             for (let i = 0; i < stroke.points.length; i++) {
                 const point = stroke.points[i];
-                const lineWidth = stroke.variableWidths[i] || baseLineWidth;
+                const lineWidth = stroke.variableWidths[i] !== undefined
+                    ? stroke.variableWidths[i] * strokeScale / renderScale
+                    : baseLineWidth;
                 const midX = (point.fromX + point.toX) / 2;
                 const midY = (point.fromY + point.toY) / 2;
 
