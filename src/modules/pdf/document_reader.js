@@ -2639,7 +2639,9 @@ class DocumentReaderManager {
         if (this._reader_loading_el) return;
         const el = document.createElement('div');
         el.className = 'doc-reader-loading';
-        el.textContent = window.i18n?.format_translate('loading.rendering') || '正在渲染...';
+        el.innerHTML = '<div class="loading-spinner"></div><div class="loading-message">'
+            + (window.i18n?.format_translate('loading.rendering') || '正在渲染...')
+            + '</div>';
         this._scroll_container.appendChild(el);
         this._reader_loading_el = el;
         this._has_rendered_first_page = false;

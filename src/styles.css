@@ -1106,6 +1106,17 @@ body {
     will-change: transform;
 }
 
+.doc-reader-loading {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    color: #888;
+    font-size: 14px;
+    z-index: 10;
+    pointer-events: none;
+}
+
 .doc-reader-page-tiles {
     position: absolute;
     top: 0;
