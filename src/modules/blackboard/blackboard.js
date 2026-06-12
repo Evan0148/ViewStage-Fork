@@ -36,6 +36,7 @@ class BlackboardManager {
             start_canvas_x: 0,
             start_canvas_y: 0,
             is_scaling: false,
+            is_zooming: false,
             start_distance_sq: 0,
             cached_inv_scale: 1,
             isPalmErasing: false,
@@ -54,6 +55,7 @@ class BlackboardManager {
         this._touch_pending_data = null;          // 待处理的触摸数据 { t0, t1 }
 
         this._smooth_transform_timeout_id = null; // will-change 延迟移除定时器
+        this._zoom_complete_timer_id = null;       // 缩放完成延迟重绘定时器
 
         // 惯性（动量）
         this._momentum_raf = null;
@@ -124,9 +126,38 @@ class BlackboardManager {
 
         this.bb_wrapper.style.transform = `translate3d(${s.canvas_x}px, ${s.canvas_y}px, 0) scale(${s.scale})`;
 
+        // 缩放进行中跳过 tile 更新，由缩放结束后批量刷新
+        if (s.is_zooming) return;
+
         if (this.tile_renderer) {
             this.tile_renderer.update_visible_tile_dpr(s.scale, false, true);
         }
+    }
+
+    /** 标记缩放进行中，延迟 300ms 后触发批量重绘 */
+    _set_zooming() {
+        const s = this.bb_state;
+        s.is_zooming = true;
+        if (this._zoom_complete_timer_id !== null) {
+            clearTimeout(this._zoom_complete_timer_id);
+        }
+        this._zoom_complete_timer_id = setTimeout(() => {
+            this._zoom_complete_timer_id = null;
+            s.is_zooming = false;
+            if (this.tile_renderer) {
+                this.tile_renderer.update_visible_tile_dpr(s.scale, false, true);
+            }
+        }, 300);
+    }
+
+    /** 取消缩放延迟更新（缩放结束时立即更新） */
+    _cancel_zoom_debounce() {
+        const s = this.bb_state;
+        if (this._zoom_complete_timer_id !== null) {
+            clearTimeout(this._zoom_complete_timer_id);
+            this._zoom_complete_timer_id = null;
+        }
+        s.is_zooming = false;
     }
 
     _sync_bb_transform_smooth(target_x, target_y, target_scale, duration = 200) {
@@ -189,11 +220,24 @@ class BlackboardManager {
         this._gesture_vy = vy;
 
         const s = this.bb_state;
+        const prevX = s.canvas_x;
+        const prevY = s.canvas_y;
         s.canvas_x += vx;
         s.canvas_y += vy;
 
         this._update_move_bound();
         this._update_canvas_position();
+
+        // 边界碰撞处理：速度归零（防止贴边滑行）
+        if (s.canvas_x === prevX && vx !== 0) {
+            this._gesture_vx = 0;
+            vx = 0;
+        }
+        if (s.canvas_y === prevY && vy !== 0) {
+            this._gesture_vy = 0;
+            vy = 0;
+        }
+
         this._sync_bb_transform();
 
         if (Math.abs(vx) > 0.5 || Math.abs(vy) > 0.5) {
@@ -921,6 +965,9 @@ class BlackboardManager {
 
         if (window.PointerEvent && touches.length === 1) return;
 
+        // 缩放时额外手指触控，不做任何操作
+        if (s.is_scaling && touches.length !== 2) return;
+
         if (touches.length === 1 && s.is_dragging) {
             const touch = touches[0];
             s.canvas_x = touch.clientX - s.start_drag_x;
@@ -952,41 +999,25 @@ class BlackboardManager {
 
                 const current_dist_sq = this._calc_touch_dist_sq(data.t0, data.t1);
                 const scale_ratio = Math.sqrt(current_dist_sq / s.start_distance_sq);
-                // 死区：缩放比变化小于 1.5% 时不触发缩放，防止手指微动导致画面抖动
-                const ZOOM_DEAD_ZONE = 0.015;
-                let new_scale;
-                if (Math.abs(scale_ratio - 1) > ZOOM_DEAD_ZONE) {
-                    new_scale = s.start_scale * scale_ratio;
-                    const max_scale = window.DRAW_CONFIG ? window.DRAW_CONFIG.maxScaleImage : 3;
-                    new_scale = Math.max(window.DRAW_CONFIG ? window.DRAW_CONFIG.minScale : 0.5, Math.min(max_scale, new_scale));
-                } else {
-                    new_scale = s.scale;
-                }
+                // 直接根据起始位置计算目标缩放，不设死区，避免死区边界跳跃
+                let target_scale = s.start_scale * scale_ratio;
+                const max_scale = window.DRAW_CONFIG ? window.DRAW_CONFIG.maxScaleImage : 3;
+                target_scale = Math.max(window.DRAW_CONFIG ? window.DRAW_CONFIG.minScale : 0.5, Math.min(max_scale, target_scale));
+
+                // 缩放直接跟随手指，保证缩放中心始终在两指中央
+                s.scale = target_scale;
 
                 const center_x = (data.t0.clientX + data.t1.clientX) / 2;
                 const center_y = (data.t0.clientY + data.t1.clientY) / 2;
 
-                // 统一公式：两指缩放以当前中心为锚点，平移由中心移动自然体现
-                const final_ratio = new_scale / s.start_scale;
-                const target_x = center_x - (s.start_scale_x - s.start_canvas_x) * final_ratio;
-                const target_y = center_y - (s.start_scale_y - s.start_canvas_y) * final_ratio;
+                // 两指缩放焦点改为可视区域中心，平移由手指中点偏移独立控制
+                const final_ratio = s.scale / s.start_scale;
+                const vcx = this.screen_w / 2;
+                const vcy = this.screen_h / 2;
+                s.canvas_x = vcx - (vcx - s.start_canvas_x) * final_ratio + (center_x - s.start_scale_x);
+                s.canvas_y = vcy - (vcy - s.start_canvas_y) * final_ratio + (center_y - s.start_scale_y);
 
-                // 速度限制：限制每帧最大位移量，防止误触/bug 导致画面瞬移
-                const MAX_SPEED = window.DRAW_CONFIG?.gestureFrameDelta ?? 60;
-                const speed_x = target_x - s.canvas_x;
-                const speed_y = target_y - s.canvas_y;
-                if (Math.abs(speed_x) > MAX_SPEED) {
-                    s.canvas_x += Math.sign(speed_x) * MAX_SPEED;
-                } else {
-                    s.canvas_x = target_x;
-                }
-                if (Math.abs(speed_y) > MAX_SPEED) {
-                    s.canvas_y += Math.sign(speed_y) * MAX_SPEED;
-                } else {
-                    s.canvas_y = target_y;
-                }
-                s.scale = new_scale;
-
+                this._set_zooming();
                 this._update_move_bound();
                 this._update_canvas_position();
                 this._update_bb_gesture_velocity();
@@ -1007,6 +1038,28 @@ class BlackboardManager {
         if (window.PointerEvent) {
             // PointerEvent 设备上 touch 只处理双指缩放，结束时需清理 rAF 和 GPU
             const s = this.bb_state;
+            if (s.is_scaling && e.touches.length === 2) {
+                // 额外手指抬起后仍有 2 指 — 以当前画布位置为起始重新初始化双指缩放
+                s.is_scaling = false;
+                this._cleanup_touch_gesture();
+                this._update_move_bound();
+                this._update_canvas_position();
+                this._sync_bb_transform();
+                s.is_scaling = true;
+                s.is_dragging = false;
+                s.start_distance_sq = this._calc_touch_dist_sq(e.touches[0], e.touches[1]);
+                s.start_scale = s.scale;
+                s.start_scale_x = (e.touches[0].clientX + e.touches[1].clientX) / 2;
+                s.start_scale_y = (e.touches[0].clientY + e.touches[1].clientY) / 2;
+                s.start_canvas_x = s.canvas_x;
+                s.start_canvas_y = s.canvas_y;
+                this._last_canvas_x = s.canvas_x;
+                this._last_canvas_y = s.canvas_y;
+                this._gesture_vx = 0;
+                this._gesture_vy = 0;
+                this._touch_enable_gpu();
+                return;
+            }
             if (s.is_scaling && e.touches.length < 2) {
                 s.is_scaling = false;
                 if (this.draw_mode === 'move' && (Math.abs(this._gesture_vx) > 2 || Math.abs(this._gesture_vy) > 2)) {
@@ -1020,17 +1073,38 @@ class BlackboardManager {
             return;
         }
         const s = this.bb_state;
-        if (s.is_scaling && e.touches.length < 2) {
+        if (s.is_scaling && e.touches.length === 2) {
+            // 额外手指抬起后仍有 2 指 — 以当前画布位置为起始重新初始化双指缩放
             s.is_scaling = false;
             this._cleanup_touch_gesture();
-            if (this.draw_mode === 'move' && (Math.abs(this._gesture_vx) > 2 || Math.abs(this._gesture_vy) > 2)) {
-                this._update_move_bound();
-                this._update_canvas_position();
-                this._sync_bb_transform();
-                this._start_momentum();
+            this._update_move_bound();
+            this._update_canvas_position();
+            this._sync_bb_transform();
+            s.is_scaling = true;
+            s.is_dragging = false;
+            s.start_distance_sq = this._calc_touch_dist_sq(e.touches[0], e.touches[1]);
+            s.start_scale = s.scale;
+            s.start_scale_x = (e.touches[0].clientX + e.touches[1].clientX) / 2;
+            s.start_scale_y = (e.touches[0].clientY + e.touches[1].clientY) / 2;
+            s.start_canvas_x = s.canvas_x;
+            s.start_canvas_y = s.canvas_y;
+            this._last_canvas_x = s.canvas_x;
+            this._last_canvas_y = s.canvas_y;
+            this._gesture_vx = 0;
+            this._gesture_vy = 0;
+            this._touch_enable_gpu();
+        } else {
+            if (s.is_scaling && e.touches.length < 2) {
+                s.is_scaling = false;
+                this._cleanup_touch_gesture();
+                if (this.draw_mode === 'move' && (Math.abs(this._gesture_vx) > 2 || Math.abs(this._gesture_vy) > 2)) {
+                    this._update_move_bound();
+                    this._update_canvas_position();
+                    this._sync_bb_transform();
+                    this._start_momentum();
+                }
             }
-        }
-        if (s.is_dragging && e.touches.length === 0) {
+            if (s.is_dragging && e.touches.length === 0) {
             s.is_dragging = false;
             this._touch_schedule_disable_gpu();
             if (this.draw_mode === 'move' && (Math.abs(this._gesture_vx) > 2 || Math.abs(this._gesture_vy) > 2)) {
@@ -1055,6 +1129,9 @@ class BlackboardManager {
             this._touch_raf_id = null;
         }
         this._touch_pending_data = null;
+        // 标记缩放结束，让后续 _sync_bb_transform 可以更新 tile
+        // 注意：不取消 debounce 定时器，由定时器完成最终 tile 刷新
+        this.bb_state.is_zooming = false;
         this._touch_schedule_disable_gpu();
     }
 

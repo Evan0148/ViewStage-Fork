@@ -3369,11 +3369,24 @@ class DocumentReaderManager {
         this._dr_gesture_vx = vx;
         this._dr_gesture_vy = vy;
 
+        const prevX = this.dr_canvas_x;
+        const prevY = this.dr_canvas_y;
         this.dr_canvas_x += vx;
         this.dr_canvas_y += vy;
 
         this._dr_update_move_bound();
         this._dr_update_canvas_position();
+
+        // 边界碰撞处理：速度归零（防止贴边滑行）
+        if (this.dr_canvas_x === prevX && vx !== 0) {
+            this._dr_gesture_vx = 0;
+            vx = 0;
+        }
+        if (this.dr_canvas_y === prevY && vy !== 0) {
+            this._dr_gesture_vy = 0;
+            vy = 0;
+        }
+
         this._dr_sync_transform();
 
         if (Math.abs(vx) > 0.5 || Math.abs(vy) > 0.5) {
@@ -3515,6 +3528,9 @@ class DocumentReaderManager {
         if (!this.dr_is_scaling) return;
         const touches = e.touches;
 
+        // 缩放时额外手指触控，不做任何操作
+        if (touches.length !== 2) return;
+
         if (touches.length === 2) {
             e.preventDefault();
 
@@ -3525,21 +3541,13 @@ class DocumentReaderManager {
 
             const current_dist_sq = this._dr_calc_touch_dist_sq(t0, t1);
             const scale_ratio = Math.sqrt(current_dist_sq / this.dr_start_distance_sq);
-            // 死区：缩放比变化小于 1.5% 时不触发缩放
-            const ZOOM_DEAD_ZONE = 0.015;
-            const scale_change = Math.abs(scale_ratio - 1);
-            let new_s;
-            if (scale_change > ZOOM_DEAD_ZONE) {
-                new_s = this.dr_start_scale * scale_ratio;
-                new_s = Math.max(this.dr_min_scale, Math.min(this.dr_max_scale, new_s));
-            } else {
-                new_s = this.dr_scale;
-            }
+            // 直接根据起始位置计算目标缩放，不设死区，避免死区边界跳跃
+            let target_s = this.dr_start_scale * scale_ratio;
+            target_s = Math.max(this.dr_min_scale, Math.min(this.dr_max_scale, target_s));
 
-            // 统一公式：两指缩放以当前中心为锚点，平移由中心移动自然体现
             // 存入最新触摸数据，由 rAF 节流处理（保证 60fps 平滑输出）
             this._dr_touch_pending = {
-                center_x, center_y, new_s
+                center_x, center_y, target_s
             };
 
             if (this._touch_raf_id !== null) return;
@@ -3550,25 +3558,14 @@ class DocumentReaderManager {
                 if (!pending) return;
                 this._dr_touch_pending = null;
 
-                const ratio = pending.new_s / this.dr_start_scale;
-                const target_x = pending.center_x - (this.dr_start_scale_x - this.dr_start_canvas_x) * ratio;
-                const target_y = pending.center_y - (this.dr_start_scale_y - this.dr_start_canvas_y) * ratio;
+                this.dr_scale = pending.target_s;
 
-                // 速度限制：限制每帧最大位移量，防止误触/bug 导致画面瞬移
-                const MAX_SPEED = window.DRAW_CONFIG?.gestureFrameDelta ?? 60;
-                const speed_x = target_x - this.dr_canvas_x;
-                const speed_y = target_y - this.dr_canvas_y;
-                if (Math.abs(speed_x) > MAX_SPEED) {
-                    this.dr_canvas_x += Math.sign(speed_x) * MAX_SPEED;
-                } else {
-                    this.dr_canvas_x = target_x;
-                }
-                if (Math.abs(speed_y) > MAX_SPEED) {
-                    this.dr_canvas_y += Math.sign(speed_y) * MAX_SPEED;
-                } else {
-                    this.dr_canvas_y = target_y;
-                }
-                this.dr_scale = pending.new_s;
+                // 两指缩放焦点改为可视区域中心，平移由手指中点偏移独立控制
+                const ratio = this.dr_scale / this.dr_start_scale;
+                const vcx = this._scroll_container.clientWidth / 2;
+                const vcy = this._scroll_container.clientHeight / 2;
+                this.dr_canvas_x = vcx - (vcx - this.dr_start_canvas_x) * ratio + (pending.center_x - this.dr_start_scale_x);
+                this.dr_canvas_y = vcy - (vcy - this.dr_start_canvas_y) * ratio + (pending.center_y - this.dr_start_scale_y);
                 this._dr_set_zooming();
                 this._dr_update_gesture_velocity();
 
@@ -3584,7 +3581,30 @@ class DocumentReaderManager {
             }
             return;
         }
-        if (e.touches.length < 2) {
+        if (e.touches.length === 2 && this.dr_is_scaling) {
+            // 额外手指抬起后仍有 2 指 — 以当前画布位置为起始重新初始化双指缩放
+            this.dr_is_scaling = false;
+            if (this._touch_raf_id !== null) {
+                cancelAnimationFrame(this._touch_raf_id);
+                this._touch_raf_id = null;
+            }
+            this._dr_cancel_zoom_debounce();
+            this._dr_touch_pending = null;
+            this.dr_is_scaling = true;
+            this.dr_is_dragging = false;
+            this.dr_start_distance_sq = this._dr_calc_touch_dist_sq(e.touches[0], e.touches[1]);
+            this.dr_start_scale = this.dr_scale;
+            this.dr_start_scale_x = (e.touches[0].clientX + e.touches[1].clientX) / 2;
+            this.dr_start_scale_y = (e.touches[0].clientY + e.touches[1].clientY) / 2;
+            this.dr_start_canvas_x = this.dr_canvas_x;
+            this.dr_start_canvas_y = this.dr_canvas_y;
+            this._dr_enable_smooth_transform();
+            this._dr_set_zooming();
+            this._dr_last_canvas_x = this.dr_canvas_x;
+            this._dr_last_canvas_y = this.dr_canvas_y;
+            this._dr_gesture_vx = 0;
+            this._dr_gesture_vy = 0;
+        } else if (e.touches.length < 2) {
             this.dr_is_scaling = false;
 
             // 清理捏合缩放 rAF

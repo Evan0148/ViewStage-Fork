@@ -29,7 +29,7 @@ let pending_transform = null;
 let transform_raf_id = null;
 let wheel_smooth_timer_id = null;
 let zoom_complete_timer_id = null;   // 双指缩放结束后延迟批量更新 tile 的定时器
-let last_tile_update_scale = 1;      // 缩放过程中上次渐进更新 tile 时的 scale 值
+
 
 /** 标记缩放进行中，重置延迟批量更新定时器（缩放期间跳过 tile/overlay 逐帧更新） */
 function main_set_zooming() {
@@ -67,6 +67,15 @@ function main_cancel_smooth_transform() {
     dom.canvasWrapper.classList.remove('smooth-transform');
     dom.canvasWrapper.style.transitionDuration = '';
     main_cancel_momentum();
+}
+
+/** 取消等待中的 transform rAF，防止缩放结束后旧值覆盖新位置 */
+function main_cancel_pending_transform() {
+    if (transform_raf_id !== null) {
+        cancelAnimationFrame(transform_raf_id);
+        transform_raf_id = null;
+    }
+    pending_transform = null;
 }
 
 function main_update_transform_schedule(x, y, scale) {
@@ -145,12 +154,24 @@ function main_momentum_tick(mode) {
     state._gestureVy = vy;
 
     // 应用速度到画布位置
+    const prevX = state.canvasX;
+    const prevY = state.canvasY;
     state.canvasX += vx;
     state.canvasY += vy;
 
     // 边界钳制
     main_update_move_bound();
     main_update_canvas_position();
+
+    // 边界碰撞处理：速度归零（防止贴边滑行）
+    if (state.canvasX === prevX && vx !== 0) {
+        state._gestureVx = 0;
+        vx = 0;
+    }
+    if (state.canvasY === prevY && vy !== 0) {
+        state._gestureVy = 0;
+        vy = 0;
+    }
 
     // 更新渲染
     main_update_canvas_transform();
@@ -2329,7 +2350,7 @@ function main_hide_palm_eraser_hint() {
 
 function main_update_palm_eraser_hint(clientX, clientY, size) {
     if (!dom.palmEraserHint) return;
-    const rect = dom.canvasWrapper.getBoundingClientRect();
+    const rect = main_fetch_cached_canvas_rect();
     const x = clientX - rect.left;
     const y = clientY - rect.top;
     dom.palmEraserHint.style.width = `${size}px`;
@@ -2826,8 +2847,7 @@ async function main_handle_touch_start(e) {
         state.startCanvasX = state.canvasX;
         state.startCanvasY = state.canvasY;
         dom.canvasWrapper.classList.add('dragging');
-        // 新缩放手势开始时重置渐进更新标记
-        last_tile_update_scale = state.scale;
+        dom.canvasWrapper.style.willChange = 'transform';
         // 重置惯性速度追踪
         state._lastCanvasX = state.canvasX;
         state._lastCanvasY = state.canvasY;
@@ -2854,6 +2874,11 @@ function main_handle_touch_move(e) {
     
     // 不支持 PointerEvent 设备的防重入检查
     if (touches.length === 1 && state.isDrawing) {
+        return;
+    }
+    
+    // 缩放时额外手指触控，不做任何操作
+    if (state.isScaling && touches.length !== 2) {
         return;
     }
     
@@ -2913,68 +2938,40 @@ function main_handle_touch_move(e) {
     } else if (touches.length === 2 && state.isScaling) {
         const currentDistanceSq = main_calc_touch_distance_squared(touches[0], touches[1]);
         const scaleRatio = Math.sqrt(currentDistanceSq / state.startDistanceSq);
-        // 死区：缩放比变化小于 1.5% 时不触发缩放，防止手指微动导致画面抖动
-        // 死区内保持当前缩放值，不回退到起始值，消除缓慢缩放时的振荡
-        const ZOOM_DEAD_ZONE = 0.015;
-        const scaleChange = Math.abs(scaleRatio - 1);
-        let newScale;
-        if (scaleChange > ZOOM_DEAD_ZONE) {
-            newScale = state.startScale * scaleRatio;
-        } else {
-            newScale = state.scale;
-        }
+        // 直接根据起始位置计算目标缩放，不设死区，避免死区边界跳跃
+        let targetScale = state.startScale * scaleRatio;
         const maxScale = state.isCameraOpen ? DRAW_CONFIG.maxScaleCamera : DRAW_CONFIG.maxScaleImage;
-        newScale = newScale < DRAW_CONFIG.minScale ? DRAW_CONFIG.minScale : (newScale > maxScale ? maxScale : newScale);
-        
+        targetScale = targetScale < DRAW_CONFIG.minScale ? DRAW_CONFIG.minScale : (targetScale > maxScale ? maxScale : targetScale);
+
+        // 缩放直接跟随手指，保证缩放中心始终在两指中央
+        state.scale = targetScale;
+
         const centerX = (touches[0].clientX + touches[1].clientX) / 2;
         const centerY = (touches[0].clientY + touches[1].clientY) / 2;
-        
-        // 统一公式：两指缩放以当前中心为锚点，平移由中心移动自然体现
-        // targetX = centerX - (startScaleX - startCanvasX) * (newScale / startScale)
-        const ratio = newScale / state.startScale;
-        const targetX = centerX - (state.startScaleX - state.startCanvasX) * ratio;
-        const targetY = centerY - (state.startScaleY - state.startCanvasY) * ratio;
 
-        // 速度限制：限制每帧最大位移量，防止误触/bug 导致画面瞬移
-        // 不同于传统的 delta-from-last-frame 钳制（会累积滞后），
-        // 此方式直接追赶目标位置，用户停止后画布立刻到位，无拖尾感
-        const MAX_SPEED = DRAW_CONFIG.gestureFrameDelta;
-        const speedX = targetX - state.canvasX;
-        const speedY = targetY - state.canvasY;
-        if (Math.abs(speedX) > MAX_SPEED) {
-            state.canvasX += Math.sign(speedX) * MAX_SPEED;
-        } else {
-            state.canvasX = targetX;
-        }
-        if (Math.abs(speedY) > MAX_SPEED) {
-            state.canvasY += Math.sign(speedY) * MAX_SPEED;
-        } else {
-            state.canvasY = targetY;
-        }
-        state.scale = newScale;
+        // 两指缩放焦点改为可视区域中心，平移由手指中点偏移独立控制
+        const ratio = state.scale / state.startScale;
+        const viewCenterX = dom.canvasWrapper.clientWidth / 2;
+        const viewCenterY = dom.canvasWrapper.clientHeight / 2;
+        state.canvasX = viewCenterX - (viewCenterX - state.startCanvasX) * ratio + (centerX - state.startScaleX);
+        state.canvasY = viewCenterY - (viewCenterY - state.startCanvasY) * ratio + (centerY - state.startScaleY);
 
         // 缩放/平移过程中实时进行边界钳制，防止画布越界
         main_update_move_bound();
         main_update_canvas_position();
 
         main_update_gesture_velocity(true);
-        
+
+        // 直接设置 transform（与单指拖拽同一路径，消除 rAF 延迟）
+        const transform = `translate3d(${state.canvasX}px, ${state.canvasY}px, 0) scale(${state.scale})`;
+        dom.canvasWrapper.style.transform = transform;
+        last_canvas_transform.x = state.canvasX;
+        last_canvas_transform.y = state.canvasY;
+        last_canvas_transform.scale = state.scale;
+
         // 标记缩放进行中，延迟 tile/overlay 批量更新
         main_set_zooming();
-        main_update_transform_schedule(state.canvasX, state.canvasY, state.scale);
-        
-        // 缩放变化超过 25% 时渐进更新 tile，减少大幅缩放时的模糊时间
-        const TILE_UPDATE_THRESHOLD = 0.25;
-        if (Math.abs(state.scale / last_tile_update_scale - 1) > TILE_UPDATE_THRESHOLD) {
-            last_tile_update_scale = state.scale;
-            if (window.tileRenderer) {
-                window.tileRenderer.update_visible_tile_dpr(state.scale, false, true);
-            }
-            if (window.batchDrawManager) {
-                window.batchDrawManager.update_overlay_dpr(state.scale);
-            }
-        }
-        
+
         main_update_eraser_hint_size();
     }
 }
@@ -2995,6 +2992,7 @@ async function main_handle_touch_end(e) {
     }
     
     if (e.touches.length === 0) {
+        main_cancel_pending_transform();
         state.isDragging = false;
         dom.canvasWrapper.classList.remove('dragging');
         
@@ -3028,8 +3026,11 @@ async function main_handle_touch_end(e) {
         }
         
         state.isScaling = false;
+        dom.canvasWrapper.style.willChange = '';
     } else if (e.touches.length === 1) {
+        main_cancel_pending_transform();
         state.isScaling = false;
+        dom.canvasWrapper.style.willChange = '';
         main_cancel_zoom_debounce();
         main_update_move_bound();
         main_update_canvas_position();
@@ -3044,6 +3045,29 @@ async function main_handle_touch_end(e) {
             state.startDragX = touch.clientX - state.canvasX;
             state.startDragY = touch.clientY - state.canvasY;
         }
+    } else if (e.touches.length === 2 && state.isScaling) {
+        // 额外手指抬起后仍有 2 指 — 以当前画布位置为起始重新初始化双指缩放
+        main_cancel_pending_transform();
+        main_cancel_zoom_debounce();
+        state.isScaling = false;
+        dom.canvasWrapper.style.willChange = '';
+        main_update_move_bound();
+        main_update_canvas_position();
+
+        state.isScaling = true;
+        state.isDragging = false;
+        state.startDistanceSq = main_calc_touch_distance_squared(e.touches[0], e.touches[1]);
+        state.startScale = state.scale;
+        state.startScaleX = (e.touches[0].clientX + e.touches[1].clientX) / 2;
+        state.startScaleY = (e.touches[0].clientY + e.touches[1].clientY) / 2;
+        state.startCanvasX = state.canvasX;
+        state.startCanvasY = state.canvasY;
+        dom.canvasWrapper.classList.add('dragging');
+        dom.canvasWrapper.style.willChange = 'transform';
+        state._lastCanvasX = state.canvasX;
+        state._lastCanvasY = state.canvasY;
+        state._gestureVx = 0;
+        state._gestureVy = 0;
     }
 }
 
