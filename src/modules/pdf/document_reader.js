@@ -112,8 +112,6 @@ class DocumentReaderManager {
         // 自适应 DPR（按缩放级别 + 内存压力动态降级，减少 4K 屏幕 GPU 显存占用）
         this._adaptive_dpr_enabled = true;
 
-        // 懒文本层（启用后渲染 PDF 文本层，支持文字选中、复制和无障碍）
-        this._text_layer_enabled = false;
 
         // 已初始化 tile 的页面索引集合（_dr_apply_scale 仅遍历此集合，跳过无 tile 页面）
         this._pages_with_tiles = new Set();
@@ -1276,22 +1274,10 @@ class DocumentReaderManager {
             page_data.pdf_canvas = page_el.querySelector('.doc-reader-pdf-canvas');
         }
 
-        // 文本层仅在启用时创建（默认关闭，节省 DOM 节点和内存）
-        if (this._text_layer_enabled) {
-            if (!page_el.querySelector('.doc-reader-text-layer')) {
-                const text_layer = document.createElement('div');
-                text_layer.className = 'doc-reader-text-layer';
-                page_el.appendChild(text_layer);
-                page_data.pdf_text_layer = text_layer;
-            } else {
-                page_data.pdf_text_layer = page_el.querySelector('.doc-reader-text-layer');
-            }
-        } else {
-            // 未启用时移除已存在的文本层，释放 DOM 节点
-            const existing = page_el.querySelector('.doc-reader-text-layer');
-            if (existing) existing.remove();
-            page_data.pdf_text_layer = null;
-        }
+        // 文本层已移除，清理遗留 DOM 节点
+        const existing = page_el.querySelector('.doc-reader-text-layer');
+        if (existing) existing.remove();
+        page_data.pdf_text_layer = null;
     }
 
     /**
@@ -1367,21 +1353,12 @@ class DocumentReaderManager {
                 this._refresh_page_aspect(page_data);
 
                 const canvas = page_data.pdf_canvas;
-                const text_layer = page_data.pdf_text_layer;
                 if (!canvas) return;
 
                 const render_w = Math.ceil(render_viewport.width);
                 const render_h = Math.ceil(render_viewport.height);
                 const css_w_px = Math.ceil(css_viewport.width) + 'px';
                 const css_h_px = Math.ceil(css_viewport.height) + 'px';
-
-                // 文本层仅在启用时操作（默认关闭节省内存）
-                if (this._text_layer_enabled && text_layer) {
-                    text_layer.replaceChildren();
-                    text_layer.style.width = css_w_px;
-                    text_layer.style.height = css_h_px;
-                    text_layer.style.setProperty('--scale-factor', css_scale);
-                }
 
                 // 离屏预渲染：先渲染到临时 canvas，保留显示 canvas 旧内容避免白屏
                 const tempCanvas = document.createElement('canvas');
@@ -1409,18 +1386,6 @@ class DocumentReaderManager {
                 canvas.style.width = css_w_px;
                 canvas.style.height = css_h_px;
 
-                // 文本层渲染仅在启用时执行（getTextContent + renderTextLayer 开销较大）
-                // 预渲染时跳过文本层
-                if (!is_prerender && this._text_layer_enabled && text_layer) {
-                    const text_content = await pdf_page.getTextContent();
-                    const text_task = window.pdfjsLib.renderTextLayer({
-                        textContentSource: text_content,
-                        container: text_layer,
-                        viewport: css_viewport,
-                        enhanceTextSelection: true
-                    });
-                    await text_task.promise;
-                }
                 page_data.pdf_render_css_width = css_w;
                 page_data.pdf_render_dpr = target_dpr;
             } finally {
@@ -1452,9 +1417,6 @@ class DocumentReaderManager {
             page_data.pdf_canvas.height = 0;
         }
         page_data.pdf_render_css_width = 0;
-        if (page_data.pdf_text_layer) {
-            page_data.pdf_text_layer.replaceChildren();
-        }
     }
 
     _release_page_blob_url(page_index) {
@@ -1540,11 +1502,6 @@ class DocumentReaderManager {
         if (page_data.pdf_canvas) {
             page_data.pdf_canvas.style.width = '100%';
             page_data.pdf_canvas.style.height = '100%';
-        }
-
-        if (page_data.pdf_text_layer) {
-            page_data.pdf_text_layer.style.width = safe_w + 'px';
-            page_data.pdf_text_layer.style.height = safe_h + 'px';
         }
 
         const tiles_container = page_data.page_element.querySelector('.doc-reader-page-tiles');
@@ -2631,25 +2588,6 @@ class DocumentReaderManager {
                     bb.open();
                 }
             });
-        }
-    }
-
-    /**
-     * 切换文本选择模式（按需创建/销毁文本层）
-     * @param {boolean} enabled - 是否启用文本选择
-     */
-    toggle_text_selection(enabled) {
-        this._text_layer_enabled = enabled;
-
-        // 为当前可见的 PDF 页面按需创建或销毁文本层
-        for (let i = 0; i < this.page_manager.pages_list.length; i++) {
-            const pd = this.page_manager.pages_list[i];
-            if (!pd || pd.render_mode !== 'pdfjs' || !pd.is_visible) continue;
-            this._create_pdf_page_layers(pd);
-            if (enabled) {
-                // 启用时重新渲染文本层
-                this._render_pdf_page_direct(i, true);
-            }
         }
     }
 
