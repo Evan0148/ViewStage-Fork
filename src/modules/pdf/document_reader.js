@@ -116,6 +116,9 @@ class DocumentReaderManager {
         // 已初始化 tile 的页面索引集合（_dr_apply_scale 仅遍历此集合，跳过无 tile 页面）
         this._pages_with_tiles = new Set();
 
+        // 首个页面渲染完成标记（用于隐藏加载指示）
+        this._has_rendered_first_page = false;
+
         // 容器矩形缓存（_check_page_visibility 中避免反复 getBoundingClientRect 触发布局）
         this._cached_container_rect = null;
     }
@@ -173,6 +176,12 @@ class DocumentReaderManager {
         this.active_page_index = page_index;
         this.page_manager.current_index = page_index;
 
+        // 显示加载指示（首个页面渲染完成后移除）
+        this._show_reader_loading();
+
+        // 从缓存恢复批注（与 DOM 构建并行 I/O）
+        const cachePromise = this._load_annotations_from_cache();
+
         this._build_page_dom();
 
         // 确保滚动容器事件已绑定（close() 可能已移除）
@@ -185,8 +194,8 @@ class DocumentReaderManager {
         // 默认启用移动模式，允许立即拖拽平移（不设为批注模式）
         this._set_draw_mode('move');
 
-        // 从缓存恢复批注（必须在 tiles 初始化前，_scroll_to_page 触发 _check_page_visibility 会懒 init tiles）
-        const saved_state = await this._load_annotations_from_cache();
+        // 等待缓存就绪
+        const saved_state = await cachePromise;
 
         // 窗口 resize 时同步页面布局、批注坐标与 overlay canvas 尺寸
         this._window_resize_handler = () => {
@@ -216,7 +225,7 @@ class DocumentReaderManager {
             this.dr_cached_inv_scale = 1 / this.dr_scale;
         }
 
-        // 滚动到初始页面（会触发 _dr_apply_scale → _check_page_visibility）
+        // 滚动到初始页面（会触发 _dr_apply_scale → _check_page_visibility → _on_page_visible → 首批页面渲染）
         await this._scroll_to_page(target_page);
 
         // 恢复缩放 transform（_scroll_to_page 内部会调 _dr_apply_scale，此处需重新设置）
@@ -243,6 +252,8 @@ class DocumentReaderManager {
 
     async close() {
         if (!this.is_open) return;
+
+        this._hide_reader_loading();
 
         // 清理 resize handler
         if (this._window_resize_handler) {
@@ -1386,6 +1397,12 @@ class DocumentReaderManager {
                 canvas.style.width = css_w_px;
                 canvas.style.height = css_h_px;
 
+                // 首个页面渲染完成时隐藏加载指示
+                if (!this._has_rendered_first_page) {
+                    this._has_rendered_first_page = true;
+                    this._hide_reader_loading();
+                }
+
                 page_data.pdf_render_css_width = css_w;
                 page_data.pdf_render_dpr = target_dpr;
             } finally {
@@ -1396,6 +1413,7 @@ class DocumentReaderManager {
         try {
             return await page_data.pdf_render_promise;
         } catch (error) {
+            this._hide_reader_loading();
             if (error?.name !== 'RenderingCancelledException') {
                 console.error(`直接渲染 PDF 页面 ${page_index + 1} 失败:`, error);
             }
@@ -2611,6 +2629,26 @@ class DocumentReaderManager {
             this._show_eraser_hint();
         } else {
             this._hide_eraser_hint();
+        }
+    }
+
+    // ====== 阅读器加载指示 ======
+
+    _show_reader_loading() {
+        if (!this._scroll_container) return;
+        if (this._reader_loading_el) return;
+        const el = document.createElement('div');
+        el.className = 'doc-reader-loading';
+        el.textContent = window.i18n?.format_translate('loading.rendering') || '正在渲染...';
+        this._scroll_container.appendChild(el);
+        this._reader_loading_el = el;
+        this._has_rendered_first_page = false;
+    }
+
+    _hide_reader_loading() {
+        if (this._reader_loading_el) {
+            this._reader_loading_el.remove();
+            this._reader_loading_el = null;
         }
     }
 

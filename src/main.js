@@ -1410,9 +1410,11 @@ async function main_load_pdf_from_path(filePath, autoOpen = false) {
         }
         
         console.log('PDF数据大小:', uint8Array.length);
+
+        // PDF 解析（Worker 线程）与 MD5（主线程）并发执行
+        const pdfPromise = pdfjsLib.getDocument({ data: uint8Array }).promise;
         const fileMd5 = main_calculate_md5(uint8Array);
-        
-        const pdf = await pdfjsLib.getDocument({ data: uint8Array }).promise;
+        const pdf = await pdfPromise;
         fileData = null;
         uint8Array = null;
         console.log('PDF加载成功，页数:', pdf.numPages);
@@ -4761,8 +4763,11 @@ function main_load_pdf() {
                 }
                 
                 let pdfArrayBuffer = await file.arrayBuffer();
+
+                // PDF 解析（Worker 线程）与 MD5（主线程）并发执行
+                const pdfPromise = pdfjsLib.getDocument({ data: pdfArrayBuffer }).promise;
                 const fileMd5 = main_calculate_md5(new Uint8Array(pdfArrayBuffer));
-                const pdf = await pdfjsLib.getDocument({ data: pdfArrayBuffer }).promise;
+                const pdf = await pdfPromise;
                 pdfArrayBuffer = null;
                 
                 const totalPages = pdf.numPages;

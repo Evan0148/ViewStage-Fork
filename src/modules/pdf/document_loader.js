@@ -68,14 +68,21 @@ export async function get_pdf_page_info(pdf, page_num, doc_number) {
  */
 export async function render_pdf_pages_lazy(pdf, total_pages, initial_pages = 3, doc_number = null) {
     const pages = [];
+    const BATCH_SIZE = 4;
 
-    for (let i = 1; i <= total_pages; i++) {
+    for (let i = 1; i <= total_pages; i += BATCH_SIZE) {
+        const batch_end = Math.min(i + BATCH_SIZE, total_pages + 1);
+        const batch = [];
+        for (let j = i; j < batch_end; j++) {
+            batch.push(get_pdf_page_info(pdf, j, doc_number));
+        }
+        const batch_results = await Promise.all(batch);
+        pages.push(...batch_results);
+
         update_loading_progress(
-            window.i18n?.format_translate('loading.processingPage', { current: i, total: total_pages })
-            || `正在处理 ${i}/${total_pages} 页`
+            window.i18n?.format_translate('loading.processingPage', { current: batch_end - 1, total: total_pages })
+            || `正在处理 ${batch_end - 1}/${total_pages} 页`
         );
-        const page_data = await get_pdf_page_info(pdf, i, doc_number);
-        pages.push(page_data);
     }
 
     return pages;
