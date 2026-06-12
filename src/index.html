@@ -11,7 +11,7 @@
     <title>ViewStage</title>
     <link rel="stylesheet" href="styles.css">
     <link rel="stylesheet" href="blackboard.css">
-    <script src="modules/pdf/pdf.min.js" defer></script>
+    <script type="module" src="modules/pdf/pdf.min.mjs"></script>
     <script src="modules/i18n.js" defer></script>
     <script>
         window.__TAURI__?.core.invoke('main_signal_loaded').catch(()=>{});

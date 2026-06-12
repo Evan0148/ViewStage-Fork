@@ -121,6 +121,19 @@ class DocumentReaderManager {
 
         // 容器矩形缓存（_check_page_visibility 中避免反复 getBoundingClientRect 触发布局）
         this._cached_container_rect = null;
+
+        // 离屏 canvas 池（复用双缓冲临时 canvas，避免频繁 GC）
+        this._canvas_pool = [];
+        this._canvas_pool_max = 3;
+
+        // PDFPage 对象缓存（避免每次渲染重调 folder.pdfDoc.getPage()）
+        this._pdf_page_cache = new Map();
+
+        // 文档级 cleanup 去抖定时器
+        this._doc_cleanup_timer = null;
+
+        // 页面 offsetTop/offsetHeight 缓存（避免 _check_page_visibility 重复触发布局）
+        this._page_positions = { tops: [], heights: [], stale: true };
     }
 
     // ====== 初始化 ======
@@ -240,6 +253,9 @@ class DocumentReaderManager {
         }
 
         this.is_open = true;
+
+        // 空闲时间预加载附近页面的 PDFPage 到缓存（提升后续滚动/缩放渲染速度）
+        this._idle_preload_pages(target_page);
 
         const panel = document.getElementById('documentReaderPanel');
         if (panel) panel.classList.add('active');
@@ -412,6 +428,25 @@ class DocumentReaderManager {
         }
         // 释放缩略图缓存
         this._release_sidebar_thumbnail_cache();
+
+        // 释放 canvas 池
+        this._canvas_pool.forEach(c => {
+            c.width = 0;
+            c.height = 0;
+        });
+        this._canvas_pool = [];
+
+        // 释放缓存的 PDFPage 对象
+        for (const pdf_page of this._pdf_page_cache.values()) {
+            pdf_page.cleanup?.();
+        }
+        this._pdf_page_cache.clear();
+
+        // 清理文档级 cleanup 定时器
+        if (this._doc_cleanup_timer !== null) {
+            clearTimeout(this._doc_cleanup_timer);
+            this._doc_cleanup_timer = null;
+        }
 
         if (this._scroll_container) {
             this._scroll_container.innerHTML = '';
@@ -757,12 +792,40 @@ class DocumentReaderManager {
 
         wrapper.appendChild(fragment);
 
+        // 页面已挂载到 DOM，缓存初始位置（首次 layout 后 offsetTop 可用）
+        this._batch_read_page_positions();
+
         // 重置缩放状态，直接设置初始 transform（不触发 layout-heavy _dr_apply_scale）
         this.dr_scale = 1;
         this.dr_canvas_x = 0;
         this.dr_canvas_y = 0;
         this.dr_cached_inv_scale = 1;
         this._dr_sync_transform();
+    }
+
+    // ====== 页面位置缓存（避免 _check_page_visibility 中反复读 offsetTop 触发布局） ======
+
+    /** 标记页面位置缓存为脏（页面尺寸变更后调用） */
+    _invalidate_page_positions() {
+        this._page_positions.stale = true;
+    }
+
+    /** 批量读取所有页面 offsetTop/offsetHeight, 仅触发一次布局 */
+    _batch_read_page_positions() {
+        const pages = this.page_manager.pages_list;
+        const len = pages.length;
+        const tops = new Array(len);
+        const heights = new Array(len);
+        for (let i = 0; i < len; i++) {
+            const el = pages[i]?.page_element;
+            if (el) {
+                tops[i] = el.offsetTop;
+                heights[i] = el.offsetHeight;
+            }
+        }
+        this._page_positions.tops = tops;
+        this._page_positions.heights = heights;
+        this._page_positions.stale = false;
     }
 
     // ====== 懒加载（手动可见性检查，transform 替代 IntersectionObserver） ======
@@ -801,16 +864,22 @@ class DocumentReaderManager {
         const prerender_top = container_top - prerender_margin;
         const prerender_bottom = container_bottom + prerender_margin;
 
+        // ［性能］页面位置缓存未命中时批量读取（仅触发一次布局，避免与后续 DOM 写入交插）
+        if (this._page_positions.stale) {
+            this._batch_read_page_positions();
+        }
+        const page_tops = this._page_positions.tops;
+        const page_heights = this._page_positions.heights;
+
         const visible_pages = [];
         const prerender_pages = [];
 
         for (let i = 0; i < this.page_manager.pages_list.length; i++) {
             const page_data = this.page_manager.pages_list[i];
-            if (!page_data.page_element) continue;
+            if (!page_data?.page_element) continue;
 
-            const page_el = page_data.page_element;
-            const page_top = page_el.offsetTop;
-            const page_bottom = page_top + page_el.offsetHeight;
+            const page_top = page_tops[i] ?? 0;
+            const page_bottom = page_top + (page_heights[i] ?? 0);
 
             // visual_y = wrapper_top + offsetTop * scale（canvas_y 已包含在 wrapper_top 中）
             const visual_top = wrapper_top + page_top * s;
@@ -864,6 +933,20 @@ class DocumentReaderManager {
                     this.batch_draw._tileRenderer = pd.tile_renderer;
                 }
             }
+        }
+
+        // 去抖文档级 cleanup（滚动停止约 3 秒后释放 PDF.js 内部缓存）
+        const active_folder = window.state?.fileList?.[this.folder_index];
+        if (active_folder?.pdfDoc?.cleanup) {
+            if (this._doc_cleanup_timer !== null) {
+                clearTimeout(this._doc_cleanup_timer);
+            }
+            this._doc_cleanup_timer = setTimeout(() => {
+                this._doc_cleanup_timer = null;
+                try {
+                    active_folder.pdfDoc.cleanup();
+                } catch (_) {}
+            }, 3000);
         }
     }
 
@@ -1070,6 +1153,10 @@ class DocumentReaderManager {
             page_data._visible_init_timeout = null;
         }
 
+        // 不再取消正在进行的 PDF 渲染任务（取消会导致 tempCanvas 泄露 + 竞态条件）
+        // 改为由渲染完成后的 is_visible 检查跳过 swap，渲染自然结束并归还 canvas
+        page_data.pdf_render_promise = null;
+
         // 离开视口后延迟释放页面 GPU 资源（防抖动 + requestIdleCallback 降 GPU 峰值）
         if (this._page_visible_timeout_id !== null) {
             clearTimeout(this._page_visible_timeout_id);
@@ -1271,6 +1358,25 @@ class DocumentReaderManager {
         // blob URL 保留在 dataset.src，页面再次可见时复用；移除 src 后浏览器可回收解码纹理。
     }
 
+    // ====== Canvas 池（复用离屏 canvas，减少 GC 压力） ======
+
+    _acquire_temp_canvas(width, height) {
+        let canvas = this._canvas_pool.pop();
+        if (!canvas) {
+            canvas = document.createElement('canvas');
+        }
+        canvas.width = Math.ceil(width);
+        canvas.height = Math.ceil(height);
+        return canvas;
+    }
+
+    _release_temp_canvas(canvas) {
+        if (!canvas) return;
+        if (this._canvas_pool.length < this._canvas_pool_max) {
+            this._canvas_pool.push(canvas);
+        }
+    }
+
     _create_pdf_page_layers(page_data) {
         const page_el = page_data?.page_element;
         if (!page_el) return;
@@ -1349,7 +1455,11 @@ class DocumentReaderManager {
                 page_data.pdf_render_task = null;
             }
 
-            const pdf_page = await folder.pdfDoc.getPage(page_data.page_num);
+            let pdf_page = this._pdf_page_cache.get(page_index);
+            if (!pdf_page) {
+                pdf_page = await folder.pdfDoc.getPage(page_data.page_num);
+                this._pdf_page_cache.set(page_index, pdf_page);
+            }
             try {
                 const base_viewport = pdf_page.getViewport({ scale: 1 });
                 const css_scale = css_w / base_viewport.width;
@@ -1372,41 +1482,48 @@ class DocumentReaderManager {
                 const css_h_px = Math.ceil(css_viewport.height) + 'px';
 
                 // 离屏预渲染：先渲染到临时 canvas，保留显示 canvas 旧内容避免白屏
-                const tempCanvas = document.createElement('canvas');
-                tempCanvas.width = render_w;
-                tempCanvas.height = render_h;
-                const tempCtx = tempCanvas.getContext('2d', { alpha: false });
-                tempCtx.setTransform(1, 0, 0, 1, 0, 0);
-                tempCtx.fillStyle = '#fff';
-                tempCtx.fillRect(0, 0, render_w, render_h);
+                const tempCanvas = this._acquire_temp_canvas(render_w, render_h);
+                try {
+                    const tempCtx = tempCanvas.getContext('2d', { alpha: false });
+                    tempCtx.setTransform(1, 0, 0, 1, 0, 0);
+                    tempCtx.fillStyle = '#fff';
+                    tempCtx.fillRect(0, 0, render_w, render_h);
 
-                const render_task = pdf_page.render({
-                    canvasContext: tempCtx,
-                    viewport: render_viewport
-                });
-                page_data.pdf_render_task = render_task;
-                await render_task.promise;
-                page_data.pdf_render_task = null;
+                    const render_task = pdf_page.render({
+                        canvasContext: tempCtx,
+                        viewport: render_viewport,
+                        annotationMode: 0
+                    });
+                    page_data.pdf_render_task = render_task;
+                    await render_task.promise;
+                    page_data.pdf_render_task = null;
 
-                // 渲染完成后原子交换到显示 canvas（resize + drawImage 在同一帧完成）
-                canvas.width = render_w;
-                canvas.height = render_h;
-                const ctx = canvas.getContext('2d', { alpha: false });
-                ctx.setTransform(1, 0, 0, 1, 0, 0);
-                ctx.drawImage(tempCanvas, 0, 0);
-                canvas.style.width = css_w_px;
-                canvas.style.height = css_h_px;
+                    // 页面已不在视口 → 跳过 swap，保留旧内容（后续 virtualization 会清理）
+                    if (!page_data.is_visible && !is_prerender) return;
 
-                // 首个页面渲染完成时隐藏加载指示
-                if (!this._has_rendered_first_page) {
-                    this._has_rendered_first_page = true;
-                    this._hide_reader_loading();
+                    // 渲染完成后原子交换到显示 canvas（resize + drawImage 在同一帧完成）
+                    canvas.width = render_w;
+                    canvas.height = render_h;
+                    const ctx = canvas.getContext('2d', { alpha: false });
+                    ctx.setTransform(1, 0, 0, 1, 0, 0);
+                    ctx.drawImage(tempCanvas, 0, 0);
+                    canvas.style.width = css_w_px;
+                    canvas.style.height = css_h_px;
+
+                    // 首个页面渲染完成时隐藏加载指示
+                    if (!this._has_rendered_first_page) {
+                        this._has_rendered_first_page = true;
+                        this._hide_reader_loading();
+                    }
+
+                    page_data.pdf_render_css_width = css_w;
+                    page_data.pdf_render_dpr = target_dpr;
+                } finally {
+                    // 确保 tempCanvas 始终归还池中，避免泄露
+                    this._release_temp_canvas(tempCanvas);
                 }
-
-                page_data.pdf_render_css_width = css_w;
-                page_data.pdf_render_dpr = target_dpr;
             } finally {
-                pdf_page.cleanup?.();
+                // 缓存页不 cleanup，保持内部数据热就绪；移除缓存时才释放
             }
         })();
 
@@ -1419,6 +1536,62 @@ class DocumentReaderManager {
             }
         } finally {
             page_data.pdf_render_promise = null;
+        }
+    }
+
+    /** 空闲时间预加载附近页面的 PDFPage 到缓存，减少后续滚动/缩放时的 getPage() 延迟 */
+    _idle_preload_pages(center_page) {
+        const folder = window.state?.fileList?.[this.folder_index];
+        if (!folder?.pdfDoc?.getPage) return;
+
+        const preload_fn = () => {
+            const total = this.page_manager?.pages_list?.length || 0;
+            if (total === 0) return;
+
+            const radius = 10; // 前后各 10 页，共 21 页
+            const start = Math.max(0, center_page - radius);
+            const end = Math.min(total - 1, center_page + radius);
+            const pages_to_load = [];
+            for (let i = start; i <= end; i++) {
+                if (!this._pdf_page_cache.has(i)) {
+                    const pd = this.page_manager.pages_list[i];
+                    if (pd?.render_mode === 'pdfjs') {
+                        pages_to_load.push(i);
+                    }
+                }
+            }
+
+            // 分批加载，每批并发 3 个，避免阻塞主线程
+            const batch_size = 3;
+            const load_batch = async (indices) => {
+                for (let i = 0; i < indices.length; i += batch_size) {
+                    const batch = indices.slice(i, i + batch_size);
+                    await Promise.all(batch.map(async (idx) => {
+                        if (this._pdf_page_cache.has(idx)) return;
+                        if (!this.is_open) return;
+                        const pd = this.page_manager.pages_list[idx];
+                        if (!pd) return;
+                        try {
+                            const pdf_page = await folder.pdfDoc.getPage(pd.page_num);
+                            if (this.is_open) {
+                                this._pdf_page_cache.set(idx, pdf_page);
+                            } else {
+                                pdf_page.cleanup?.();
+                            }
+                        } catch (_) {
+                            // 单个页面加载失败不影响其他页
+                        }
+                    }));
+                }
+            };
+
+            load_batch(pages_to_load);
+        };
+
+        if (window.requestIdleCallback) {
+            window.requestIdleCallback(preload_fn, { timeout: 3000 });
+        } else {
+            setTimeout(preload_fn, 500);
         }
     }
 
@@ -1435,6 +1608,13 @@ class DocumentReaderManager {
             page_data.pdf_canvas.height = 0;
         }
         page_data.pdf_render_css_width = 0;
+
+        // 释放缓存的 PDFPage 对象
+        const cached = this._pdf_page_cache.get(page_index);
+        if (cached) {
+            cached.cleanup?.();
+            this._pdf_page_cache.delete(page_index);
+        }
     }
 
     _release_page_blob_url(page_index) {
@@ -1510,6 +1690,9 @@ class DocumentReaderManager {
 
         page_data.page_element.style.width = safe_w + 'px';
         page_data.page_element.style.height = safe_h + 'px';
+
+        // 页面尺寸变更影响所有后续页面的 offsetTop，标记缓存脏
+        this._invalidate_page_positions();
 
         const img = page_data.page_element.querySelector('img');
         if (img) {
@@ -1643,9 +1826,27 @@ class DocumentReaderManager {
         history_state.redo_list.forEach(scale_command);
     }
 
+    /** 确保页面 tile 已初始化（延迟创建的页面在首次绘制前调用） */
+    _ensure_page_tiles(page_index) {
+        const page_data = this.page_manager.pages_list[page_index];
+        if (!page_data?._tiles_deferred) return;
+        page_data._tiles_deferred = false;
+        page_data.is_tiles_initialized = false;
+        page_data._tiles_force = true;
+        this._init_page_tiles(page_index);
+        page_data._tiles_force = false;
+    }
+
     _init_page_tiles(page_index) {
         const page_data = this.page_manager.pages_list[page_index];
         if (!page_data || page_data.is_tiles_initialized) return;
+
+        // 无批注时延迟创建 tile（节省 GPU 显存和 DOM 节点），首次落笔时真正初始化
+        if (page_data.stroke_history.length === 0 && !page_data._tiles_force) {
+            page_data.is_tiles_initialized = true;
+            page_data._tiles_deferred = true;
+            return;
+        }
 
         const tiles_container = page_data.page_element?.querySelector('.doc-reader-page-tiles');
         if (!tiles_container) return;
@@ -2109,6 +2310,10 @@ class DocumentReaderManager {
             const inv = this.dr_cached_inv_scale;
             this.last_x = (e.clientX - rect.left) * inv;
             this.last_y = (e.clientY - rect.top) * inv;
+
+            // 首次绘制前确保 tile 已初始化（无批注页延迟创建）
+            this._ensure_page_tiles(this.active_page_index);
+
             this._start_stroke(this.draw_mode === 'comment' ? 'draw' : 'erase');
         }
     }
@@ -2317,6 +2522,13 @@ class DocumentReaderManager {
                     const tr = page.tile_renderer;
                     tr._strokeHistoryRef = page.stroke_history;
                     tr.add_stroke(this.current_stroke);
+                } else if (page._tiles_deferred) {
+                    // 延迟创建的 tile 在落笔后初始化
+                    this._ensure_page_tiles(this.active_page_index);
+                    if (page.tile_renderer) {
+                        page.tile_renderer._strokeHistoryRef = page.stroke_history;
+                        page.tile_renderer.add_stroke(this.current_stroke);
+                    }
                 }
             }
         }
@@ -3111,7 +3323,10 @@ class DocumentReaderManager {
             return;
         }
 
-        const pdf_page = await folder.pdfDoc.getPage(page.page_num);
+        let pdf_page = this._pdf_page_cache.get(page_index);
+        if (!pdf_page) {
+            pdf_page = await folder.pdfDoc.getPage(page.page_num);
+        }
         try {
             const base_viewport = pdf_page.getViewport({ scale: 1 });
             // 使用更小的渲染尺寸以提高性能
@@ -3163,7 +3378,10 @@ class DocumentReaderManager {
                 canvas.closest('.dr-page-sidebar-item')?.classList.remove('loading');
             }
         } finally {
-            pdf_page.cleanup?.();
+            // 只在非缓存页 cleanup（缓存页保持内部数据就绪）
+            if (!this._pdf_page_cache.has(page_index)) {
+                pdf_page.cleanup?.();
+            }
         }
     }
 

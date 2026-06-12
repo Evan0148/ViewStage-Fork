@@ -33,7 +33,8 @@
     "processingPage": "正在處理 {current}/{total} 頁",
     "readingImage": "正在讀取圖片 {current}/{total}...",
     "readingImages": "正在讀取圖片...",
-    "generatingThumbnails": "正在平行產生縮圖..."
+    "generatingThumbnails": "正在平行產生縮圖...",
+    "rendering": "正在渲染..."
   },
   "sidebar": {
     "imageList": "圖片列表",

@@ -33,7 +33,8 @@
     "processingPage": "Processing {current}/{total} pages",
     "readingImage": "Reading image {current}/{total}...",
     "readingImages": "Reading images...",
-    "generatingThumbnails": "Generating thumbnails in parallel..."
+    "generatingThumbnails": "Generating thumbnails in parallel...",
+    "rendering": "Rendering..."
   },
   "sidebar": {
     "imageList": "Images",

@@ -9,7 +9,9 @@
  */
 export function init_pdfjs() {
     if (window.pdfjsLib) {
-        window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'modules/pdf/pdf.worker.min.js';
+        window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'modules/pdf/pdf.worker.min.mjs';
+        // 抑制 PDF.js 的 CMap/ToUnicode 警告（不影响功能）
+        window.pdfjsLib.verbosity = 0;
         return true;
     }
     console.warn('[DocLoader] PDF.js 库未加载');
@@ -68,7 +70,7 @@ export async function get_pdf_page_info(pdf, page_num, doc_number) {
  */
 export async function render_pdf_pages_lazy(pdf, total_pages, initial_pages = 3, doc_number = null) {
     const pages = [];
-    const BATCH_SIZE = 4;
+    const BATCH_SIZE = 8;
 
     for (let i = 1; i <= total_pages; i += BATCH_SIZE) {
         const batch_end = Math.min(i + BATCH_SIZE, total_pages + 1);
