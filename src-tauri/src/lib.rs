@@ -101,7 +101,11 @@ impl AppPaths {
         let data_dir = app.path().app_data_dir()
             .map_err(|e| format!("Failed to get data dir: {}", e))?;
         let pictures_dir = dirs::picture_dir()
-            .ok_or("Failed to get pictures directory")?.join("ViewStage");
+            .unwrap_or_else(|| {
+                log::warn!("无法获取系统图片目录，回退到 config_dir/pictures");
+                config_dir.join("pictures")
+            })
+            .join("ViewStage");
 
         Ok(Self {
             log_dir: config_dir.join("log"),
@@ -413,7 +417,11 @@ fn dir_fetch_config(app: tauri::AppHandle) -> Result<String, String> {
             .map_err(|e| format!("Failed to create config dir: {}", e))?;
     }
     
-    Ok(paths.config_dir.to_string_lossy().to_string())
+    let config_dir_str = paths.config_dir.to_string_lossy().to_string();
+    if config_dir_str.is_empty() {
+        return Err("配置目录路径为空".to_string());
+    }
+    Ok(config_dir_str)
 }
 
 /// Tauri IPC 命令：获取日志目录
@@ -433,7 +441,7 @@ fn dir_fetch_log(app: tauri::AppHandle) -> Result<String, String> {
 #[tauri::command]
 fn dir_fetch_pictures_viewstage() -> Result<String, String> {
     let pictures_dir = dirs::picture_dir()
-        .ok_or("Failed to get pictures directory")?;
+        .unwrap_or_else(|| std::path::PathBuf::from("."));
     
     let cds_dir = pictures_dir.join("ViewStage");
     
@@ -1474,7 +1482,15 @@ fn config_validate_and_merge(
         for (key, value) in existing_obj {
             if let Some(default_val) = defaults_obj.get(key) {
                 if json_type_name(value) == json_type_name(default_val) {
-                    merged.insert(key.clone(), value.clone());
+                    if !config_sanitize_value(key, value) {
+                        log::warn!(
+                            "配置项 '{}' 数值异常 ({}), 已恢复默认值",
+                            key, value
+                        );
+                        recovered.push(key.clone());
+                    } else {
+                        merged.insert(key.clone(), value.clone());
+                    }
                 } else {
                     log::warn!(
                         "配置项 '{}' 类型异常 (期望 {}, 实际 {})，已恢复默认值",
@@ -1493,6 +1509,69 @@ fn config_validate_and_merge(
     defaults.clone()
 }
 
+/// 对特定配置字段做数值范围检测。返回 true 表示数值在合理范围内，false 表示异常。
+fn config_sanitize_value(key: &str, value: &serde_json::Value) -> bool {
+    match key {
+        "cameraWidth" | "cameraHeight" => {
+            value.as_f64().is_some_and(|n| n >= 16.0 && n <= 7680.0)
+        }
+        "dprLimit" | "dprMin" | "dprMax" => {
+            value.as_f64().is_some_and(|n| n >= 0.5 && n <= 16.0)
+        }
+        "dprStep" => {
+            value.as_f64().is_some_and(|n| n >= 0.1 && n <= 4.0)
+        }
+        "overlayDpr" => {
+            value.as_f64().is_some_and(|n| n >= 0.25 && n <= 8.0)
+        }
+        "canvasScale" => {
+            value.as_f64().is_some_and(|n| n >= 0.5 && n <= 8.0)
+        }
+        "defaultRotation" => {
+            value.as_f64().is_some_and(|n| {
+                let n = n as i64;
+                n >= 0 && n <= 360
+            })
+        }
+        "contrast" => {
+            value.as_f64().is_some_and(|n| n >= 0.0 && n <= 5.0)
+        }
+        "brightness" | "sharpen" => {
+            value.as_f64().is_some_and(|n| n >= -255.0 && n <= 255.0)
+        }
+        "saturation" => {
+            value.as_f64().is_some_and(|n| n >= 0.0 && n <= 5.0)
+        }
+        "moveFps" | "drawFps" => {
+            value.as_f64().is_some_and(|n| n >= 1.0 && n <= 120.0)
+        }
+        "smoothStrength" => {
+            value.as_f64().is_some_and(|n| n >= 0.0 && n <= 2.0)
+        }
+        "autoClearCacheDays" => {
+            value.as_f64().is_some_and(|n| n >= 0.0 && n <= 3650.0)
+        }
+        "penMinWidthRatio" => {
+            value.as_f64().is_some_and(|n| n >= 0.0 && n <= 1.0)
+        }
+        "penWidth" | "eraserSize" => {
+            value.as_f64().is_some_and(|n| n >= 0.5 && n <= 500.0)
+        }
+        "maxScaleImage" => {
+            value.as_f64().is_some_and(|n| n >= 1.0 && n <= 20.0)
+        }
+        "gestureFrameDelta" => {
+            value.as_f64().is_some_and(|n| n >= 1.0 && n <= 500.0)
+        }
+        "penTailDuration" => {
+            value.as_f64().is_some_and(|n| n >= 0.0 && n <= 2000.0)
+        }
+        _ => true,
+    }
+}
+
+/// settings_fetch_all 命令的返回结构
+
 /// settings_fetch_all 命令的返回结构
 #[derive(Serialize)]
 struct SettingsResult {
@@ -1509,6 +1588,13 @@ struct SettingsResult {
 async fn settings_fetch_all(app: tauri::AppHandle) -> Result<SettingsResult, String> {
     let paths = AppPaths::new(&app)?;
     let config_path = &paths.config_path;
+    
+    // 确保配置目录存在（首次启动或异常删除后防御）
+    if !paths.config_dir.exists() {
+        if let Err(e) = std::fs::create_dir_all(&paths.config_dir) {
+            log::warn!("创建配置目录失败: {}", e);
+        }
+    }
     
     let default_config = config_fetch_default();
     

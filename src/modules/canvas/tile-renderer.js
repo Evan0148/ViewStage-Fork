@@ -83,6 +83,11 @@ class TileRenderer {
         const keys = this.get_visible_keys();
         let changed = false;
         let visibleChanged = false;
+        // 检测是否存在：
+        //   1) 可见瓦片 DPR 与目标不匹配（需升级或降级）
+        //   2) 非可见瓦片 DPR > 1（需缩减至 1 以节约 GPU 内存）
+        //   3) 非可见瓦片 DPR 低于目标值（被 idle-shrink 降为 1 后重新进入视野
+        //      时需要升级）－ 修复动态分辨率在纯平移后不生效的问题
         for (const info of this.tileInfos) {
             if (keys.has(info.key)) {
                 if (info.dpr !== targetDpr) {
@@ -90,7 +95,7 @@ class TileRenderer {
                     visibleChanged = true;
                     break;
                 }
-            } else if (info.dpr > 1) {
+            } else if (info.dpr > 1 || info.dpr < targetDpr) {
                 changed = true; break;
             }
         }

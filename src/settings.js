@@ -135,7 +135,8 @@ document.addEventListener('DOMContentLoaded', async () => {
             try {
                 const { invoke } = window.__TAURI__.core;
                 const result = await invoke('settings_fetch_all');
-                const settings = result.settings;
+                const settings = (result && typeof result === 'object' && result.settings)
+                    ? result.settings : {};
                 
                 const selectSelected = document.getElementById('selectSelected');
                 const languageOptions = document.querySelectorAll('#selectOptions .select-option');

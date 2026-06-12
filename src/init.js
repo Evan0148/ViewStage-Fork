@@ -154,9 +154,12 @@ async function settings_load_camera_config() {
             const state = window.state;
             const DRAW_CONFIG = window.DRAW_CONFIG;
             const result = await invoke('settings_fetch_all');
-            const settings = result.settings;
 
-            if (result.recovered?.length) {
+            // 容错：后端返回异常时使用空对象，避免 settings 访问崩溃
+            const settings = (result && typeof result === 'object' && result.settings)
+                ? result.settings : {};
+
+            if (result && result.recovered?.length) {
                 show_config_recovery_dialog(result.recovered);
             }
 
@@ -165,60 +168,73 @@ async function settings_load_camera_config() {
             }
 
             if (settings.cameraWidth && settings.cameraHeight) {
-                state.cameraWidth = settings.cameraWidth;
-                state.cameraHeight = settings.cameraHeight;
+                state.cameraWidth = Number(settings.cameraWidth) || 1280;
+                state.cameraHeight = Number(settings.cameraHeight) || 720;
             }
 
             if (settings.defaultRotation !== undefined) {
-                state.cameraRotation = settings.defaultRotation;
+                state.cameraRotation = Number(settings.defaultRotation) || 0;
             }
 
             // Do not load brightness/contrast from saved settings — session-only controls
 
             if (settings.dprLimit !== undefined) {
-                DRAW_CONFIG.dprLimit = settings.dprLimit;
+                DRAW_CONFIG.dprLimit = Number(settings.dprLimit) || 2;
                 DRAW_CONFIG.baseDpr = window.devicePixelRatio || 1;
                 DRAW_CONFIG.dpr = window.main_calc_capped_dpr(DRAW_CONFIG.baseDpr, DRAW_CONFIG.dprLimit);
             }
 
             if (settings.dynamicDprEnabled !== undefined) {
-                DRAW_CONFIG.dynamicDprEnabled = settings.dynamicDprEnabled;
+                DRAW_CONFIG.dynamicDprEnabled = !!settings.dynamicDprEnabled;
             }
             if (settings.dprMin !== undefined) {
-                DRAW_CONFIG.dprMin = settings.dprMin;
+                DRAW_CONFIG.dprMin = Number(settings.dprMin) || 1;
             }
             if (settings.dprMax !== undefined) {
-                DRAW_CONFIG.dprMax = settings.dprMax;
+                DRAW_CONFIG.dprMax = Number(settings.dprMax) || 4;
             }
             if (settings.dprStep !== undefined) {
-                DRAW_CONFIG.dprStep = settings.dprStep;
+                DRAW_CONFIG.dprStep = Number(settings.dprStep) || 0.5;
             }
             if (settings.overlayDpr !== undefined) {
-                DRAW_CONFIG.overlayDpr = settings.overlayDpr;
+                DRAW_CONFIG.overlayDpr = Number(settings.overlayDpr) || 1;
             }
 
             if (settings.penWidth !== undefined) {
-                DRAW_CONFIG.penWidth = settings.penWidth;
+                DRAW_CONFIG.penWidth = Number(settings.penWidth) || 5;
             }
             if (settings.eraserSize !== undefined) {
-                DRAW_CONFIG.eraserSize = settings.eraserSize;
+                DRAW_CONFIG.eraserSize = Number(settings.eraserSize) || 15;
             }
 
             if (settings.penColors && Array.isArray(settings.penColors)) {
                 DRAW_CONFIG.penColors = settings.penColors.map(color => {
-                    if (typeof color === 'object' && color.r !== undefined) {
-                        return window.main_calc_rgb_to_hex(color.r, color.g, color.b);
+                    if (typeof color === 'object' && color !== null) {
+                        const r = Number(color.r) || 0;
+                        const g = Number(color.g) || 0;
+                        const b = Number(color.b) || 0;
+                        return window.main_calc_rgb_to_hex(r, g, b);
                     }
-                    return color;
+                    return typeof color === 'string' ? color : '#000000';
                 });
                 window.main_update_color_buttons();
             }
             if (settings.penSizePresets && Array.isArray(settings.penSizePresets)) {
-                DRAW_CONFIG.penSizePresets = settings.penSizePresets;
+                DRAW_CONFIG.penSizePresets = settings.penSizePresets
+                    .map(v => Number(v))
+                    .filter(v => v > 0 && v < 500);
+                if (DRAW_CONFIG.penSizePresets.length === 0) {
+                    DRAW_CONFIG.penSizePresets = [2, 5, 10, 15, 21];
+                }
             }
 
             if (settings.eraserSizePresets && Array.isArray(settings.eraserSizePresets)) {
-                DRAW_CONFIG.eraserSizePresets = settings.eraserSizePresets;
+                DRAW_CONFIG.eraserSizePresets = settings.eraserSizePresets
+                    .map(v => Number(v))
+                    .filter(v => v > 0 && v < 500);
+                if (DRAW_CONFIG.eraserSizePresets.length === 0) {
+                    DRAW_CONFIG.eraserSizePresets = [5, 15, 25, 38, 50];
+                }
             }
 
             if (settings.frameRateMode !== undefined) {
@@ -232,11 +248,13 @@ async function settings_load_camera_config() {
             }
 
             if (settings.eraserSpeedEnabled !== undefined) {
-                DRAW_CONFIG.eraserSpeedEnabled = settings.eraserSpeedEnabled;
+                DRAW_CONFIG.eraserSpeedEnabled = !!settings.eraserSpeedEnabled;
             }
 
             const themeName = settings.theme || 'com.viewstage.theme.simplify';
-            await ThemeManager.theme_update_active(themeName);
+            if (typeof themeName === 'string' && themeName) {
+                await ThemeManager.theme_update_active(themeName);
+            }
 
             const canvasBgColor = ThemeManager.theme_fetch_canvas_bg_color();
             DRAW_CONFIG.canvasBgColor = canvasBgColor;
@@ -273,24 +291,24 @@ async function settings_load_camera_config() {
                 window.__eraserSpeed = null;
             }
 
-            DRAW_CONFIG.developerMode = settings.developerMode || false;
+            DRAW_CONFIG.developerMode = !!settings.developerMode;
             if (settings.developerMode && settings.penMinWidthRatio !== undefined) {
-                DRAW_CONFIG.penMinWidthRatio = settings.penMinWidthRatio;
+                DRAW_CONFIG.penMinWidthRatio = Number(settings.penMinWidthRatio) || 0.2;
             }
             if (settings.developerMode && settings.maxScaleImage !== undefined) {
-                DRAW_CONFIG.maxScaleImage = settings.maxScaleImage;
+                DRAW_CONFIG.maxScaleImage = Number(settings.maxScaleImage) || 3;
             }
             if (settings.developerMode && settings.gestureFrameDelta !== undefined) {
-                DRAW_CONFIG.gestureFrameDelta = settings.gestureFrameDelta;
+                DRAW_CONFIG.gestureFrameDelta = Number(settings.gestureFrameDelta) || 60;
             }
             if (settings.developerMode && settings.penTailDuration !== undefined) {
-                DRAW_CONFIG.penTailDuration = settings.penTailDuration;
+                DRAW_CONFIG.penTailDuration = Number(settings.penTailDuration) || 0;
             }
             // 仅在开发者模式下才检查并加载性能监视器
             if (settings.developerMode && settings.perfMonitorEnabled) {
                 try {
                     window.perfMonitor = await import('./modules/developer/perf-monitor.js');
-                    window.perfMonitor.perf_monitor_init(settings.perfMonitorInterval || 200);
+                    window.perfMonitor.perf_monitor_init(Number(settings.perfMonitorInterval) || 200);
                 } catch (e) {
                     console.error('[init] perf monitor load error:', e);
                 }
@@ -487,8 +505,9 @@ async function main_init_all() {
             setTimeout(() => {
                 // 检查是否启用了恢复上次文档状态
                 window.__TAURI__.core.invoke('settings_fetch_all').then(result => {
-                    const settings = result?.settings;
-                    window.__restoreLastDocEnabled = settings?.restoreLastDoc !== false;
+                    const settings = (result && typeof result === 'object' && result.settings)
+                        ? result.settings : {};
+                    window.__restoreLastDocEnabled = settings.restoreLastDoc !== false;
                     if (window.__restoreLastDocEnabled) {
                         window.documentReaderManager.restore_last_document().catch(e => {
                             console.log('[init] 恢复上次文档失败:', e);
