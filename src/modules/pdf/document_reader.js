@@ -113,7 +113,7 @@ class DocumentReaderManager {
         this._adaptive_dpr_enabled = true;
 
         // 懒文本层（启用后渲染 PDF 文本层，支持文字选中、复制和无障碍）
-        this._text_layer_enabled = true;
+        this._text_layer_enabled = false;
 
         // 已初始化 tile 的页面索引集合（_dr_apply_scale 仅遍历此集合，跳过无 tile 页面）
         this._pages_with_tiles = new Set();
