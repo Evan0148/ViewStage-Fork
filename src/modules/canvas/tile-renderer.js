@@ -238,11 +238,29 @@ class TileRenderer {
         const ctx = info.ctx;
         if (!canvas || !ctx) return;
 
+        // 保存旧内容，resize 后作为占位图写入，避免 clear → rebuild 间的白屏
+        let snapshot = null;
+        if (canvas.width > 0 && canvas.height > 0) {
+            snapshot = document.createElement('canvas');
+            snapshot.width = canvas.width;
+            snapshot.height = canvas.height;
+            snapshot.getContext('2d').drawImage(canvas, 0, 0);
+        }
+
         canvas.width = Math.ceil(info.rect.width * newDpr);
         canvas.height = Math.ceil(info.rect.height * newDpr);
         ctx.imageSmoothingEnabled = false;
         ctx.lineCap = 'round';
         ctx.lineJoin = 'round';
+
+        // 写入旧内容（scaled）作为占位图，rebuild_tile 会覆盖精确内容
+        if (snapshot) {
+            ctx.save();
+            ctx.imageSmoothingEnabled = true;
+            ctx.drawImage(snapshot, 0, 0, canvas.width, canvas.height);
+            ctx.restore();
+            ctx.imageSmoothingEnabled = false;
+        }
 
         info.dpr = newDpr;
         this.dirty.add(info.key);

@@ -1370,31 +1370,44 @@ class DocumentReaderManager {
                 const text_layer = page_data.pdf_text_layer;
                 if (!canvas) return;
 
-                canvas.width = Math.ceil(render_viewport.width);
-                canvas.height = Math.ceil(render_viewport.height);
-                canvas.style.width = Math.ceil(css_viewport.width) + 'px';
-                canvas.style.height = Math.ceil(css_viewport.height) + 'px';
+                const render_w = Math.ceil(render_viewport.width);
+                const render_h = Math.ceil(render_viewport.height);
+                const css_w_px = Math.ceil(css_viewport.width) + 'px';
+                const css_h_px = Math.ceil(css_viewport.height) + 'px';
 
                 // 文本层仅在启用时操作（默认关闭节省内存）
                 if (this._text_layer_enabled && text_layer) {
                     text_layer.replaceChildren();
-                    text_layer.style.width = Math.ceil(css_viewport.width) + 'px';
-                    text_layer.style.height = Math.ceil(css_viewport.height) + 'px';
+                    text_layer.style.width = css_w_px;
+                    text_layer.style.height = css_h_px;
                     text_layer.style.setProperty('--scale-factor', css_scale);
                 }
 
-                const ctx = canvas.getContext('2d', { alpha: false });
-                ctx.setTransform(1, 0, 0, 1, 0, 0);
-                ctx.fillStyle = '#fff';
-                ctx.fillRect(0, 0, canvas.width, canvas.height);
+                // 离屏预渲染：先渲染到临时 canvas，保留显示 canvas 旧内容避免白屏
+                const tempCanvas = document.createElement('canvas');
+                tempCanvas.width = render_w;
+                tempCanvas.height = render_h;
+                const tempCtx = tempCanvas.getContext('2d', { alpha: false });
+                tempCtx.setTransform(1, 0, 0, 1, 0, 0);
+                tempCtx.fillStyle = '#fff';
+                tempCtx.fillRect(0, 0, render_w, render_h);
 
                 const render_task = pdf_page.render({
-                    canvasContext: ctx,
+                    canvasContext: tempCtx,
                     viewport: render_viewport
                 });
                 page_data.pdf_render_task = render_task;
                 await render_task.promise;
                 page_data.pdf_render_task = null;
+
+                // 渲染完成后原子交换到显示 canvas（resize + drawImage 在同一帧完成）
+                canvas.width = render_w;
+                canvas.height = render_h;
+                const ctx = canvas.getContext('2d', { alpha: false });
+                ctx.setTransform(1, 0, 0, 1, 0, 0);
+                ctx.drawImage(tempCanvas, 0, 0);
+                canvas.style.width = css_w_px;
+                canvas.style.height = css_h_px;
 
                 // 文本层渲染仅在启用时执行（getTextContent + renderTextLayer 开销较大）
                 // 预渲染时跳过文本层
