@@ -4,6 +4,7 @@
  * 工具栏全部在右侧，支持 IntersectionObserver 懒加载
  */
 
+import { InputSource, PinchZoomSource } from '../../gesture/index.js';
 import { DocumentReaderPageManager } from './document_reader_page.js';
 import {
     history_execute_command,
@@ -86,8 +87,8 @@ class DocumentReaderManager {
         this.dr_start_drag_x = 0;
         this.dr_start_drag_y = 0;
         this.dr_start_scale = 1;
-        this.dr_start_scale_x = 0;
-        this.dr_start_scale_y = 0;
+        this.dr_start_finger0_cx = 0;
+        this.dr_start_finger0_cy = 0;
         this.dr_start_canvas_x = 0;
         this.dr_start_canvas_y = 0;
         this.dr_start_distance_sq = 0;
@@ -111,6 +112,10 @@ class DocumentReaderManager {
 
         // 自适应 DPR（按缩放级别 + 内存压力动态降级，减少 4K 屏幕 GPU 显存占用）
         this._adaptive_dpr_enabled = true;
+
+        // gesture 模块实例
+        this._input_source = null;
+        this._pinch_source = null;
 
 
         // 已初始化 tile 的页面索引集合（_dr_apply_scale 仅遍历此集合，跳过无 tile 页面）
@@ -281,12 +286,8 @@ class DocumentReaderManager {
             this._resize_raf_id = null;
         }
 
-        // 清理触摸手势动画 rAF
-        if (this._touch_raf_id !== null) {
-            cancelAnimationFrame(this._touch_raf_id);
-            this._touch_raf_id = null;
-        }
-        this._touch_pending_data = null;
+        // 清理 gesture 模块
+        this._teardown_gesture();
 
         if (this._wheel_raf_id !== null) {
             cancelAnimationFrame(this._wheel_raf_id);
@@ -304,43 +305,6 @@ class DocumentReaderManager {
 
         // 清理预渲染队列
         this._cancel_prerender();
-
-        // 移除滚动容器上的绘制/缩放事件监听器，防止内存泄漏
-        if (this._scroll_container) {
-            if (window.PointerEvent) {
-                if (this._bound_handle_pointer_down) {
-                    this._scroll_container.removeEventListener('pointerdown', this._bound_handle_pointer_down);
-                    this._scroll_container.removeEventListener('pointermove', this._bound_handle_pointer_move);
-                    this._scroll_container.removeEventListener('pointerup', this._bound_handle_pointer_up);
-                    this._scroll_container.removeEventListener('pointerleave', this._bound_handle_pointer_up);
-                    this._scroll_container.removeEventListener('pointercancel', this._bound_handle_pointer_up);
-                    this._bound_handle_pointer_down = null;
-                    this._bound_handle_pointer_move = null;
-                    this._bound_handle_pointer_up = null;
-                }
-            } else {
-                if (this._bound_handle_mouse_down) {
-                    this._scroll_container.removeEventListener('mousedown', this._bound_handle_mouse_down);
-                    this._scroll_container.removeEventListener('mousemove', this._bound_handle_mouse_move);
-                    this._scroll_container.removeEventListener('mouseup', this._bound_handle_mouse_up);
-                    this._scroll_container.removeEventListener('mouseleave', this._bound_handle_mouse_up);
-                    this._bound_handle_mouse_down = null;
-                    this._bound_handle_mouse_move = null;
-                    this._bound_handle_mouse_up = null;
-                }
-            }
-            if (this._bound_dr_handle_wheel) {
-                this._scroll_container.removeEventListener('wheel', this._bound_dr_handle_wheel);
-                this._scroll_container.removeEventListener('touchstart', this._bound_dr_handle_touch_start);
-                this._scroll_container.removeEventListener('touchmove', this._bound_dr_handle_touch_move);
-                this._scroll_container.removeEventListener('touchend', this._bound_dr_handle_touch_end);
-                this._scroll_container.removeEventListener('touchcancel', this._bound_dr_handle_touch_end);
-                this._bound_dr_handle_wheel = null;
-                this._bound_dr_handle_touch_start = null;
-                this._bound_dr_handle_touch_move = null;
-                this._bound_dr_handle_touch_end = null;
-            }
-        }
 
         // 移除键盘事件监听器
         if (this._bound_handle_keydown) {
@@ -2108,42 +2072,270 @@ class DocumentReaderManager {
     _setup_events() {
         if (!this._scroll_container) return;
 
-        // 存储绑定引用，确保 close() 时可精确移除
-        if (window.PointerEvent) {
-            this._bound_handle_pointer_down = (e) => this._handle_pointer_down(e);
-            this._bound_handle_pointer_move = (e) => this._handle_pointer_move(e);
-            this._bound_handle_pointer_up = (e) => this._handle_pointer_up(e);
+        const input = new InputSource(this._scroll_container);
+        this._input_source = input;
+        input.attach();
 
-            this._scroll_container.addEventListener('pointerdown', this._bound_handle_pointer_down);
-            this._scroll_container.addEventListener('pointermove', this._bound_handle_pointer_move);
-            this._scroll_container.addEventListener('pointerup', this._bound_handle_pointer_up);
-            this._scroll_container.addEventListener('pointerleave', this._bound_handle_pointer_up);
-            this._scroll_container.addEventListener('pointercancel', this._bound_handle_pointer_up);
-        } else {
-            this._bound_handle_mouse_down = (e) => this._handle_mouse_down(e);
-            this._bound_handle_mouse_move = (e) => this._handle_mouse_move(e);
-            this._bound_handle_mouse_up = (e) => this._handle_mouse_up(e);
+        // ====== 输入事件（绘制、手掌擦除、拖拽平移） ======
+        input.on('inputDown', async (ev) => {
+            if (!this.is_open) return;
+            this._dr_cancel_momentum();
 
-            this._scroll_container.addEventListener('mousedown', this._bound_handle_mouse_down);
-            this._scroll_container.addEventListener('mousemove', this._bound_handle_mouse_move);
-            this._scroll_container.addEventListener('mouseup', this._bound_handle_mouse_up);
-            this._scroll_container.addEventListener('mouseleave', this._bound_handle_mouse_up);
-        }
+            // 手掌擦除 — PointerEvent 路径（触点宽高检测）
+            if (window.PointerEvent && ev.originEvent?.pointerType) {
+                const palmEraser = window.__palmEraser;
+                const palmResult = palmEraser ? palmEraser.is_palm_by_pointer(ev.originEvent) : { isPalm: false, width: 0, height: 0 };
+                if (palmResult.isPalm && (window.DRAW_CONFIG?.palmEraserEnabled !== false)) {
+                    if (this.is_drawing) {
+                        this.is_drawing = false;
+                        this.draw_canvas_rect = null;
+                        await this._submit_stroke();
+                    }
+                    const contactSize = Math.max(palmResult.width, palmResult.height) * palmEraser.PALM_CONFIG.palmSizeMultiplier * palmEraser.PALM_CONFIG.eraserSizeK;
+                    this._start_palm_erase(ev.position.x, ev.position.y, Math.max(40, Math.min(150, contactSize)));
+                    return;
+                }
+            }
 
-        // 缩放事件：滚轮 + 双指触摸（始终注册，PointerEvent 不转发双指事件）
+            // 手掌擦除 — TouchEvent 路径（4+ 触点数）
+            if (!window.PointerEvent && (window.DRAW_CONFIG?.palmEraserEnabled !== false) && ev.originEvent?.touches?.length >= 4) {
+                const palmEraser = window.__palmEraser;
+                if (palmEraser && palmEraser.is_palm_by_touch_count(ev.originEvent.touches)) {
+                    if (this.is_drawing) {
+                        this.is_drawing = false;
+                        this.draw_canvas_rect = null;
+                        await this._submit_stroke();
+                    }
+                    const center = palmEraser.get_palm_center(ev.originEvent.touches);
+                    this._start_palm_erase(center.x, center.y, window.DRAW_CONFIG?.palmEraserSize || 60);
+                    return;
+                }
+            }
+
+            // 非第一指不处理（后续手指留给 PinchZoomSource）
+            if (input.activeCount > 1) return;
+
+            // 页面选择
+            const target = ev.originEvent?.target?.closest?.('.doc-reader-page');
+            if (!target) return;
+            const page_index = parseInt(target.dataset.page);
+            if (isNaN(page_index)) return;
+
+            const page_data = this.page_manager.pages_list[page_index];
+            if (!page_data?.is_tiles_initialized) {
+                this._on_page_visible(page_index);
+            }
+
+            this.active_page_index = page_index;
+            this.page_manager.switch_page(page_index);
+
+            if (this.batch_draw) {
+                this.batch_draw._tileRenderer = page_data?.tile_renderer;
+            }
+
+            this._update_page_indicator();
+            this._sync_page_buttons();
+
+            // 拖拽平移（move 模式）
+            if (this.draw_mode === 'move') {
+                this.dr_is_dragging = true;
+                this.dr_start_drag_x = ev.position.x - this.dr_canvas_x;
+                this.dr_start_drag_y = ev.position.y - this.dr_canvas_y;
+                this._dr_last_canvas_x = this.dr_canvas_x;
+                this._dr_last_canvas_y = this.dr_canvas_y;
+                this._dr_gesture_vx = 0;
+                this._dr_gesture_vy = 0;
+                this._dr_enable_smooth_transform();
+                return;
+            }
+
+            // 批注 / 擦除模式
+            if (this.draw_mode === 'comment' || this.draw_mode === 'eraser') {
+                this.is_drawing = true;
+                if (this._scroll_container) {
+                    this._scroll_container.style.touchAction = 'none';
+                }
+                const rect = target.getBoundingClientRect();
+                this.draw_canvas_rect = rect;
+                const inv = this.dr_cached_inv_scale;
+                this.last_x = (ev.position.x - rect.left) * inv;
+                this.last_y = (ev.position.y - rect.top) * inv;
+                this._ensure_page_tiles(this.active_page_index);
+                this._start_stroke(this.draw_mode === 'comment' ? 'draw' : 'erase');
+            }
+        });
+
+        input.on('inputMove', (ev) => {
+            if (!this.is_open) return;
+
+            if (this.isPalmErasing) {
+                this._update_palm_erase(ev.position.x, ev.position.y);
+                return;
+            }
+
+            // 拖拽平移
+            if (this.dr_is_dragging) {
+                this.dr_canvas_x = ev.position.x - this.dr_start_drag_x;
+                this.dr_canvas_y = ev.position.y - this.dr_start_drag_y;
+                this._dr_update_canvas_position();
+                this._dr_update_gesture_velocity();
+                this._dr_sync_transform();
+                return;
+            }
+
+            if (!this.is_drawing || this.active_page_index < 0) return;
+
+            this.current_pressure = ev.originEvent?.pressure || 0.5;
+
+            if (this.draw_mode === 'eraser') {
+                this._update_eraser_hint_position(ev.position.x, ev.position.y);
+            }
+
+            const page_data = this.page_manager.pages_list[this.active_page_index];
+            if (!page_data?.page_element) return;
+
+            const rect = this.draw_canvas_rect || page_data.page_element.getBoundingClientRect();
+            const inv = this.dr_cached_inv_scale;
+            const x = (ev.position.x - rect.left) * inv;
+            const y = (ev.position.y - rect.top) * inv;
+            const dx = x - this.last_x;
+            const dy = y - this.last_y;
+
+            if (dx * dx + dy * dy > 1) {
+                this._save_stroke_point(this.last_x, this.last_y, x, y, this.current_pressure);
+                if (this.batch_draw && page_data.tile_renderer) {
+                    this.batch_draw.batch_draw_create_command(
+                        this.cached_draw_type, this.last_x, this.last_y, x, y,
+                        this.cached_draw_color, this.cached_draw_line_width
+                    );
+                }
+                this.last_x = x;
+                this.last_y = y;
+            }
+        });
+
+        input.on('inputUp', async (ev) => {
+            if (this.isPalmErasing) {
+                if (input.activeCount < 4) {
+                    await this._end_palm_erase();
+                }
+                return;
+            }
+
+            if (this.dr_is_dragging) {
+                this.dr_is_dragging = false;
+                if (this.draw_mode === 'move' && (Math.abs(this._dr_gesture_vx) > 2 || Math.abs(this._dr_gesture_vy) > 2)) {
+                    this._dr_update_move_bound();
+                    this._dr_update_canvas_position();
+                    this._dr_start_momentum();
+                } else {
+                    this._dr_schedule_disable_smooth_transform();
+                    this._check_page_visibility();
+                }
+                return;
+            }
+
+            if (!this.is_drawing) return;
+            this.is_drawing = false;
+            this.draw_canvas_rect = null;
+            await this._submit_stroke();
+        });
+
+        // ====== 两指捏合缩放 ======
+        const pinch = new PinchZoomSource(input);
+        this._pinch_source = pinch;
+
+        pinch.onPinchStarted = () => {
+            if (!this.is_open) return;
+
+            this._dr_cancel_momentum();
+            this._dr_last_canvas_x = this.dr_canvas_x;
+            this._dr_last_canvas_y = this.dr_canvas_y;
+            this._dr_gesture_vx = 0;
+            this._dr_gesture_vy = 0;
+
+            // 取消当前笔画
+            if (this.is_drawing) {
+                this.is_drawing = false;
+                this.draw_canvas_rect = null;
+                this._submit_stroke();
+                if (this.batch_draw) {
+                    this.batch_draw.batch_draw_delete_all();
+                }
+            }
+
+            this.dr_is_scaling = true;
+            this.dr_is_dragging = false;
+            this.dr_start_scale = this.dr_scale;
+
+            const positions = input.getActivePositions();
+            if (positions.length >= 2) {
+                this.dr_start_finger0_cx = (positions[0].x - this.dr_canvas_x) / this.dr_scale;
+                this.dr_start_finger0_cy = (positions[0].y - this.dr_canvas_y) / this.dr_scale;
+            }
+            this.dr_start_canvas_x = this.dr_canvas_x;
+            this.dr_start_canvas_y = this.dr_canvas_y;
+
+            this._dr_enable_smooth_transform();
+            this._dr_set_zooming();
+        };
+
+        pinch.onPinchDelta = (ev) => {
+            if (!this.is_open || !this.dr_is_scaling) return;
+
+            const target_s = Math.max(this.dr_min_scale, Math.min(this.dr_max_scale, this.dr_start_scale * ev.scale));
+            this.dr_scale = target_s;
+            this.dr_canvas_x = ev.finger0.x - this.dr_start_finger0_cx * this.dr_scale;
+            this.dr_canvas_y = ev.finger0.y - this.dr_start_finger0_cy * this.dr_scale;
+
+            this._dr_set_zooming();
+            this._dr_update_gesture_velocity();
+            this._dr_apply_scale();
+        };
+
+        pinch.onPinchCompleted = () => {
+            if (!this.is_open) return;
+            this.dr_is_scaling = false;
+            this._dr_cancel_zoom_debounce();
+
+            // 缩放结束后：如果剩一指且在 move 模式，继续拖拽
+            if (input.activeCount === 1 && this.draw_mode === 'move') {
+                const ev = input.activeEvents[0];
+                if (ev) {
+                    this.dr_is_dragging = true;
+                    this.dr_start_drag_x = ev.position.x - this.dr_canvas_x;
+                    this.dr_start_drag_y = ev.position.y - this.dr_canvas_y;
+                }
+            } else if (input.activeCount === 0) {
+                if (Math.abs(this._dr_gesture_vx) > 2 || Math.abs(this._dr_gesture_vy) > 2) {
+                    this._dr_update_move_bound();
+                    this._dr_update_canvas_position();
+                    this._dr_start_momentum();
+                } else {
+                    this._check_page_visibility();
+                }
+                this._dr_schedule_disable_smooth_transform();
+            }
+        };
+
+        // ====== 滚轮缩放（独立于 gesture 模块） ======
         this._bound_dr_handle_wheel = (e) => this._dr_handle_wheel(e);
-        this._bound_dr_handle_touch_start = (e) => this._dr_handle_touch_start(e);
-        this._bound_dr_handle_touch_move = (e) => this._dr_handle_touch_move(e);
-        this._bound_dr_handle_touch_end = (e) => this._dr_handle_touch_end(e);
-
         this._scroll_container.addEventListener('wheel', this._bound_dr_handle_wheel, { passive: false });
-        this._scroll_container.addEventListener('touchstart', this._bound_dr_handle_touch_start, { passive: false });
-        this._scroll_container.addEventListener('touchmove', this._bound_dr_handle_touch_move, { passive: false });
-        this._scroll_container.addEventListener('touchend', this._bound_dr_handle_touch_end, { passive: false });
-        this._scroll_container.addEventListener('touchcancel', this._bound_dr_handle_touch_end, { passive: false });
+    }
 
-        // 跟踪活跃的 pointerId（用于区分两指→一指过渡时的 pointerup）
-        this._active_pointer_id = null;
+    _teardown_gesture() {
+        if (this._pinch_source) {
+            this._pinch_source.destroy();
+            this._pinch_source = null;
+        }
+        if (this._input_source) {
+            this._input_source.detach();
+            this._input_source = null;
+        }
+        if (this._bound_dr_handle_wheel) {
+            this._scroll_container?.removeEventListener('wheel', this._bound_dr_handle_wheel);
+            this._bound_dr_handle_wheel = null;
+        }
     }
 
     _setup_keyboard_events() {
@@ -3769,12 +3961,10 @@ class DocumentReaderManager {
 
                 this.dr_scale = pending.target_s;
 
-                // 两指缩放焦点改为可视区域中心，平移由手指中点偏移独立控制
+                // 两指缩放（围绕起始中点）与手指中点平移（pan）叠加
                 const ratio = this.dr_scale / this.dr_start_scale;
-                const vcx = this._scroll_container.clientWidth / 2;
-                const vcy = this._scroll_container.clientHeight / 2;
-                this.dr_canvas_x = vcx - (vcx - this.dr_start_canvas_x) * ratio + (pending.center_x - this.dr_start_scale_x);
-                this.dr_canvas_y = vcy - (vcy - this.dr_start_canvas_y) * ratio + (pending.center_y - this.dr_start_scale_y);
+                this.dr_canvas_x = pending.center_x + (this.dr_start_canvas_x - this.dr_start_scale_x) * ratio;
+                this.dr_canvas_y = pending.center_y + (this.dr_start_canvas_y - this.dr_start_scale_y) * ratio;
                 this._dr_set_zooming();
                 this._dr_update_gesture_velocity();
 

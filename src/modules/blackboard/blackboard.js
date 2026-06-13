@@ -4,6 +4,7 @@
  * 使用 DrawingEngine 管理绘制管线
  */
 
+import { InputSource, PinchZoomSource } from '../../gesture/index.js';
 import { BlackboardPageManager } from './blackboard-page.js';
 import { DrawingEngine } from './drawing-engine.js';
 import { history_state, history_validate_undo, history_reset_executing } from '../history.js';
@@ -31,8 +32,8 @@ class BlackboardManager {
             start_drag_x: 0,
             start_drag_y: 0,
             start_scale: 1,
-            start_scale_x: 0,
-            start_scale_y: 0,
+            start_finger0_cx: 0,
+            start_finger0_cy: 0,
             start_canvas_x: 0,
             start_canvas_y: 0,
             is_scaling: false,
@@ -69,6 +70,10 @@ class BlackboardManager {
         this.screen_w = 0;
         this.screen_h = 0;
         this._last_loaded_index = -1;
+
+        // gesture 模块实例
+        this._input_source = null;
+        this._pinch_source = null;
 
         /** @type {DrawingEngine|null} */
         this.drawing_engine = null;
@@ -573,8 +578,8 @@ class BlackboardManager {
             this.bb_wrapper.classList.remove('smooth-transform');
             this.bb_wrapper.style.willChange = '';
         }
-        // 清理触摸手势状态
-        this._cleanup_touch_gesture();
+        // 清理 gesture 模块
+        this._teardown_gesture();
         this.bb_state.is_scaling = false;
         this.bb_state.is_dragging = false;
 
@@ -630,25 +635,239 @@ class BlackboardManager {
         const wrap = window.dom.blackboardCanvasWrap;
         if (!wrap) return;
 
-        if (window.PointerEvent) {
-            wrap.addEventListener('pointerdown', (e) => this._handle_pointer_down(e));
-            wrap.addEventListener('pointermove', (e) => this._handle_pointer_move(e));
-            wrap.addEventListener('pointerup', (e) => this._handle_pointer_up(e));
-            wrap.addEventListener('pointerleave', (e) => this._handle_pointer_up(e));
-            wrap.addEventListener('pointercancel', (e) => this._handle_pointer_up(e));
-        } else {
-            wrap.addEventListener('mousedown', (e) => this._handle_mouse_down(e));
-            wrap.addEventListener('mousemove', (e) => this._handle_mouse_move(e));
-            wrap.addEventListener('mouseup', (e) => this._handle_mouse_up(e));
-            wrap.addEventListener('mouseleave', (e) => this._handle_mouse_up(e));
-        }
+        const input = new InputSource(wrap);
+        this._input_source = input;
+        input.attach();
 
+        // ====== 输入事件（绘制、手掌擦除、拖拽平移） ======
+        input.on('inputDown', async (ev) => {
+            if (!this.is_open) return;
+            this._cancel_momentum();
+            this.bb_state.cached_inv_scale = 1 / this._fetch_safe_scale();
+
+            // 多指触摸时跳过首指以外的输入（留给 PinchZoomSource 处理）
+            if (input.activeCount > 1) return;
+
+            // 手掌擦除 — TouchEvent 路径（非 PointerEvent，4+ 触点数）
+            if (!window.PointerEvent && (window.DRAW_CONFIG?.palmEraserEnabled !== false) && ev.originEvent?.touches?.length >= 4) {
+                if (is_palm_by_touch_count(ev.originEvent.touches)) {
+                    if (this.drawing_engine.is_drawing || this.drawing_engine.current_stroke) {
+                        this.drawing_engine.is_drawing = false;
+                        await this.drawing_engine._submit_stroke();
+                    }
+                    const center = get_palm_center(ev.originEvent.touches);
+                    this.drawing_engine._start_palm_erase(center.x, center.y, window.DRAW_CONFIG?.palmEraserSize || 60);
+                    return;
+                }
+            }
+
+            // 拖拽平移（move 模式）
+            if (this.draw_mode === 'move') {
+                this.bb_state.is_dragging = true;
+                this.bb_state.start_drag_x = ev.position.x - this.bb_state.canvas_x;
+                this.bb_state.start_drag_y = ev.position.y - this.bb_state.canvas_y;
+                this._last_canvas_x = this.bb_state.canvas_x;
+                this._last_canvas_y = this.bb_state.canvas_y;
+                this._gesture_vx = 0;
+                this._gesture_vy = 0;
+                this._touch_enable_gpu();
+                return;
+            }
+
+            // PointerEvent / MouseEvent 路径 → 委托 DrawingEngine
+            if (window.PointerEvent || ev.originEvent?.type === 'mousedown') {
+                this.drawing_engine.handle_pointer_down(ev.originEvent);
+                return;
+            }
+
+            // TouchEvent 路径（非 PointerEvent）：单指绘制
+            if (!window.PointerEvent && ev.originEvent?.touches?.length === 1) {
+                this.drawing_engine.draw_canvas_rect = this._get_canvas_rect();
+                if (!this.drawing_engine.draw_canvas_rect) return;
+                this.drawing_engine.is_drawing = true;
+                const inv = this.bb_state.cached_inv_scale;
+                const touch = ev.originEvent.touches[0];
+                this.drawing_engine.last_x = (touch.clientX - this.drawing_engine.draw_canvas_rect.left) * inv;
+                this.drawing_engine.last_y = (touch.clientY - this.drawing_engine.draw_canvas_rect.top) * inv;
+                this.drawing_engine._start_stroke(this.draw_mode === 'comment' ? 'draw' : 'erase');
+            }
+        });
+
+        input.on('inputMove', (ev) => {
+            if (!this.is_open) return;
+
+            if (this.drawing_engine.isPalmErasing) {
+                const center = ev.originEvent?.touches
+                    ? get_palm_center(ev.originEvent.touches)
+                    : { x: ev.position.x, y: ev.position.y };
+                this.drawing_engine._update_palm_erase(center.x, center.y);
+                return;
+            }
+
+            const s = this.bb_state;
+
+            // 拖拽平移
+            if (s.is_dragging) {
+                s.canvas_x = ev.position.x - s.start_drag_x;
+                s.canvas_y = ev.position.y - s.start_drag_y;
+                this._update_canvas_position();
+                this._update_bb_gesture_velocity();
+                this._sync_bb_transform();
+                return;
+            }
+
+            if (this.draw_mode === 'eraser') {
+                this.drawing_engine._update_eraser_hint_position(ev.position.x, ev.position.y);
+            }
+
+            // PointerEvent / MouseEvent 路径
+            if (window.PointerEvent || ev.originEvent?.type === 'mousemove') {
+                this.drawing_engine.handle_pointer_move(ev.originEvent);
+                return;
+            }
+
+            // TouchEvent 路径
+            if (!window.PointerEvent && ev.originEvent?.touches?.length === 1 && this.drawing_engine.is_drawing) {
+                this.drawing_engine._handle_single_touch_draw(ev.originEvent.touches[0]);
+            }
+        });
+
+        input.on('inputUp', async (ev) => {
+            if (!this.is_open) return;
+
+            if (this.drawing_engine.isPalmErasing) {
+                if (input.activeCount < 4) {
+                    await this.drawing_engine._end_palm_erase();
+                }
+                return;
+            }
+
+            const s = this.bb_state;
+
+            // 拖拽结束
+            if (s.is_dragging) {
+                s.is_dragging = false;
+                this._touch_schedule_disable_gpu();
+                if (this.draw_mode === 'move' && (Math.abs(this._gesture_vx) > 2 || Math.abs(this._gesture_vy) > 2)) {
+                    this._update_move_bound();
+                    this._update_canvas_position();
+                    this._start_momentum();
+                }
+                return;
+            }
+
+            // PointerEvent / MouseEvent 路径
+            if (window.PointerEvent || ev.originEvent?.type === 'mouseup') {
+                await this.drawing_engine.handle_pointer_up(ev.originEvent);
+                return;
+            }
+
+            // TouchEvent 路径
+            if (!window.PointerEvent) {
+                if (this.drawing_engine.is_drawing || this.drawing_engine.current_stroke) {
+                    this.drawing_engine.is_drawing = false;
+                    this.drawing_engine.draw_canvas_rect = null;
+                    await this.drawing_engine._submit_stroke();
+                }
+            }
+        });
+
+        // ====== 两指捏合缩放 ======
+        const pinch = new PinchZoomSource(input);
+        this._pinch_source = pinch;
+
+        pinch.onPinchStarted = () => {
+            if (!this.is_open) return;
+            this._cancel_momentum();
+
+            const s = this.bb_state;
+            s.cached_inv_scale = 1 / this._fetch_safe_scale();
+
+            // 取消当前笔画
+            if (this.drawing_engine.is_drawing || this.drawing_engine.current_stroke) {
+                this.drawing_engine.is_drawing = false;
+                if (this.drawing_engine.current_stroke) {
+                    this.drawing_engine._submit_stroke();
+                }
+                if (this.drawing_engine.batch_draw) {
+                    this.drawing_engine.batch_draw.batch_draw_delete_all();
+                }
+            }
+
+            s.is_dragging = false;
+            s.is_scaling = true;
+            s.start_scale = s.scale;
+
+            const positions = input.getActivePositions();
+            if (positions.length >= 2) {
+                s.start_finger0_cx = (positions[0].x - s.canvas_x) / s.scale;
+                s.start_finger0_cy = (positions[0].y - s.canvas_y) / s.scale;
+            }
+            s.start_canvas_x = s.canvas_x;
+            s.start_canvas_y = s.canvas_y;
+            this._last_canvas_x = s.canvas_x;
+            this._last_canvas_y = s.canvas_y;
+            this._gesture_vx = 0;
+            this._gesture_vy = 0;
+            this._touch_enable_gpu();
+        };
+
+        pinch.onPinchDelta = (ev) => {
+            if (!this.is_open) return;
+            const s = this.bb_state;
+            if (!s.is_scaling) return;
+
+            const max_scale = window.DRAW_CONFIG ? window.DRAW_CONFIG.maxScaleImage : 3;
+            const min_scale = window.DRAW_CONFIG?.minScale || 0.5;
+            s.scale = Math.max(min_scale, Math.min(max_scale, s.start_scale * ev.scale));
+
+            s.canvas_x = ev.finger0.x - s.start_finger0_cx * s.scale;
+            s.canvas_y = ev.finger0.y - s.start_finger0_cy * s.scale;
+
+            this._set_zooming();
+            this._update_move_bound();
+            this._update_canvas_position();
+            this._update_bb_gesture_velocity();
+            this._sync_bb_transform();
+        };
+
+        pinch.onPinchCompleted = () => {
+            if (!this.is_open) return;
+            const s = this.bb_state;
+            s.is_scaling = false;
+            this._cancel_zoom_debounce();
+
+            if (input.activeCount === 1 && this.draw_mode === 'move') {
+                const ev = input.activeEvents[0];
+                if (ev) {
+                    s.is_dragging = true;
+                    s.start_drag_x = ev.position.x - s.canvas_x;
+                    s.start_drag_y = ev.position.y - s.canvas_y;
+                }
+            } else if (input.activeCount === 0) {
+                this._update_move_bound();
+                this._update_canvas_position();
+                this._sync_bb_transform();
+                if (this.draw_mode === 'move' && (Math.abs(this._gesture_vx) > 2 || Math.abs(this._gesture_vy) > 2)) {
+                    this._start_momentum();
+                }
+                this._touch_schedule_disable_gpu();
+            }
+        };
+
+        // ====== 滚轮缩放（独立于 gesture 模块） ======
         wrap.addEventListener('wheel', (e) => this._handle_wheel(e), { passive: false });
+    }
 
-        wrap.addEventListener('touchstart', (e) => this._handle_touch_start(e), { passive: false });
-        wrap.addEventListener('touchmove', (e) => this._handle_touch_move(e), { passive: false });
-        wrap.addEventListener('touchend', (e) => this._handle_touch_end(e), { passive: false });
-        wrap.addEventListener('touchcancel', (e) => this._handle_touch_end(e), { passive: false });
+    _teardown_gesture() {
+        if (this._pinch_source) {
+            this._pinch_source.destroy();
+            this._pinch_source = null;
+        }
+        if (this._input_source) {
+            this._input_source.detach();
+            this._input_source = null;
+        }
     }
 
     /** 窗口 resize 时失效 container rect 缓存 */
@@ -1010,12 +1229,10 @@ class BlackboardManager {
                 const center_x = (data.t0.clientX + data.t1.clientX) / 2;
                 const center_y = (data.t0.clientY + data.t1.clientY) / 2;
 
-                // 两指缩放焦点改为可视区域中心，平移由手指中点偏移独立控制
+                // 两指缩放（围绕起始中点）与手指中点平移（pan）叠加
                 const final_ratio = s.scale / s.start_scale;
-                const vcx = this.screen_w / 2;
-                const vcy = this.screen_h / 2;
-                s.canvas_x = vcx - (vcx - s.start_canvas_x) * final_ratio + (center_x - s.start_scale_x);
-                s.canvas_y = vcy - (vcy - s.start_canvas_y) * final_ratio + (center_y - s.start_scale_y);
+                s.canvas_x = center_x + (s.start_canvas_x - s.start_scale_x) * final_ratio;
+                s.canvas_y = center_y + (s.start_canvas_y - s.start_scale_y) * final_ratio;
 
                 this._set_zooming();
                 this._update_move_bound();

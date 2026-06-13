@@ -21,6 +21,7 @@ import {
     MAX_HISTORY_STEPS
 } from './modules/history.js';
 import { DocLoader } from './modules/pdf/document_loader.js';
+import { InputSource, DragTapSource, PinchZoomSource, TOLERANCE } from './gesture/index.js';
 
 // === 全局变量 ===
 let last_canvas_transform = { x: null, y: null, scale: null };
@@ -598,12 +599,15 @@ let state = {
     },
     startDragX: 0,
     startDragY: 0,
+    _pinchResidualDrag: false,
     startScale: 1,
     startDistanceSq: 0,
     startScaleX: 0,
     startScaleY: 0,
     startCanvasX: 0,
     startCanvasY: 0,
+    startFinger0CX: 0,
+    startFinger0CY: 0,
 
     // 惯性（动量）系统
     _gestureVx: 0,
@@ -1637,13 +1641,275 @@ function main_setup_all_events() {
     main_setup_mode_events();
     main_setup_tool_events();
     main_setup_pen_control_events();
-    main_setup_canvas_mouse_events();
-    main_setup_canvas_touch_events();
+    main_setup_gesture_system();
     main_setup_settings_events();
     main_setup_click_outside();
     if (window.blackboardManager) {
         window.blackboardManager.setup_toolbar_events();
     }
+}
+
+// ===== 基于手势模块的统一输入系统 =====
+
+/** 基于 InputSource/DragTapSource/PinchZoomSource 的手势处理 */
+function main_setup_gesture_system() {
+    const input = new InputSource(dom.canvasWrapper);
+    input.attach();
+    window._gestureInput = input;
+
+    // ------- 输入事件（用于绘制/手掌擦除） -------
+    input.on('inputDown', async (ev) => {
+        if (window.tileRenderer) window.tileRenderer.cancel_idle_shrink();
+        main_cancel_smooth_transform();
+
+        state.drawCanvasRect = dom.canvasWrapper.getBoundingClientRect();
+        state.currentPressure = ev.originEvent?.pressure || 0.5;
+
+        // PointerEvent 路径：通过触点宽高检测手掌
+        if (window.PointerEvent && DRAW_CONFIG.palmEraserEnabled && ev.originEvent?.pointerType) {
+            const palmResult = main_is_palm_pointer(ev.originEvent);
+            if (palmResult.isPalm) {
+                if (state.isDrawing) {
+                    state.isDrawing = false;
+                    main_hide_drawing_mode();
+                }
+                const contactSize = Math.max(palmResult.width, palmResult.height)
+                    * window.__palmEraser.PALM_CONFIG.palmSizeMultiplier
+                    * window.__palmEraser.PALM_CONFIG.eraserSizeK;
+                const size = Math.max(40, Math.min(150, contactSize));
+                main_start_palm_erase(ev.position.x, ev.position.y, size);
+                return;
+            }
+        }
+
+        // 非 PointerEvent 路径：4+ 触点检测手掌
+        if (!window.PointerEvent && DRAW_CONFIG.palmEraserEnabled
+            && input.activeCount >= 4 && ev.originEvent?.touches) {
+            const palmEraser = window.__palmEraser;
+            if (palmEraser && palmEraser.is_palm_by_touch_count(ev.originEvent.touches)) {
+                if (state.isDrawing) {
+                    state.isDrawing = false;
+                    main_hide_drawing_mode();
+                }
+                const center = palmEraser.get_palm_center(ev.originEvent.touches);
+                main_start_palm_erase(center.x, center.y, DRAW_CONFIG.palmEraserSize);
+                return;
+            }
+        }
+
+        // 绘制模式（comment / eraser）
+        if (state.drawMode !== 'move' && !state.isScaling) {
+            main_hide_pen_control_panel();
+            state.isDrawing = true;
+            main_start_drawing_mode();
+            state.cachedInvScale = 1 / main_fetch_safe_scale();
+            state.lastX = (ev.position.x - state.drawCanvasRect.left) * state.cachedInvScale;
+            state.lastY = (ev.position.y - state.drawCanvasRect.top) * state.cachedInvScale;
+            main_start_stroke(state.drawMode === 'eraser' ? 'erase' : 'draw');
+        }
+    });
+
+    input.on('inputMove', (ev) => {
+        if (state._pinchResidualDrag) {
+            state.canvasX = ev.position.x - state.startDragX;
+            state.canvasY = ev.position.y - state.startDragY;
+            main_update_canvas_position();
+            main_update_gesture_velocity(false);
+            main_update_transform_schedule(state.canvasX, state.canvasY, state.scale);
+            return;
+        }
+        if (state.isPalmErasing) {
+            main_update_palm_erase(ev.position.x, ev.position.y);
+            return;
+        }
+
+        state.currentPressure = ev.originEvent?.pressure || 0.5;
+
+        if (state.drawMode === 'eraser' && state.isDrawing) {
+            main_update_eraser_hint_position(ev.position.x, ev.position.y);
+        }
+
+        if (state.isDrawing && state.drawMode !== 'move') {
+            const rect = state.drawCanvasRect;
+            if (!rect) return;
+            const invScale = state.cachedInvScale;
+            const x = (ev.position.x - rect.left) * invScale;
+            const y = (ev.position.y - rect.top) * invScale;
+
+            const dx = x - state.lastX;
+            const dy = y - state.lastY;
+            if (dx * dx + dy * dy > 1) {
+                main_save_stroke_point(state.lastX, state.lastY, x, y, state.currentPressure);
+                window.batchDrawManager.batch_draw_create_command(
+                    state.cachedDrawType,
+                    state.lastX, state.lastY,
+                    x, y,
+                    state.cachedDrawColor,
+                    state.cachedDrawLineWidth
+                );
+                state.lastX = x;
+                state.lastY = y;
+            }
+        }
+    });
+
+    input.on('inputUp', async (ev) => {
+        if (state._pinchResidualDrag) {
+            state._pinchResidualDrag = false;
+            dom.canvasWrapper.classList.remove('dragging');
+            if (state.drawMode === 'move' && (Math.abs(state._gestureVx) > 2 || Math.abs(state._gestureVy) > 2)) {
+                main_update_move_bound();
+                main_update_canvas_position();
+                main_start_momentum('xy');
+            } else {
+                main_update_canvas_transform_smooth(state.canvasX, state.canvasY, state.scale, 200);
+            }
+            return;
+        }
+        if (state.isPalmErasing) {
+            if (input.activeCount < 4) {
+                await main_end_palm_erase();
+            }
+            return;
+        }
+        if (state.isDrawing) {
+            main_flush_last_segment(ev.position.x, ev.position.y);
+            main_hide_drawing_mode();
+            await main_submit_stroke();
+        }
+        dom.canvasWrapper.classList.remove('dragging');
+    });
+
+    // ------- 拖拽手势（用于 move 模式平移） -------
+    const drag = new DragTapSource(input, { toleranceSet: TOLERANCE.DRAG });
+    window._gestureDrag = drag;
+
+    drag.onDragStarted = () => {
+        if (state.isPalmErasing || state.isDrawing || state.isScaling) return;
+        state.isDragging = true;
+        const lastEv = input.activeEvents[0];
+        state.startDragX = (lastEv?.position.x || 0) - state.canvasX;
+        state.startDragY = (lastEv?.position.y || 0) - state.canvasY;
+        state._lastCanvasX = state.canvasX;
+        state._lastCanvasY = state.canvasY;
+        state._gestureVx = 0;
+        state._gestureVy = 0;
+        dom.canvasWrapper.classList.add('dragging');
+    };
+
+    drag.onDragDelta = (ev) => {
+        if (!state.isDragging || state.isPalmErasing || state.isScaling) return;
+
+        state.canvasX = ev.position.x - state.startDragX;
+        state.canvasY = ev.position.y - state.startDragY;
+        main_update_canvas_position();
+        main_update_gesture_velocity(false);
+        main_update_transform_schedule(state.canvasX, state.canvasY, state.scale);
+    };
+
+    drag.onDragCompleted = () => {
+        if (!state.isDragging) return;
+        state.isDragging = false;
+        dom.canvasWrapper.classList.remove('dragging');
+
+        if (state.drawMode === 'move' && (Math.abs(state._gestureVx) > 2 || Math.abs(state._gestureVy) > 2)) {
+            main_update_move_bound();
+            main_update_canvas_position();
+            main_start_momentum('xy');
+        } else {
+            main_update_canvas_transform_smooth(state.canvasX, state.canvasY, state.scale, 200);
+        }
+    };
+
+    // ------- 两指捏合（缩放 + 平移） -------
+    const pinch = new PinchZoomSource(input);
+    window._gesturePinch = pinch;
+
+    pinch.onPinchStarted = () => {
+        main_cancel_smooth_transform();
+
+        if (state.isDrawing) {
+            state.isDrawing = false;
+            main_hide_drawing_mode();
+            state.currentStroke = null;
+            if (window.batchDrawManager) {
+                window.batchDrawManager.batch_draw_delete_all();
+            }
+        }
+
+        state.isScaling = true;
+        state.startScale = state.scale;
+
+        const positions = input.getActivePositions();
+        if (positions.length >= 2) {
+            state.startFinger0CX = (positions[0].x - state.canvasX) / state.scale;
+            state.startFinger0CY = (positions[0].y - state.canvasY) / state.scale;
+        }
+        state.startCanvasX = state.canvasX;
+        state.startCanvasY = state.canvasY;
+        dom.canvasWrapper.classList.add('dragging');
+        dom.canvasWrapper.style.willChange = 'transform';
+        state._lastCanvasX = state.canvasX;
+        state._lastCanvasY = state.canvasY;
+        state._gestureVx = 0;
+        state._gestureVy = 0;
+    };
+
+    pinch.onPinchDelta = (ev) => {
+        if (!state.isScaling) return;
+        const maxScale = state.isCameraOpen ? DRAW_CONFIG.maxScaleCamera : DRAW_CONFIG.maxScaleImage;
+        state.scale = Math.max(DRAW_CONFIG.minScale, Math.min(maxScale, state.startScale * ev.scale));
+
+        state.canvasX = ev.finger0.x - state.startFinger0CX * state.scale;
+        state.canvasY = ev.finger0.y - state.startFinger0CY * state.scale;
+
+        main_update_move_bound();
+        main_update_canvas_position();
+        main_update_gesture_velocity(true);
+
+        const transform = `translate3d(${state.canvasX}px, ${state.canvasY}px, 0) scale(${state.scale})`;
+        dom.canvasWrapper.style.transform = transform;
+        last_canvas_transform.x = state.canvasX;
+        last_canvas_transform.y = state.canvasY;
+        last_canvas_transform.scale = state.scale;
+
+        main_set_zooming();
+        main_update_eraser_hint_size();
+    };
+
+    pinch.onPinchCompleted = () => {
+        state.isScaling = false;
+        dom.canvasWrapper.style.willChange = '';
+        dom.canvasWrapper.classList.remove('dragging');
+        main_cancel_zoom_debounce();
+
+        // 缩放结束后：如果剩一指且在 move 模式，继续拖拽
+        if (input.activeCount === 1 && state.drawMode === 'move') {
+            const ev = input.activeEvents[0];
+            if (ev) {
+                state._pinchResidualDrag = true;
+                state.startDragX = ev.position.x - state.canvasX;
+                state.startDragY = ev.position.y - state.canvasY;
+                state._lastCanvasX = state.canvasX;
+                state._lastCanvasY = state.canvasY;
+                state._gestureVx = 0;
+                state._gestureVy = 0;
+                dom.canvasWrapper.classList.add('dragging');
+            }
+        } else if (input.activeCount === 0) {
+            main_update_move_bound();
+            main_update_canvas_position();
+
+            if (Math.abs(state._gestureVx) > 2 || Math.abs(state._gestureVy) > 2) {
+                main_start_momentum('xy');
+            } else {
+                main_update_canvas_transform_smooth(state.canvasX, state.canvasY, state.scale, 200);
+            }
+        }
+    };
+
+    // ------- 鼠标滚轮缩放 -------
+    dom.canvasWrapper.addEventListener('wheel', main_handle_wheel, { passive: true });
 }
 
 // 设置面板事件
@@ -2961,12 +3227,10 @@ function main_handle_touch_move(e) {
         const centerX = (touches[0].clientX + touches[1].clientX) / 2;
         const centerY = (touches[0].clientY + touches[1].clientY) / 2;
 
-        // 两指缩放焦点改为可视区域中心，平移由手指中点偏移独立控制
+        // 两指缩放（围绕起始中点）与手指中点平移（pan）叠加
         const ratio = state.scale / state.startScale;
-        const viewCenterX = dom.canvasWrapper.clientWidth / 2;
-        const viewCenterY = dom.canvasWrapper.clientHeight / 2;
-        state.canvasX = viewCenterX - (viewCenterX - state.startCanvasX) * ratio + (centerX - state.startScaleX);
-        state.canvasY = viewCenterY - (viewCenterY - state.startCanvasY) * ratio + (centerY - state.startScaleY);
+        state.canvasX = centerX + (state.startCanvasX - state.startScaleX) * ratio;
+        state.canvasY = centerY + (state.startCanvasY - state.startScaleY) * ratio;
 
         // 缩放/平移过程中实时进行边界钳制，防止画布越界
         main_update_move_bound();
