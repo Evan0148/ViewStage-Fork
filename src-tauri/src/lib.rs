@@ -1294,17 +1294,24 @@ fn version_validate_newer(current: &str, latest: &str) -> bool {
     }
 }
 
-/// 校验 URL 是否为合法的 GitHub 域名，支持 gh-proxy.com 镜像前缀
+/// 校验 URL 是否为合法的 GitHub 域名，支持 gh-proxy.com / ghproxy.sectl.cn 等镜像前缀
 fn url_validate_github(url: &str) -> Result<(), String> {
-    if url.starts_with("https://gh-proxy.com/") {
-        let original_url = url.strip_prefix("https://gh-proxy.com/").unwrap_or(url);
-        let parsed = url::Url::parse(original_url).map_err(|e| format!("Invalid URL: {}", e))?;
-        let host = parsed.host_str().unwrap_or("");
-        let valid_domains = ["github.com", "www.github.com", "api.github.com"];
-        if !valid_domains.contains(&host) {
-            return Err(format!("Invalid GitHub URL: unexpected domain {}", host));
+    let known_mirror_prefixes = [
+        "https://gh-proxy.com/",
+        "https://ghproxy.sectl.cn/",
+    ];
+
+    for prefix in &known_mirror_prefixes {
+        if url.starts_with(prefix) {
+            let original_url = url.strip_prefix(prefix).unwrap_or(url);
+            let parsed = url::Url::parse(original_url).map_err(|e| format!("Invalid URL: {}", e))?;
+            let host = parsed.host_str().unwrap_or("");
+            let valid_domains = ["github.com", "www.github.com", "api.github.com"];
+            if !valid_domains.contains(&host) {
+                return Err(format!("Invalid GitHub URL: unexpected domain {}", host));
+            }
+            return Ok(());
         }
-        return Ok(());
     }
 
     let parsed = url::Url::parse(url).map_err(|e| format!("Invalid URL: {}", e))?;
@@ -1810,7 +1817,8 @@ async fn update_download_cancel() -> Result<(), String> {
 
 /// Tauri IPC 命令：从 GitHub Release 下载更新文件，支持镜像加速
 ///
-/// 自动校验 URL 合法性，流式下载并向前端推送进度事件 "update-download-progress"
+/// 自动校验 URL 合法性，流式下载并向前端推送进度事件 "update-download-progress"。
+/// 使用镜像时，如果镜像下载失败会自动回退到原始地址重试一次。
 #[tauri::command]
 async fn update_download_file(
     app: tauri::AppHandle,
@@ -1824,18 +1832,16 @@ async fn update_download_file(
 
     url_validate_github(&url)?;
 
-    let download_url = if let Some(ref mirror) = mirror_url {
-        if mirror.is_empty() {
-            log::info!("使用原始地址下载: {}", url);
-            url
-        } else {
-            let proxy_url = format!("{}{}", mirror.trim_end_matches('/'), url);
-            log::info!("使用镜像下载: {}", proxy_url);
-            proxy_url
-        }
+    // 构建待尝试的 URL 列表：镜像优先，原始地址作为回退
+    let use_mirror = mirror_url.as_ref().map_or(false, |m| !m.is_empty());
+    let fallback_urls: Vec<String> = if use_mirror {
+        let mirror = mirror_url.as_ref().unwrap();
+        let proxy_url = format!("{}/{}", mirror.trim_end_matches('/'), &url);
+        log::info!("镜像 URL: {}", proxy_url);
+        vec![proxy_url, url]
     } else {
         log::info!("使用原始地址下载: {}", url);
-        url
+        vec![url]
     };
 
     let client = reqwest::Client::builder()
@@ -1846,25 +1852,6 @@ async fn update_download_file(
             log::error!("创建 HTTP 客户端失败: {}", e);
             e.to_string()
         })?;
-
-    log::info!("正在发起下载请求...");
-    let response = client
-        .get(&download_url)
-        .send()
-        .await
-        .map_err(|e| {
-            log::error!("下载请求失败: {}", e);
-            format!("Network error: {}", e)
-        })?;
-
-    if !response.status().is_success() {
-        let status = response.status();
-        log::error!("下载请求失败，HTTP 状态码: {}", status);
-        return Err(format!("Download error: {}", status));
-    }
-
-    let total_size = response.content_length().unwrap_or(0);
-    log::info!("文件大小: {} bytes ({:.2} MB)", total_size, total_size as f64 / 1024.0 / 1024.0);
 
     let paths = AppPaths::new(&app)?;
     let updates_dir = &paths.updates_dir;
@@ -1877,67 +1864,115 @@ async fn update_download_file(
     let file_path = updates_dir.join(&file_name);
     log::info!("保存路径: {:?}", file_path);
 
-    let mut file = std::fs::File::create(&file_path)
-        .map_err(|e| {
-            log::error!("创建文件失败: {}", e);
-            format!("Failed to create file: {}", e)
-        })?;
+    // 逐个尝试 URL，直到成功或全部失败
+    let mut last_error = String::new();
+    let mut succeeded = false;
 
-    let mut downloaded: u64 = 0;
-    let mut stream = response.bytes_stream();
-    use futures::stream::StreamExt;
-
-    let mut last_reported_progress: u32 = 0;
-
-    log::info!("开始接收数据...");
-    while let Some(chunk) = stream.next().await {
-        // 检查是否被取消
+    for (attempt_idx, download_url) in fallback_urls.iter().enumerate() {
         if DOWNLOAD_CANCELLED.load(Ordering::SeqCst) {
-            let _ = std::fs::remove_file(&file_path);
-            log::info!("下载已被用户取消");
             return Err("Download cancelled".to_string());
         }
 
-        let chunk = chunk.map_err(|e| {
-            log::error!("读取数据块失败: {}", e);
-            format!("Failed to read chunk: {}", e)
-        })?;
-        file.write_all(&chunk)
+        if attempt_idx > 0 {
+            log::info!("镜像下载失败，尝试回退到原始地址: {}", download_url);
+            app.emit("update-download-progress", 0).unwrap_or(());
+        }
+
+        log::info!("正在发起下载请求...");
+        let response = match client.get(download_url).send().await {
+            Ok(r) if r.status().is_success() => r,
+            Ok(r) => {
+                let status = r.status();
+                let msg = format!("Download error: {} (HTTP {})", download_url, status);
+                log::error!("{}", msg);
+                last_error = msg;
+                continue;
+            }
+            Err(e) => {
+                let msg = format!("Network error for {}: {}", download_url, e);
+                log::error!("{}", msg);
+                last_error = msg;
+                continue;
+            }
+        };
+
+        let total_size = response.content_length().unwrap_or(0);
+        log::info!("文件大小: {} bytes ({:.2} MB)", total_size, total_size as f64 / 1024.0 / 1024.0);
+
+        let mut file = std::fs::File::create(&file_path)
             .map_err(|e| {
-                log::error!("写入文件失败: {}", e);
-                format!("Failed to write file: {}", e)
+                log::error!("创建文件失败: {}", e);
+                format!("Failed to create file: {}", e)
             })?;
-        
-        downloaded += chunk.len() as u64;
-        
-        if total_size > 0 {
-            let progress = (downloaded as f64 / total_size as f64) * 100.0;
-            let current_progress = progress as u32;
-            
-            // 仅在整数百分比变化时推送事件，避免高频刷新
-            if current_progress != last_reported_progress {
-                last_reported_progress = current_progress;
-                log::debug!("下载进度: {}%", current_progress);
-                app.emit("update-download-progress", current_progress)
-                    .unwrap_or(());
+
+        let mut downloaded: u64 = 0;
+        let mut stream = response.bytes_stream();
+        use futures::stream::StreamExt;
+
+        let mut last_reported_progress: u32 = 0;
+
+        log::info!("开始接收数据...");
+        let mut stream_error = None;
+        while let Some(chunk) = stream.next().await {
+            if DOWNLOAD_CANCELLED.load(Ordering::SeqCst) {
+                let _ = std::fs::remove_file(&file_path);
+                log::info!("下载已被用户取消");
+                return Err("Download cancelled".to_string());
+            }
+
+            match chunk {
+                Ok(data) => {
+                    if let Err(e) = file.write_all(&data) {
+                        log::error!("写入文件失败: {}", e);
+                        stream_error = Some(format!("Failed to write file: {}", e));
+                        break;
+                    }
+                    downloaded += data.len() as u64;
+
+                    if total_size > 0 {
+                        let progress = (downloaded as f64 / total_size as f64) * 100.0;
+                        let current_progress = progress as u32;
+                        if current_progress != last_reported_progress {
+                            last_reported_progress = current_progress;
+                            log::debug!("下载进度: {}%", current_progress);
+                            app.emit("update-download-progress", current_progress).unwrap_or(());
+                        }
+                    }
+                }
+                Err(e) => {
+                    log::error!("读取数据块失败: {}", e);
+                    stream_error = Some(format!("Failed to read chunk: {}", e));
+                    break;
+                }
             }
         }
+
+        if let Some(err) = stream_error {
+            last_error = err;
+            let _ = std::fs::remove_file(&file_path);
+            continue;
+        }
+
+        // 确保最终到达 100%
+        if total_size == 0 || last_reported_progress < 100 {
+            app.emit("update-download-progress", 100).unwrap_or(());
+        }
+
+        file.flush().map_err(|e| {
+            log::error!("刷新文件失败: {}", e);
+            format!("Failed to flush file: {}", e)
+        })?;
+
+        log::info!("下载完成，已保存到: {:?}", file_path);
+        succeeded = true;
+        break;
     }
 
-    // 确保最终到达 100%（无论 total_size 是否为 0）
-    if total_size == 0 || last_reported_progress < 100 {
-        app.emit("update-download-progress", 100)
-            .unwrap_or(());
+    if succeeded {
+        Ok(file_path.to_string_lossy().to_string())
+    } else {
+        Err(last_error)
     }
-
-    file.flush().map_err(|e| {
-        log::error!("刷新文件失败: {}", e);
-        format!("Failed to flush file: {}", e)
-    })?;
-
-    log::info!("下载完成，已保存到: {:?}", file_path);
-
-    Ok(file_path.to_string_lossy().to_string())
 }
 
 /// Tauri IPC 命令：启动已下载的更新安装包并退出应用
