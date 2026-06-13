@@ -149,9 +149,7 @@ body {
     left: 0;
     transform-origin: 0 0;
     background-color: var(--color-surface-elevated);
-    contain: layout style;
-    backface-visibility: hidden;
-    -webkit-backface-visibility: hidden;
+    contain: layout style paint;
     touch-action: none;
 }
 
@@ -160,6 +158,7 @@ body {
 }
 
 .canvas-wrapper.smooth-transform {
+    will-change: transform;
     transition-property: transform;
     transition-timing-function: cubic-bezier(0.33, 1, 0.68, 1);
 }
@@ -177,8 +176,6 @@ body {
     background-color: transparent;
     pointer-events: none;
     image-rendering: auto;
-    backface-visibility: hidden;
-    -webkit-backface-visibility: hidden;
 }
 
 .draw-overlay {
@@ -197,7 +194,6 @@ body {
     pointer-events: none;
     object-fit: contain;
     contain: strict;
-    will-change: transform;
     backface-visibility: hidden;
     content-visibility: auto;
 }
@@ -980,19 +976,20 @@ body {
 
 /* ===== 文档阅读器面板 ===== */
 .document-reader-panel {
-    position: absolute;
-    top: 0;
-    left: 0;
-    right: 0;
-    bottom: 0;
+    position: fixed;
+    inset: 0;
     z-index: 5;
     background: var(--color-surface-card);
     transform: translateY(-100%);
     transition: transform 0.35s cubic-bezier(0.25, 0.46, 0.45, 0.94);
-    will-change: transform;
     overflow: hidden;
     display: flex;
     flex-direction: column;
+}
+
+.document-reader-panel.active {
+    transform: translateY(0);
+    will-change: transform;
 }
 
 .document-reader-panel.active {

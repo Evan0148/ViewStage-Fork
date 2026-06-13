@@ -251,6 +251,10 @@ async function settings_load_camera_config() {
                 DRAW_CONFIG.eraserSpeedEnabled = !!settings.eraserSpeedEnabled;
             }
 
+            if (settings.momentumEnabled !== undefined) {
+                DRAW_CONFIG.momentumEnabled = !!settings.momentumEnabled;
+            }
+
             const themeName = settings.theme || 'com.viewstage.theme.simplify';
             if (typeof themeName === 'string' && themeName) {
                 await ThemeManager.theme_update_active(themeName);
@@ -369,14 +373,6 @@ async function main_init_all() {
         console.log('[init] dir_init_cache_path begin');
         await dir_init_cache_path();
         console.log('[init] dir_init_cache_path done');
-
-        try {
-            console.log('[init] cache_validate_auto_clear');
-            const cleared = await window.__TAURI__.core.invoke('cache_validate_auto_clear');
-            console.log('[init] cache_validate_auto_clear result:', cleared);
-        } catch (e) {
-            console.log('[init] cache_validate_auto_clear error:', e);
-        }
 
         console.log('[init] settings_load_camera_config begin');
         await settings_load_camera_config();
@@ -499,6 +495,11 @@ async function main_init_all() {
                 console.log('[init] 关闭启动界面失败:', e);
             }
         }
+
+        // 缓存清理验证（延迟执行，不阻塞启动）
+        setTimeout(() => {
+            window.__TAURI__?.core?.invoke('cache_validate_auto_clear').catch(() => {});
+        }, 2000);
 
         // 恢复上次打开的文档（延迟执行，确保主窗口已完全加载）
         if (window.documentReaderManager) {

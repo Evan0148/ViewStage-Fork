@@ -1020,9 +1020,6 @@ button {
 
 .select-options {
     position: absolute;
-    top: calc(100% + 4px);
-    left: 0;
-    right: 0;
     background: var(--color-surface-elevated, rgba(30, 30, 30, 0.95));
     border: 1px solid var(--color-hairline, rgba(255, 255, 255, 0.15));
     border-radius: var(--rounded-md, 6px);
@@ -1030,11 +1027,12 @@ button {
     opacity: 0;
     visibility: hidden;
     transform: translateY(-8px);
-    transition: all 0.2s ease;
-    z-index: 100;
+    transition: opacity 0.2s ease, visibility 0.2s ease, transform 0.2s ease;
+    z-index: 1000;
 }
 
-.custom-select.open .select-options {
+/* .custom-select.open .select-options 仅在未 portal 时生效 */
+.custom-select.open > .select-options {
     opacity: 1;
     visibility: visible;
     transform: translateY(0);

@@ -238,9 +238,9 @@ class TileRenderer {
         const ctx = info.ctx;
         if (!canvas || !ctx) return;
 
-        // 保存旧内容，resize 后作为占位图写入，避免 clear → rebuild 间的白屏
+        // 仅在 DPR 提升时保存 snapshot（缩小后必然被 rebuild 覆盖，无需占位）
         let snapshot = null;
-        if (canvas.width > 0 && canvas.height > 0) {
+        if (newDpr > info.dpr && canvas.width > 0 && canvas.height > 0) {
             snapshot = document.createElement('canvas');
             snapshot.width = canvas.width;
             snapshot.height = canvas.height;
@@ -494,6 +494,15 @@ class TileRenderer {
     mark_all() {
         for (const info of this.tileInfos) {
             this.dirty.add(info.key);
+        }
+    }
+
+    mark_visible() {
+        const keys = this.get_visible_keys();
+        for (const info of this.tileInfos) {
+            if (keys.has(info.key)) {
+                this.dirty.add(info.key);
+            }
         }
     }
 

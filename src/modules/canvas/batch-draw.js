@@ -140,6 +140,16 @@ class RealtimeBatchDrawManager {
         this._overlayCtx = null;
     }
 
+    /** 缩放期间隐藏 overlay，释放 GPU 合成层 */
+    hide_overlay() {
+        if (this._overlayCanvas) this._overlayCanvas.style.visibility = 'hidden';
+    }
+
+    /** 缩放结束后恢复 overlay */
+    show_overlay() {
+        if (this._overlayCanvas) this._overlayCanvas.style.visibility = '';
+    }
+
     _sync_overlay_transform() {
         if (!this._overlayCtx) return;
         const dpr = this._overlayDpr;

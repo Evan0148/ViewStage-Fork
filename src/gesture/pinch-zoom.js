@@ -33,6 +33,16 @@ export class PinchZoomSource {
         this._toleranceSq = 0;
         this._beyondTolerance = false;
 
+        // 预分配热路径对象（避免每帧 GC）
+        this._finger0 = { x: 0, y: 0 };
+        this._finger1 = { x: 0, y: 0 };
+        this._deltaPayload = {
+            scale: 1, centerX: 0, centerY: 0,
+            originScale: 1, deltaScale: 0,
+            startMidX: 0, startMidY: 0,
+            finger0: this._finger0, finger1: this._finger1,
+        };
+
         /** @type {function({ scale: number, centerX: number, centerY: number, originScale: number, deltaScale: number })|null} */
         this.onPinchStarted = null;
 
@@ -88,8 +98,10 @@ export class PinchZoomSource {
         this._startDistance = Math.sqrt(dx * dx + dy * dy);
         this._startMidX = (positions[0].x + positions[1].x) / 2;
         this._startMidY = (positions[0].y + positions[1].y) / 2;
-        this._startFinger0 = { x: positions[0].x, y: positions[0].y };
-        this._startFinger1 = { x: positions[1].x, y: positions[1].y };
+        this._startFinger0.x = positions[0].x;
+        this._startFinger0.y = positions[0].y;
+        this._startFinger1.x = positions[1].x;
+        this._startFinger1.y = positions[1].y;
         this._currentScale = 1;
         this._beyondTolerance = false;
 
@@ -145,17 +157,19 @@ export class PinchZoomSource {
         }
 
         if (this.onPinchDelta) {
-            this.onPinchDelta({
-                scale: targetScale,
-                centerX: midX,
-                centerY: midY,
-                originScale: this._startDistance > 0 ? currentDist / this._startDistance : 1,
-                deltaScale: deltaScale,
-                startMidX: this._startMidX,
-                startMidY: this._startMidY,
-                finger0: { x: positions[0].x, y: positions[0].y },
-                finger1: { x: positions[1].x, y: positions[1].y },
-            });
+            this._finger0.x = positions[0].x;
+            this._finger0.y = positions[0].y;
+            this._finger1.x = positions[1].x;
+            this._finger1.y = positions[1].y;
+            const p = this._deltaPayload;
+            p.scale = targetScale;
+            p.centerX = midX;
+            p.centerY = midY;
+            p.originScale = this._startDistance > 0 ? currentDist / this._startDistance : 1;
+            p.deltaScale = deltaScale;
+            p.startMidX = this._startMidX;
+            p.startMidY = this._startMidY;
+            this.onPinchDelta(p);
         }
     }
 
@@ -172,8 +186,10 @@ export class PinchZoomSource {
         if (!this._isPinching) return;
         this._isPinching = false;
         this._pinchIds = [];
-        this._startFinger0 = { x: 0, y: 0 };
-        this._startFinger1 = { x: 0, y: 0 };
+        this._startFinger0.x = 0;
+        this._startFinger0.y = 0;
+        this._startFinger1.x = 0;
+        this._startFinger1.y = 0;
 
         if (this.onPinchCompleted) {
             this.onPinchCompleted({

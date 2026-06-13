@@ -34,18 +34,30 @@ let zoom_complete_timer_id = null;   // 双指缩放结束后延迟批量更新 
 
 /** 标记缩放进行中，重置延迟批量更新定时器（缩放期间跳过 tile/overlay 逐帧更新） */
 function main_set_zooming() {
-    state.isZooming = true;
-    if (zoom_complete_timer_id !== null) {
-        clearTimeout(zoom_complete_timer_id);
+    if (!state.isZooming) {
+        state.isZooming = true;
+        // 缩放开始，隐藏 overlay 释放 GPU 合成层
+        if (window.batchDrawManager) window.batchDrawManager.hide_overlay();
     }
+    if (zoom_complete_timer_id !== null) clearTimeout(zoom_complete_timer_id);
     zoom_complete_timer_id = setTimeout(() => {
         zoom_complete_timer_id = null;
         state.isZooming = false;
-        if (window.tileRenderer) {
-            window.tileRenderer.update_visible_tile_dpr(state.scale, false, true);
-        }
-        if (window.batchDrawManager) {
-            window.batchDrawManager.update_overlay_dpr(state.scale);
+        // 缩放结束，恢复 overlay
+        if (window.batchDrawManager) window.batchDrawManager.show_overlay();
+        // 延迟 tile 重建到浏览器空闲时，避免最后一帧 jank
+        const doTileUpdate = () => {
+            if (window.tileRenderer) {
+                window.tileRenderer.update_visible_tile_dpr(state.scale, false, true);
+            }
+            if (window.batchDrawManager) {
+                window.batchDrawManager.update_overlay_dpr(state.scale);
+            }
+        };
+        if (window.requestIdleCallback) {
+            window.requestIdleCallback(doTileUpdate, { timeout: 500 });
+        } else {
+            doTileUpdate();
         }
     }, 300);
 }
@@ -57,6 +69,8 @@ function main_cancel_zoom_debounce() {
         zoom_complete_timer_id = null;
     }
     state.isZooming = false;
+    // 立即恢复 overlay
+    if (window.batchDrawManager) window.batchDrawManager.show_overlay();
 }
 
 /** 取消缓动动画，移除 CSS transition，防止与新手势冲突 */
@@ -126,6 +140,7 @@ function main_cancel_momentum() {
  * @param {'xy'|'xyv'} mode - 'xy': 仅平移动量，'xyv': 平移+缩放动量
  */
 function main_start_momentum(mode = 'xy') {
+    if (!DRAW_CONFIG.momentumEnabled) return;
     main_cancel_smooth_transform();
     if (state._momentumRaf !== null) return;
     state._momentumRaf = requestAnimationFrame(() => main_momentum_tick(mode));
@@ -223,6 +238,7 @@ const DRAW_CONFIG = {
     eraserSpeedFactor: 0.3,
     palmEraserEnabled: false,
     palmEraserSize: 60,
+    momentumEnabled: false,
     minScale: 0.5,
     maxScale: 3,
     maxScaleCamera: 2,
@@ -608,6 +624,11 @@ let state = {
     startCanvasY: 0,
     startFinger0CX: 0,
     startFinger0CY: 0,
+
+    // 弹性 overscroll 状态
+    _isOverscrolling: false,
+    _overscrollDisplayX: 0,
+    _overscrollDisplayY: 0,
 
     // 惯性（动量）系统
     _gestureVx: 0,
@@ -1846,23 +1867,62 @@ function main_setup_gesture_system() {
     pinch.onPinchDelta = (ev) => {
         if (!state.isScaling) return;
         const maxScale = state.isCameraOpen ? DRAW_CONFIG.maxScaleCamera : DRAW_CONFIG.maxScaleImage;
-        state.scale = Math.max(DRAW_CONFIG.minScale, Math.min(maxScale, state.startScale * ev.scale));
+        const unclampedScale = state.startScale * ev.scale;
+        state.scale = Math.max(DRAW_CONFIG.minScale, Math.min(maxScale, unclampedScale));
+
+        if (state.scale !== unclampedScale) {
+            state.startFinger0CX = (ev.finger0.x - state.canvasX) / state.scale;
+            state.startFinger0CY = (ev.finger0.y - state.canvasY) / state.scale;
+            state.startScale = state.scale;
+        }
 
         state.canvasX = ev.finger0.x - state.startFinger0CX * state.scale;
         state.canvasY = ev.finger0.y - state.startFinger0CY * state.scale;
 
         main_update_move_bound();
         main_update_canvas_position();
+
+        // 弹性 overscroll（仅显示层，不污染 state.canvasX/Y，保持 velocity 追踪准确）
+        const mb = state.moveBound;
+        state._isOverscrolling = false;
+        let displayX = state.canvasX;
+        let displayY = state.canvasY;
+
+        if (state.canvasX < mb.minX) {
+            const excess = state.canvasX - mb.minX;
+            state._isOverscrolling = true;
+            displayX = mb.minX + excess * 0.3;
+        } else if (state.canvasX > mb.maxX) {
+            const excess = state.canvasX - mb.maxX;
+            state._isOverscrolling = true;
+            displayX = mb.maxX + excess * 0.3;
+        }
+
+        if (state.canvasY < mb.minY) {
+            const excess = state.canvasY - mb.minY;
+            state._isOverscrolling = true;
+            displayY = mb.minY + excess * 0.3;
+        } else if (state.canvasY > mb.maxY) {
+            const excess = state.canvasY - mb.maxY;
+            state._isOverscrolling = true;
+            displayY = mb.maxY + excess * 0.3;
+        }
+
+        if (state._isOverscrolling) {
+            state._overscrollDisplayX = displayX;
+            state._overscrollDisplayY = displayY;
+        }
+
         main_update_gesture_velocity(true);
 
-        const transform = `translate3d(${state.canvasX}px, ${state.canvasY}px, 0) scale(${state.scale})`;
-        dom.canvasWrapper.style.transform = transform;
-        last_canvas_transform.x = state.canvasX;
-        last_canvas_transform.y = state.canvasY;
-        last_canvas_transform.scale = state.scale;
+        // 脏检查 + rAF 节流（与拖拽路径对齐，避免每帧直接写 DOM）
+        if (last_canvas_transform.x !== displayX ||
+            last_canvas_transform.y !== displayY ||
+            last_canvas_transform.scale !== state.scale) {
+            main_update_transform_schedule(displayX, displayY, state.scale);
+        }
 
         main_set_zooming();
-        main_update_eraser_hint_size();
     };
 
     pinch.onPinchCompleted = () => {
@@ -1888,7 +1948,12 @@ function main_setup_gesture_system() {
             main_update_move_bound();
             main_update_canvas_position();
 
-            if (Math.abs(state._gestureVx) > 2 || Math.abs(state._gestureVy) > 2) {
+            if (state._isOverscrolling) {
+                state._isOverscrolling = false;
+                const snapX = Math.max(state.moveBound.minX, Math.min(state.moveBound.maxX, state._overscrollDisplayX));
+                const snapY = Math.max(state.moveBound.minY, Math.min(state.moveBound.maxY, state._overscrollDisplayY));
+                main_update_canvas_transform_smooth(snapX, snapY, state.scale, 250);
+            } else if (Math.abs(state._gestureVx) > 2 || Math.abs(state._gestureVy) > 2) {
                 main_start_momentum('xy');
             } else {
                 main_update_canvas_transform_smooth(state.canvasX, state.canvasY, state.scale, 200);
@@ -2981,18 +3046,28 @@ function main_handle_wheel(e) {
         state.canvasX = targetX;
         state.canvasY = targetY;
         
+        // 标记缩放进行中，抑制 main_update_transform_schedule 中逐帧 DPR 更新
+        state.isZooming = true;
+        if (zoom_complete_timer_id !== null) {
+            clearTimeout(zoom_complete_timer_id);
+        }
+        
+        // wheel 缩放期间启用 GPU 合成层
+        dom.canvasWrapper.style.willChange = 'transform';
+        
         main_update_move_bound();
         main_update_canvas_position();
         // 连续缩放用 RAF 直写 transform，避免 CSS transition 每 tick 重算
         main_update_transform_schedule(state.canvasX, state.canvasY, state.scale);
         
         main_update_eraser_hint_size();
-        if (window.tileRenderer) window.tileRenderer.mark_all();
+        if (window.tileRenderer) window.tileRenderer.mark_visible();
         
         // wheel 滚动停稳后缓动归位，防抖 150ms
         if (wheel_smooth_timer_id !== null) clearTimeout(wheel_smooth_timer_id);
         wheel_smooth_timer_id = setTimeout(() => {
             wheel_smooth_timer_id = null;
+            state.isZooming = false;
             main_update_canvas_transform_smooth(state.canvasX, state.canvasY, state.scale, 150);
         }, 150);
     }
@@ -3123,12 +3198,8 @@ function main_handle_touch_move(e) {
         const transform = `translate3d(${state.canvasX}px, ${state.canvasY}px, 0) scale(${state.scale})`;
         dom.canvasWrapper.style.transform = transform;
         
-        if (window.tileRenderer) {
-            window.tileRenderer.update_visible_tile_dpr(state.scale, false, true);
-        }
-        if (window.batchDrawManager) {
-            window.batchDrawManager.update_overlay_dpr(state.scale);
-        }
+        // 平移时 scale 不变，跳过 tile/overlay DPR 更新
+        if (window.tileRenderer) window.tileRenderer.cancel_idle_shrink();
         
         last_canvas_transform.x = state.canvasX;
         last_canvas_transform.y = state.canvasY;
@@ -3314,14 +3385,15 @@ function main_update_canvas_transform() {
         return;
     }
     
+    const scaleChanged = last_canvas_transform.scale !== state.scale;
     last_canvas_transform.x = state.canvasX;
     last_canvas_transform.y = state.canvasY;
     last_canvas_transform.scale = state.scale;
     
-    const transform = `translate3d(${state.canvasX}px, ${state.canvasY}px, 0) scale(${state.scale})`;
-    dom.canvasWrapper.style.transform = transform;
+    dom.canvasWrapper.style.transform = 'translate3d(' + state.canvasX + 'px, ' + state.canvasY + 'px, 0) scale(' + state.scale + ')';
 
-    if (window.tileRenderer) {
+    // 仅 scale 变化时更新 tile DPR（平移/惯性期间跳过冗余调用）
+    if (scaleChanged && window.tileRenderer) {
         window.tileRenderer.update_visible_tile_dpr(state.scale, false, true);
     }
     if (window.batchDrawManager) {
@@ -3348,12 +3420,12 @@ function main_update_canvas_transform_smooth(targetX, targetY, targetScale, dura
     
     dom.canvasWrapper.style.transitionDuration = duration + 'ms';
     dom.canvasWrapper.classList.add('smooth-transform');
-    dom.canvasWrapper.style.transform = `translate3d(${state.canvasX}px, ${state.canvasY}px, 0) scale(${state.scale})`;
+    dom.canvasWrapper.style.transform = 'translate3d(' + state.canvasX + 'px, ' + state.canvasY + 'px, 0) scale(' + state.scale + ')';
 
-    // 更新瓦片与覆盖层（含 mark_all 确保缩放结束后全量重绘）
+    // 更新瓦片与覆盖层（内部有 hysteresis 保护，不会冗余重建）
     if (window.tileRenderer) {
+        window.tileRenderer.mark_visible();
         window.tileRenderer.update_visible_tile_dpr(state.scale, false, true);
-        window.tileRenderer.mark_all();
     }
     if (window.batchDrawManager) {
         window.batchDrawManager.update_overlay_dpr(state.scale);
@@ -3363,6 +3435,7 @@ function main_update_canvas_transform_smooth(targetX, targetY, targetScale, dura
         currentAnimationId = null;
         dom.canvasWrapper.classList.remove('smooth-transform');
         dom.canvasWrapper.style.transitionDuration = '';
+        dom.canvasWrapper.style.willChange = '';
     }, duration);
 }
 

@@ -55,6 +55,11 @@ class BlackboardManager {
         this._touch_raf_id = null;               // 捏合缩放 rAF 节流 ID
         this._touch_pending_data = null;          // 待处理的触摸数据 { t0, t1 }
 
+        // transform rAF 节流（拖拽/捏合共用）
+        this._pending_bb_transform = null;
+        this._bb_transform_raf_id = null;
+        this._bb_last_transform = { x: 0, y: 0, scale: 1 };
+
         this._smooth_transform_timeout_id = null; // will-change 延迟移除定时器
         this._zoom_complete_timer_id = null;       // 缩放完成延迟重绘定时器
 
@@ -70,6 +75,11 @@ class BlackboardManager {
         this.screen_w = 0;
         this.screen_h = 0;
         this._last_loaded_index = -1;
+
+        // 弹性 overscroll 状态
+        this._is_overscrolling = false;
+        this._overscroll_display_x = 0;
+        this._overscroll_display_y = 0;
 
         // gesture 模块实例
         this._input_source = null;
@@ -129,7 +139,7 @@ class BlackboardManager {
         lt.y = s.canvas_y;
         lt.scale = s.scale;
 
-        this.bb_wrapper.style.transform = `translate3d(${s.canvas_x}px, ${s.canvas_y}px, 0) scale(${s.scale})`;
+        this.bb_wrapper.style.transform = 'translate3d(' + s.canvas_x + 'px, ' + s.canvas_y + 'px, 0) scale(' + s.scale + ')';
 
         // 缩放进行中跳过 tile 更新，由缩放结束后批量刷新
         if (s.is_zooming) return;
@@ -139,13 +149,50 @@ class BlackboardManager {
         }
     }
 
+    /** rAF 节流版 sync_transform：合并多帧调用，每帧最多一次 DOM 写入 */
+    _sync_bb_transform_schedule(x, y, scale) {
+        this._pending_bb_transform = { x, y, scale };
+        if (this._bb_transform_raf_id === null) {
+            this._bb_transform_raf_id = requestAnimationFrame(() => {
+                const pt = this._pending_bb_transform;
+                this._pending_bb_transform = null;
+                this._bb_transform_raf_id = null;
+                if (pt) {
+                    const s = this.bb_state;
+                    const saved_x = s.canvas_x;
+                    const saved_y = s.canvas_y;
+                    s.canvas_x = pt.x;
+                    s.canvas_y = pt.y;
+                    this._sync_bb_transform();
+                    s.canvas_x = saved_x;
+                    s.canvas_y = saved_y;
+                }
+            });
+        }
+    }
+
+    /** 立即取消 rAF 节流并 flush 最终位置（手势结束时调用） */
+    _flush_bb_transform(x, y, scale) {
+        if (this._bb_transform_raf_id !== null) {
+            cancelAnimationFrame(this._bb_transform_raf_id);
+            this._bb_transform_raf_id = null;
+        }
+        this._pending_bb_transform = null;
+        const s = this.bb_state;
+        const saved_x = s.canvas_x;
+        const saved_y = s.canvas_y;
+        s.canvas_x = x;
+        s.canvas_y = y;
+        this._sync_bb_transform();
+        s.canvas_x = saved_x;
+        s.canvas_y = saved_y;
+    }
+
     /** 标记缩放进行中，延迟 300ms 后触发批量重绘 */
     _set_zooming() {
         const s = this.bb_state;
-        s.is_zooming = true;
-        if (this._zoom_complete_timer_id !== null) {
-            clearTimeout(this._zoom_complete_timer_id);
-        }
+        if (!s.is_zooming) s.is_zooming = true;
+        if (this._zoom_complete_timer_id !== null) clearTimeout(this._zoom_complete_timer_id);
         this._zoom_complete_timer_id = setTimeout(() => {
             this._zoom_complete_timer_id = null;
             s.is_zooming = false;
@@ -209,6 +256,7 @@ class BlackboardManager {
     }
 
     _start_momentum() {
+        if (window.DRAW_CONFIG && !window.DRAW_CONFIG.momentumEnabled) return;
         this._cancel_momentum();
         if (this._momentum_raf !== null) return;
         this._momentum_raf = requestAnimationFrame(() => this._momentum_tick());
@@ -712,7 +760,12 @@ class BlackboardManager {
                 s.canvas_y = ev.position.y - s.start_drag_y;
                 this._update_canvas_position();
                 this._update_bb_gesture_velocity();
-                this._sync_bb_transform();
+                // 脏检查 + rAF 节流
+                if (this._bb_last_transform.x !== s.canvas_x ||
+                    this._bb_last_transform.y !== s.canvas_y ||
+                    this._bb_last_transform.scale !== s.scale) {
+                    this._sync_bb_transform_schedule(s.canvas_x, s.canvas_y, s.scale);
+                }
                 return;
             }
 
@@ -747,6 +800,8 @@ class BlackboardManager {
             // 拖拽结束
             if (s.is_dragging) {
                 s.is_dragging = false;
+                // 立即 flush 最终位置（取消 rAF 节流）
+                this._flush_bb_transform(s.canvas_x, s.canvas_y, s.scale);
                 this._touch_schedule_disable_gpu();
                 if (this.draw_mode === 'move' && (Math.abs(this._gesture_vx) > 2 || Math.abs(this._gesture_vy) > 2)) {
                     this._update_move_bound();
@@ -819,22 +874,72 @@ class BlackboardManager {
 
             const max_scale = window.DRAW_CONFIG ? window.DRAW_CONFIG.maxScaleImage : 3;
             const min_scale = window.DRAW_CONFIG?.minScale || 0.5;
-            s.scale = Math.max(min_scale, Math.min(max_scale, s.start_scale * ev.scale));
+            const unclamped_s = s.start_scale * ev.scale;
+            s.scale = Math.max(min_scale, Math.min(max_scale, unclamped_s));
+
+            if (s.scale !== unclamped_s) {
+                s.start_finger0_cx = (ev.finger0.x - s.canvas_x) / s.scale;
+                s.start_finger0_cy = (ev.finger0.y - s.canvas_y) / s.scale;
+                s.start_scale = s.scale;
+            }
 
             s.canvas_x = ev.finger0.x - s.start_finger0_cx * s.scale;
             s.canvas_y = ev.finger0.y - s.start_finger0_cy * s.scale;
 
-            this._set_zooming();
             this._update_move_bound();
             this._update_canvas_position();
+
+            // 弹性 overscroll（仅显示层）
+            const mb = s.move_bound;
+            this._is_overscrolling = false;
+            let display_x = s.canvas_x;
+            let display_y = s.canvas_y;
+
+            if (s.canvas_x < mb.min_x) {
+                const excess = s.canvas_x - mb.min_x;
+                this._is_overscrolling = true;
+                display_x = mb.min_x + excess * 0.3;
+                this._overscroll_display_x = display_x;
+                this._overscroll_display_y = display_y;
+            } else if (s.canvas_x > mb.max_x) {
+                const excess = s.canvas_x - mb.max_x;
+                this._is_overscrolling = true;
+                display_x = mb.max_x + excess * 0.3;
+                this._overscroll_display_x = display_x;
+                this._overscroll_display_y = display_y;
+            }
+
+            if (s.canvas_y < mb.min_y) {
+                const excess = s.canvas_y - mb.min_y;
+                this._is_overscrolling = true;
+                display_y = mb.min_y + excess * 0.3;
+                this._overscroll_display_x = display_x;
+                this._overscroll_display_y = display_y;
+            } else if (s.canvas_y > mb.max_y) {
+                const excess = s.canvas_y - mb.max_y;
+                this._is_overscrolling = true;
+                display_y = mb.max_y + excess * 0.3;
+                this._overscroll_display_x = display_x;
+                this._overscroll_display_y = display_y;
+            }
+
+            this._set_zooming();
             this._update_bb_gesture_velocity();
-            this._sync_bb_transform();
+
+            // rAF 节流更新 transform
+            this._sync_bb_transform_schedule(display_x, display_y, s.scale);
         };
 
         pinch.onPinchCompleted = () => {
             if (!this.is_open) return;
             const s = this.bb_state;
             s.is_scaling = false;
+            // 取消 rAF 节流，避免回调覆盖后续 smooth transition
+            if (this._bb_transform_raf_id !== null) {
+                cancelAnimationFrame(this._bb_transform_raf_id);
+                this._bb_transform_raf_id = null;
+            }
+            this._pending_bb_transform = null;
             this._cancel_zoom_debounce();
 
             if (input.activeCount === 1 && this.draw_mode === 'move') {
@@ -845,11 +950,19 @@ class BlackboardManager {
                     s.start_drag_y = ev.position.y - s.canvas_y;
                 }
             } else if (input.activeCount === 0) {
-                this._update_move_bound();
-                this._update_canvas_position();
-                this._sync_bb_transform();
-                if (this.draw_mode === 'move' && (Math.abs(this._gesture_vx) > 2 || Math.abs(this._gesture_vy) > 2)) {
-                    this._start_momentum();
+                if (this._is_overscrolling) {
+                    this._is_overscrolling = false;
+                    const mb = this.bb_state.move_bound;
+                    const snap_x = Math.max(mb.min_x, Math.min(mb.max_x, this._overscroll_display_x));
+                    const snap_y = Math.max(mb.min_y, Math.min(mb.max_y, this._overscroll_display_y));
+                    this._sync_bb_transform_smooth(snap_x, snap_y, this.bb_state.scale, 250);
+                } else {
+                    this._update_move_bound();
+                    this._update_canvas_position();
+                    this._sync_bb_transform();
+                    if (this.draw_mode === 'move' && (Math.abs(this._gesture_vx) > 2 || Math.abs(this._gesture_vy) > 2)) {
+                        this._start_momentum();
+                    }
                 }
                 this._touch_schedule_disable_gpu();
             }

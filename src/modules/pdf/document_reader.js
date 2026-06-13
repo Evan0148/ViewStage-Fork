@@ -95,6 +95,18 @@ class DocumentReaderManager {
         this.dr_min_scale = 0.25;
         this.dr_max_scale = 4;
         this.dr_cached_inv_scale = 1;
+
+        // _dr_update_move_bound 缓存（避免每帧读 scrollWidth/scrollHeight 触发布局）
+        this._dr_mb_cache_cw = -1;
+        this._dr_mb_cache_ch = -1;
+        this._dr_mb_cache_vw = -1;
+        this._dr_mb_cache_vh = -1;
+        this._dr_mb_cache_scale = -1;
+
+        // 弹性 overscroll 状态
+        this._dr_is_overscrolling = false;
+        this._dr_overscroll_display_x = 0;
+        this._dr_overscroll_display_y = 0;
         this._zoom_wrapper = null;
         this._dr_is_zooming = false;            // 缩放进行中标记，缩放结束后延迟批量重绘
         this._zoom_complete_timer = null;        // 缩放结束延迟触发重绘
@@ -102,6 +114,11 @@ class DocumentReaderManager {
         // 触摸手势优化状态
         this._touch_raf_id = null;               // 捏合缩放 rAF 节流 ID
         this._dr_touch_pending = null;            // 捏合缩放最新触摸数据（rAF 节流用）
+
+        // transform rAF 节流（拖拽/捏合共用）
+        this._dr_pending_transform = null;
+        this._dr_transform_raf_id = null;
+        this._dr_last_transform = { x: 0, y: 0, scale: 1 };
 
         // 惯性（动量）系统
         this._dr_momentum_raf = null;
@@ -375,6 +392,12 @@ class DocumentReaderManager {
         this.dr_is_dragging = false;
         this.dr_move_bound = { min_x: 0, max_x: 0, min_y: 0, max_y: 0 };
         this.dr_cached_inv_scale = 1;
+        this._dr_mb_cache_cw = -1;
+        this._dr_mb_cache_ch = -1;
+        this._dr_mb_cache_vw = -1;
+        this._dr_mb_cache_vh = -1;
+        this._dr_last_transform = { x: 0, y: 0, scale: 1 };
+        this._dr_mb_cache_scale = -1;
         this._zoom_wrapper = null;
         this._cached_container_rect = null;
 
@@ -809,7 +832,7 @@ class DocumentReaderManager {
         // 容器位置在滚动/缩放中不变，缓存复用避免触发布局
         if (!this._cached_container_rect) {
             const cr = this._scroll_container.getBoundingClientRect();
-            this._cached_container_rect = { top: cr.top, bottom: cr.bottom };
+            this._cached_container_rect = { top: cr.top, bottom: cr.bottom, left: cr.left };
         }
         const container_top = this._cached_container_rect.top;
         const container_bottom = this._cached_container_rect.bottom;
@@ -2179,7 +2202,12 @@ class DocumentReaderManager {
                 this.dr_canvas_y = ev.position.y - this.dr_start_drag_y;
                 this._dr_update_canvas_position();
                 this._dr_update_gesture_velocity();
-                this._dr_sync_transform();
+                // 脏检查 + rAF 节流
+                if (this._dr_last_transform.x !== this.dr_canvas_x ||
+                    this._dr_last_transform.y !== this.dr_canvas_y ||
+                    this._dr_last_transform.scale !== this.dr_scale) {
+                    this._dr_sync_transform_schedule(this.dr_canvas_x, this.dr_canvas_y, this.dr_scale);
+                }
                 return;
             }
 
@@ -2283,14 +2311,53 @@ class DocumentReaderManager {
         pinch.onPinchDelta = (ev) => {
             if (!this.is_open || !this.dr_is_scaling) return;
 
-            const target_s = Math.max(this.dr_min_scale, Math.min(this.dr_max_scale, this.dr_start_scale * ev.scale));
-            this.dr_scale = target_s;
+            const unclamped_s = this.dr_start_scale * ev.scale;
+            this.dr_scale = Math.max(this.dr_min_scale, Math.min(this.dr_max_scale, unclamped_s));
+
+            if (this.dr_scale !== unclamped_s) {
+                this.dr_start_finger0_cx = (ev.finger0.x - this.dr_canvas_x) / this.dr_scale;
+                this.dr_start_finger0_cy = (ev.finger0.y - this.dr_canvas_y) / this.dr_scale;
+                this.dr_start_scale = this.dr_scale;
+            }
+
             this.dr_canvas_x = ev.finger0.x - this.dr_start_finger0_cx * this.dr_scale;
             this.dr_canvas_y = ev.finger0.y - this.dr_start_finger0_cy * this.dr_scale;
 
+            this._dr_update_move_bound();
+            this._dr_update_canvas_position();
+
+            // 弹性 overscroll（仅显示层）
+            const mb = this.dr_move_bound;
+            this._dr_is_overscrolling = false;
+            let display_x = this.dr_canvas_x;
+            let display_y = this.dr_canvas_y;
+
+            if (this.dr_canvas_x < mb.min_x) {
+                display_x = mb.min_x + (this.dr_canvas_x - mb.min_x) * 0.3;
+                this._dr_is_overscrolling = true;
+            } else if (this.dr_canvas_x > mb.max_x) {
+                display_x = mb.max_x + (this.dr_canvas_x - mb.max_x) * 0.3;
+                this._dr_is_overscrolling = true;
+            }
+
+            if (this.dr_canvas_y < mb.min_y) {
+                display_y = mb.min_y + (this.dr_canvas_y - mb.min_y) * 0.3;
+                this._dr_is_overscrolling = true;
+            } else if (this.dr_canvas_y > mb.max_y) {
+                display_y = mb.max_y + (this.dr_canvas_y - mb.max_y) * 0.3;
+                this._dr_is_overscrolling = true;
+            }
+
+            if (this._dr_is_overscrolling) {
+                this._dr_overscroll_display_x = display_x;
+                this._dr_overscroll_display_y = display_y;
+            }
+
             this._dr_set_zooming();
             this._dr_update_gesture_velocity();
-            this._dr_apply_scale();
+
+            // rAF 节流更新 transform（缩放中跳过 tile/overlay，仅写 DOM）
+            this._dr_sync_transform_schedule(display_x, display_y, this.dr_scale);
         };
 
         pinch.onPinchCompleted = () => {
@@ -2307,14 +2374,33 @@ class DocumentReaderManager {
                     this.dr_start_drag_y = ev.position.y - this.dr_canvas_y;
                 }
             } else if (input.activeCount === 0) {
-                if (Math.abs(this._dr_gesture_vx) > 2 || Math.abs(this._dr_gesture_vy) > 2) {
+                if (this._dr_is_overscrolling) {
+                    this._dr_is_overscrolling = false;
+                    const mb = this.dr_move_bound;
+                    const snap_x = Math.max(mb.min_x, Math.min(mb.max_x, this._dr_overscroll_display_x));
+                    const snap_y = Math.max(mb.min_y, Math.min(mb.max_y, this._dr_overscroll_display_y));
+                    this.dr_canvas_x = snap_x;
+                    this.dr_canvas_y = snap_y;
+                    if (this._zoom_wrapper) {
+                        this._zoom_wrapper.style.transitionDuration = '250ms';
+                        this._zoom_wrapper.classList.add('smooth-transform');
+                    }
+                    this._dr_apply_scale();
+                    if (this._zoom_wrapper) {
+                        setTimeout(() => {
+                            this._zoom_wrapper.classList.remove('smooth-transform');
+                            this._zoom_wrapper.style.transitionDuration = '';
+                        }, 250);
+                    }
+                    this._dr_schedule_disable_smooth_transform();
+                } else if (Math.abs(this._dr_gesture_vx) > 2 || Math.abs(this._dr_gesture_vy) > 2) {
                     this._dr_update_move_bound();
                     this._dr_update_canvas_position();
                     this._dr_start_momentum();
                 } else {
                     this._check_page_visibility();
+                    this._dr_schedule_disable_smooth_transform();
                 }
-                this._dr_schedule_disable_smooth_transform();
             }
         };
 
@@ -3617,15 +3703,28 @@ class DocumentReaderManager {
         const wrapper = this._zoom_wrapper;
         const container = this._scroll_container;
         const mb = this.dr_move_bound;
+        const s = this.dr_scale;
 
-        // wrapper scrollHeight = 所有页面布局总高度（含 gap/padding）
+        // 仅在内容/视口尺寸变化时重新读取 DOM（避免每帧 layout thrashing）
         const content_w = wrapper.scrollWidth;
         const content_h = wrapper.scrollHeight;
         const viewport_w = container.clientWidth;
         const viewport_h = container.clientHeight;
 
+        const needRecompute = this._dr_mb_cache_cw !== content_w ||
+            this._dr_mb_cache_ch !== content_h ||
+            this._dr_mb_cache_vw !== viewport_w ||
+            this._dr_mb_cache_vh !== viewport_h;
+        if (needRecompute) {
+            this._dr_mb_cache_cw = content_w;
+            this._dr_mb_cache_ch = content_h;
+            this._dr_mb_cache_vw = viewport_w;
+            this._dr_mb_cache_vh = viewport_h;
+        }
+        // scale 每帧变化时仍需重算 bounds，但跳过 DOM 读取（数学计算极快）
+
         // X 方向：内容 + padding 始终居中
-        const bounded_w = content_w * this.dr_scale;
+        const bounded_w = content_w * s;
         if (bounded_w >= viewport_w) {
             mb.min_x = -(bounded_w - viewport_w);
             mb.max_x = 0;
@@ -3635,7 +3734,7 @@ class DocumentReaderManager {
         }
 
         // Y 方向
-        const bounded_h = content_h * this.dr_scale;
+        const bounded_h = content_h * s;
         if (bounded_h >= viewport_h) {
             mb.min_y = -(bounded_h - viewport_h);
             mb.max_y = 0;
@@ -3656,7 +3755,25 @@ class DocumentReaderManager {
     /** 仅同步 transform（无 LOD 更新，用于高频拖拽） */
     _dr_sync_transform() {
         if (!this._zoom_wrapper) return;
-        this._zoom_wrapper.style.transform = `translate3d(${this.dr_canvas_x}px, ${this.dr_canvas_y}px, 0) scale(${this.dr_scale})`;
+        this._zoom_wrapper.style.transform = 'translate3d(' + this.dr_canvas_x + 'px, ' + this.dr_canvas_y + 'px, 0) scale(' + this.dr_scale + ')';
+    }
+
+    /** rAF 节流版 sync_transform：合并多帧调用，每帧最多一次 DOM 写入 */
+    _dr_sync_transform_schedule(x, y, scale) {
+        this._dr_pending_transform = { x, y, scale };
+        if (this._dr_transform_raf_id === null) {
+            this._dr_transform_raf_id = requestAnimationFrame(() => {
+                const pt = this._dr_pending_transform;
+                this._dr_pending_transform = null;
+                this._dr_transform_raf_id = null;
+                if (pt && this._zoom_wrapper) {
+                    this._zoom_wrapper.style.transform = 'translate3d(' + pt.x + 'px, ' + pt.y + 'px, 0) scale(' + pt.scale + ')';
+                    this._dr_last_transform.x = pt.x;
+                    this._dr_last_transform.y = pt.y;
+                    this._dr_last_transform.scale = pt.scale;
+                }
+            });
+        }
     }
 
     /** 应用当前缩放比到 wrapper transform + TileRenderer LOD */
@@ -3696,10 +3813,8 @@ class DocumentReaderManager {
 
     /** 标记缩放进行中，延迟 300ms 后触发批量重绘 */
     _dr_set_zooming() {
-        this._dr_is_zooming = true;
-        if (this._zoom_complete_timer !== null) {
-            clearTimeout(this._zoom_complete_timer);
-        }
+        if (!this._dr_is_zooming) this._dr_is_zooming = true;
+        if (this._zoom_complete_timer !== null) clearTimeout(this._zoom_complete_timer);
         this._zoom_complete_timer = setTimeout(() => {
             this._zoom_complete_timer = null;
             this._dr_is_zooming = false;
@@ -3755,6 +3870,7 @@ class DocumentReaderManager {
     }
 
     _dr_start_momentum() {
+        if (window.DRAW_CONFIG && !window.DRAW_CONFIG.momentumEnabled) return;
         this._dr_cancel_momentum();
         if (this._dr_momentum_raf !== null) return;
         this._dr_momentum_raf = requestAnimationFrame(() => this._dr_momentum_tick());
@@ -3794,9 +3910,17 @@ class DocumentReaderManager {
             this._dr_momentum_raf = requestAnimationFrame(() => this._dr_momentum_tick());
         } else {
             this._dr_momentum_raf = null;
-            this._dr_apply_scale();
-            this._dr_schedule_disable_smooth_transform();
-            this._check_page_visibility();
+            // 延迟重量操作到浏览器空闲时，避免最后一帧 jank
+            const doFinal = () => {
+                this._dr_apply_scale();
+                this._dr_schedule_disable_smooth_transform();
+                this._check_page_visibility();
+            };
+            if (window.requestIdleCallback) {
+                window.requestIdleCallback(doFinal, { timeout: 500 });
+            } else {
+                doFinal();
+            }
         }
     }
 
@@ -3828,7 +3952,11 @@ class DocumentReaderManager {
             const ratio = new_s / old_s;
 
             // 以鼠标位置为中心缩放（Blackboard 风格）
-            const container_rect = this._scroll_container.getBoundingClientRect();
+            if (!this._cached_container_rect) {
+                const cr = this._scroll_container.getBoundingClientRect();
+                this._cached_container_rect = { top: cr.top, bottom: cr.bottom, left: cr.left };
+            }
+            const container_rect = this._cached_container_rect;
             const mouse_x = e.clientX - container_rect.left;
             const mouse_y = e.clientY - container_rect.top;
 

@@ -279,6 +279,11 @@ document.addEventListener('DOMContentLoaded', async () => {
                 if (eraserPresetsItem) {
                     eraserPresetsItem.style.display = eraserSpeedEnabled ? 'none' : '';
                 }
+                const momentumEnabled = settings.momentumEnabled !== undefined ? settings.momentumEnabled : false;
+                const momentumToggle = document.getElementById('momentumToggle');
+                if (momentumToggle) {
+                    momentumToggle.checked = momentumEnabled;
+                }
                 const palmEraserEnabled = settings.palmEraserEnabled !== undefined ? settings.palmEraserEnabled : (window.DRAW_CONFIG?.palmEraserEnabled ?? false);
                 const palmEraserToggle = document.getElementById('palmEraserToggle');
                 if (palmEraserToggle) {
@@ -751,23 +756,87 @@ document.addEventListener('DOMContentLoaded', async () => {
     
     // 统一接管所有自定义下拉框的展开/关闭（stopPropagation 防止事件冲突）
     function settings_init_all_selects() {
-        document.addEventListener('click', () => {
-            document.querySelectorAll('.custom-select.open').forEach(s => s.classList.remove('open'));
-        });
+        function closeAllSelects() {
+            // 关闭所有 open 的下拉框（包括 portal 到 body 的）
+            document.querySelectorAll('.custom-select.open').forEach(s => {
+                s.classList.remove('open');
+            });
+            document.querySelectorAll('body > .select-options[data-owner]').forEach(opts => {
+                const owner = document.querySelector('.custom-select[data-select-id="' + opts.dataset.owner + '"]');
+                if (owner) {
+                    owner.appendChild(opts);
+                }
+                opts.style.position = '';
+                opts.style.left = '';
+                opts.style.top = '';
+                opts.style.minWidth = '';
+                opts.style.opacity = '';
+                opts.style.visibility = '';
+                opts.style.transform = '';
+            });
+        }
+        document.addEventListener('click', closeAllSelects);
+        let selectId = 0;
         document.querySelectorAll('.custom-select').forEach(select => {
             const selected = select.querySelector('.select-selected');
             if (!selected || select.dataset.selectInitialized) return;
             select.dataset.selectInitialized = 'true';
+            const id = 'sel_' + (selectId++);
+            select.dataset.selectId = id;
+            const opts = select.querySelector('.select-options');
+            if (opts) opts.dataset.owner = id;
             selected.addEventListener('click', (e) => {
                 e.stopPropagation();
-                document.querySelectorAll('.custom-select').forEach(s => {
-                    if (s !== select) s.classList.remove('open');
-                });
-                select.classList.toggle('open');
+                closeAllSelects();
+                const isOpen = select.classList.toggle('open');
+                if (opts) {
+                    if (isOpen) {
+                        const rect = selected.getBoundingClientRect();
+                        if (opts.parentNode !== document.body) {
+                            document.body.appendChild(opts);
+                        }
+                        opts.style.position = 'fixed';
+                        opts.style.left = rect.left + 'px';
+                        opts.style.top = (rect.bottom + 4) + 'px';
+                        opts.style.minWidth = rect.width + 'px';
+                        opts.style.opacity = '1';
+                        opts.style.visibility = 'visible';
+                        opts.style.transform = 'translateY(0)';
+                    } else {
+                        if (opts.parentNode !== select) {
+                            select.appendChild(opts);
+                        }
+                        opts.style.position = '';
+                        opts.style.left = '';
+                        opts.style.top = '';
+                        opts.style.minWidth = '';
+                        opts.style.opacity = '';
+                        opts.style.visibility = '';
+                        opts.style.transform = '';
+                    }
+                }
             });
         });
     }
     settings_init_all_selects();
+
+    // 辅助函数：关闭下拉框并归位 portal 元素
+    function closeSelect(selectEl) {
+        selectEl.classList.remove('open');
+        const opts = selectEl.querySelector('.select-options') || document.querySelector('body > .select-options[data-owner="' + selectEl.dataset.selectId + '"]');
+        if (opts && opts.parentNode !== selectEl) {
+            selectEl.appendChild(opts);
+        }
+        if (opts) {
+            opts.style.position = '';
+            opts.style.left = '';
+            opts.style.top = '';
+            opts.style.minWidth = '';
+            opts.style.opacity = '';
+            opts.style.visibility = '';
+            opts.style.transform = '';
+        }
+    }
 
     // 语言选择
     const languageSelect = document.getElementById('languageSelect');
@@ -780,7 +849,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                 selectSelected.textContent = option.textContent;
                 languageOptions.forEach(opt => opt.classList.remove('selected'));
                 option.classList.add('selected');
-                languageSelect.classList.remove('open');
+                closeSelect(languageSelect);
                 const saved = await settings_save_all_local({ language: value });
                 if (saved) {
                     const restartModal = document.getElementById('restartModal');
@@ -803,7 +872,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             cameraSelected.textContent = option.textContent;
             cameraSelect.querySelectorAll('.select-option').forEach(opt => opt.classList.remove('selected'));
             option.classList.add('selected');
-            cameraSelect.classList.remove('open');
+            closeSelect(cameraSelect);
             try {
                 const saved = await settings_save_all_local({ defaultCamera: value });
                 if (saved) {
@@ -843,7 +912,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             cameraResolutionSelected.textContent = option.textContent;
             cameraResolutionSelect.querySelectorAll('.select-option').forEach(opt => opt.classList.remove('selected'));
             option.classList.add('selected');
-            cameraResolutionSelect.classList.remove('open');
+            closeSelect(cameraResolutionSelect);
             try {
                 await settings_save_all_local({ cameraWidth: width, cameraHeight: height });
             } catch (error) {
@@ -863,7 +932,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             dprLimitSelected.textContent = option.textContent;
             dprLimitSelect.querySelectorAll('.select-option').forEach(opt => opt.classList.remove('selected'));
             option.classList.add('selected');
-            dprLimitSelect.classList.remove('open');
+            closeSelect(dprLimitSelect);
             const saved = await settings_save_all_local({ dprLimit: value });
             if (saved) {
                 const restartModal = document.getElementById('restartModal');
@@ -888,7 +957,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             selSelected.textContent = option.textContent;
             sel.querySelectorAll('.select-option').forEach(opt => opt.classList.remove('selected'));
             option.classList.add('selected');
-            sel.classList.remove('open');
+            closeSelect(sel);
             await settings_save_all_local({ [settingsKey]: value });
         });
     }
@@ -917,6 +986,13 @@ document.addEventListener('DOMContentLoaded', async () => {
                 modalMessage.textContent = window.i18n?.format_translate('settings.languageChanged') || '需要重启应用才能生效。';
             }
             if (restartModal) restartModal.classList.add('active');
+        });
+    }
+
+    const momentumToggle = document.getElementById('momentumToggle');
+    if (momentumToggle) {
+        momentumToggle.addEventListener('change', async () => {
+            await settings_save_all_local({ momentumEnabled: momentumToggle.checked });
         });
     }
 
@@ -1428,7 +1504,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                 defaultRotationSelected.textContent = option.textContent;
                 document.querySelectorAll('#defaultRotationOptions .select-option').forEach(opt => opt.classList.remove('selected'));
                 option.classList.add('selected');
-                defaultRotationSelect.classList.remove('open');
+                closeSelect(defaultRotationSelect);
                 await settings_save_all_local({ defaultRotation: value });
             });
         });
@@ -1772,7 +1848,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             option.addEventListener('click', async () => {
                 const days = parseInt(option.dataset.value);
                 autoClearCacheSelected.textContent = option.textContent;
-                autoClearCacheSelect.classList.remove('open');
+                closeSelect(autoClearCacheSelect);
                 
                 if (days === 0) {
                     settings_show_dialog(window.i18n?.format_translate('common.warning') || '警告', window.i18n?.format_translate('errors.autoClearWarning') || '若关闭自动清理可能导致C盘异常，强烈建议打开自动清理功能', 'error');

@@ -29,6 +29,12 @@ export class InputSource {
 
         this._handlers = {};
 
+        // 缓存：避免热路径中每帧创建新数组/对象
+        this._activeEventsCache = [];
+        this._activeEventsDirty = true;
+        this._positionsCache = [{ x: 0, y: 0 }, { x: 0, y: 0 }];
+        this._positionsLen = 0;
+
         this._boundPointerDown = this._onPointerDown.bind(this);
         this._boundPointerMove = this._onPointerMove.bind(this);
         this._boundPointerUp = this._onPointerUp.bind(this);
@@ -95,10 +101,10 @@ export class InputSource {
             el.addEventListener('mouseup', this._boundPointerUp);
 
             if (this._enableTouchFallback) {
-                el.addEventListener('touchstart', this._boundTouchStart, { passive: false });
+                el.addEventListener('touchstart', this._boundTouchStart, { passive: true });
                 el.addEventListener('touchmove', this._boundTouchMove, { passive: false });
-                el.addEventListener('touchend', this._boundTouchEnd, { passive: false });
-                el.addEventListener('touchcancel', this._boundTouchCancel, { passive: false });
+                el.addEventListener('touchend', this._boundTouchEnd, { passive: true });
+                el.addEventListener('touchcancel', this._boundTouchCancel, { passive: true });
             }
         }
     }
@@ -134,21 +140,38 @@ export class InputSource {
         return this._activePointers.size;
     }
 
-    /** 获取当前活跃指针的事件列表 */
+    /** 获取当前活跃指针的事件列表（缓存复用，避免每帧 GC） */
     get activeEvents() {
-        return Array.from(this._activePointers.values());
+        let i = 0;
+        for (const ev of this._activePointers.values()) {
+            if (i < this._activeEventsCache.length) {
+                this._activeEventsCache[i] = ev;
+            } else {
+                this._activeEventsCache.push(ev);
+            }
+            i++;
+        }
+        this._activeEventsCache.length = i;
+        return this._activeEventsCache;
     }
 
     /**
-     * 获取所有活跃指针的位置列表
+     * 获取所有活跃指针的位置列表（预分配缓存，避免每帧 GC）
      * @returns {{x: number, y: number}[]}
      */
     getActivePositions() {
-        const result = [];
+        let i = 0;
         for (const ev of this._activePointers.values()) {
-            result.push({ x: ev.position.x, y: ev.position.y });
+            if (i < this._positionsCache.length) {
+                this._positionsCache[i].x = ev.position.x;
+                this._positionsCache[i].y = ev.position.y;
+            } else {
+                this._positionsCache.push({ x: ev.position.x, y: ev.position.y });
+            }
+            i++;
         }
-        return result;
+        this._positionsCache.length = i;
+        return this._positionsCache;
     }
 
     /**
@@ -210,8 +233,6 @@ export class InputSource {
         if (!existing && !this._started) {
             return;
         }
-
-        const deviceType = detectDeviceType(event);
 
         if (!existing && this._started) {
             return;
