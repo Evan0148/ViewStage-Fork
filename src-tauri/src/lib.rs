@@ -3813,7 +3813,19 @@ fn memreduct_setup() -> Result<(), String> {
 #[tauri::command]
 fn memreduct_uninstall() -> Result<(), String> {
     #[cfg(target_os = "windows")]
-    { memhelper_task_delete() }
+    {
+        log::info!("内存清理: 开始移除计划任务 ViewStage_MemClean");
+        match memhelper_task_delete() {
+            Ok(()) => {
+                log::info!("内存清理: 计划任务已移除");
+                Ok(())
+            }
+            Err(e) => {
+                log::warn!("内存清理: 移除计划任务失败: {}", e);
+                Err(e)
+            }
+        }
+    }
     #[cfg(not(target_os = "windows"))]
     { Err("仅 Windows 平台支持".to_string()) }
 }

@@ -461,6 +461,9 @@ function developer_options_show_detection() {
         <div class="setting-item" style="border-bottom:none;justify-content:center;padding-top:20px;">
             <button class="btn-action" id="devCleanMemory" style="color:var(--color-error, #ef4444);border-color:rgba(239,68,68,0.2);">清理内存</button>
         </div>
+        <div class="setting-item" style="border-bottom:none;justify-content:center;padding-top:4px;">
+            <button class="btn-action" id="devRemoveMemTask" style="color:var(--color-muted, #888);border-color:rgba(128,128,128,0.2);font-size:12px;padding:6px 14px;">去除计划任务</button>
+        </div>
     `;
 
     document.getElementById('devBackToMain')?.addEventListener('click', developer_options_init);
@@ -477,6 +480,26 @@ function developer_options_show_detection() {
             cleanBtn.disabled = false;
             setTimeout(() => {
                 cleanBtn.textContent = '清理内存';
+            }, 3000);
+        });
+    }
+
+    const removeBtn = document.getElementById('devRemoveMemTask');
+    if (removeBtn) {
+        removeBtn.addEventListener('click', async () => {
+            const invoke = window.__TAURI__?.core?.invoke;
+            if (!invoke) return;
+            removeBtn.textContent = '移除中...';
+            removeBtn.disabled = true;
+            try {
+                await invoke('memreduct_uninstall');
+                removeBtn.textContent = '✓ 已移除';
+            } catch (_) {
+                removeBtn.textContent = '✗ 移除失败';
+            }
+            removeBtn.disabled = false;
+            setTimeout(() => {
+                removeBtn.textContent = '去除计划任务';
             }, 3000);
         });
     }
@@ -511,4 +534,5 @@ function developer_options_show_detection() {
                 });
         });
     });
+}
 }
