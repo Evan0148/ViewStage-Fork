@@ -24,6 +24,13 @@ export function is_palm_by_pointer(e) {
     };
 }
 
+/** 根据 PointerEvent 触点宽高计算正方形擦除大小（取 min 以消除旋转角度影响），首次检测后固定 */
+export function compute_palm_eraser_size_from_pointer(width, height) {
+    const dim = Math.min(width, height);
+    const size = dim * PALM_CONFIG.palmSizeMultiplier * PALM_CONFIG.eraserSizeK;
+    return Math.max(40, Math.min(150, size));
+}
+
 export function compute_palm_eraser_size(touches) {
     let cx = 0, cy = 0;
     for (const t of touches) { cx += t.clientX; cy += t.clientY; }

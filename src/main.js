@@ -1673,10 +1673,7 @@ function main_setup_gesture_system() {
                     state.isDrawing = false;
                     main_hide_drawing_mode();
                 }
-                const contactSize = Math.max(palmResult.width, palmResult.height)
-                    * window.__palmEraser.PALM_CONFIG.palmSizeMultiplier
-                    * window.__palmEraser.PALM_CONFIG.eraserSizeK;
-                const size = Math.max(40, Math.min(150, contactSize));
+                const size = window.__palmEraser.compute_palm_eraser_size_from_pointer(palmResult.width, palmResult.height);
                 main_start_palm_erase(ev.position.x, ev.position.y, size);
                 return;
             }

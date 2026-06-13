@@ -29,6 +29,7 @@ import {
     is_palm_by_pointer,
     is_palm_by_touch_count,
     get_palm_center,
+    compute_palm_eraser_size_from_pointer,
     PALM_CONFIG
 } from '../palm-eraser/palm-eraser.js';
 
@@ -374,9 +375,7 @@ export class DrawingEngine {
 
         const palmResult = is_palm_by_pointer(e);
         if (palmResult.isPalm && (window.DRAW_CONFIG?.palmEraserEnabled !== false)) {
-            // 刚接触时根据接触面积计算大小，之后保持不变
-            const contactSize = Math.max(palmResult.width, palmResult.height) * PALM_CONFIG.palmSizeMultiplier * PALM_CONFIG.eraserSizeK;
-            const size = Math.max(40, Math.min(150, contactSize));
+            const size = compute_palm_eraser_size_from_pointer(palmResult.width, palmResult.height);
             this._start_palm_erase(e.clientX, e.clientY, size);
             return;
         }

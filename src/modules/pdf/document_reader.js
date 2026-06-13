@@ -2091,8 +2091,8 @@ class DocumentReaderManager {
                         this.draw_canvas_rect = null;
                         await this._submit_stroke();
                     }
-                    const contactSize = Math.max(palmResult.width, palmResult.height) * palmEraser.PALM_CONFIG.palmSizeMultiplier * palmEraser.PALM_CONFIG.eraserSizeK;
-                    this._start_palm_erase(ev.position.x, ev.position.y, Math.max(40, Math.min(150, contactSize)));
+                    const size = palmEraser.compute_palm_eraser_size_from_pointer(palmResult.width, palmResult.height);
+                    this._start_palm_erase(ev.position.x, ev.position.y, size);
                     return;
                 }
             }
