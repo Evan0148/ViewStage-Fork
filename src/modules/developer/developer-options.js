@@ -217,6 +217,22 @@ function developer_options_show_main(currentWidthRatio, currentMaxScale, perfMon
 
     document.getElementById('devGoDetection')?.addEventListener('click', developer_options_show_detection);
 
+    // 统一接管所有自定义下拉框的展开/关闭
+    document.querySelectorAll('.custom-select').forEach(select => {
+        const selected = select.querySelector('.select-selected');
+        if (!selected) return;
+        selected.addEventListener('click', (e) => {
+            e.stopPropagation();
+            document.querySelectorAll('.custom-select').forEach(s => {
+                if (s !== select) s.classList.remove('open');
+            });
+            select.classList.toggle('open');
+        });
+    });
+    document.addEventListener('click', () => {
+        document.querySelectorAll('.custom-select.open').forEach(s => s.classList.remove('open'));
+    });
+
     // 开发者模式开关
     (function setup_dev_mode_toggle() {
         const toggle = document.getElementById('devModeToggle');
@@ -254,11 +270,6 @@ function developer_options_show_main(currentWidthRatio, currentMaxScale, perfMon
 
         if (!select || !selected) return;
 
-        selected.addEventListener('click', (e) => {
-            e.stopPropagation();
-            select.classList.toggle('open');
-        });
-
         options.forEach(opt => {
             opt.addEventListener('click', () => {
                 const v = parseInt(opt.dataset.value);
@@ -282,11 +293,6 @@ function developer_options_show_main(currentWidthRatio, currentMaxScale, perfMon
         const options = document.querySelectorAll('#devWidthRatioOptions .select-option');
 
         if (!select || !selected) return;
-
-        selected.addEventListener('click', (e) => {
-            e.stopPropagation();
-            select.classList.toggle('open');
-        });
 
         options.forEach(opt => {
             opt.addEventListener('click', () => {
@@ -315,11 +321,6 @@ function developer_options_show_main(currentWidthRatio, currentMaxScale, perfMon
 
         if (!select || !selected) return;
 
-        selected.addEventListener('click', (e) => {
-            e.stopPropagation();
-            select.classList.toggle('open');
-        });
-
         options.forEach(opt => {
             opt.addEventListener('click', () => {
                 const v = parseInt(opt.dataset.value);
@@ -346,11 +347,6 @@ function developer_options_show_main(currentWidthRatio, currentMaxScale, perfMon
         const options = document.querySelectorAll('#devFrameDeltaOptions .select-option');
 
         if (!select || !selected) return;
-
-        selected.addEventListener('click', (e) => {
-            e.stopPropagation();
-            select.classList.toggle('open');
-        });
 
         options.forEach(opt => {
             opt.addEventListener('click', () => {
@@ -379,11 +375,6 @@ function developer_options_show_main(currentWidthRatio, currentMaxScale, perfMon
 
         if (!select || !selected) return;
 
-        selected.addEventListener('click', (e) => {
-            e.stopPropagation();
-            select.classList.toggle('open');
-        });
-
         options.forEach(opt => {
             opt.addEventListener('click', () => {
                 const v = parseInt(opt.dataset.value);
@@ -411,11 +402,6 @@ function developer_options_show_main(currentWidthRatio, currentMaxScale, perfMon
 
         if (!select || !selected) return;
 
-        selected.addEventListener('click', (e) => {
-            e.stopPropagation();
-            select.classList.toggle('open');
-        });
-
         options.forEach(opt => {
             opt.addEventListener('click', () => {
                 const v = parseFloat(opt.dataset.value);
@@ -441,12 +427,6 @@ function developer_options_show_main(currentWidthRatio, currentMaxScale, perfMon
             });
         });
     })();
-
-    // 点击外部关闭所有下拉菜单
-    document.addEventListener('click', () => {
-        document.querySelectorAll('.custom-select.open').forEach(el => el.classList.remove('open'));
-    });
-}
 
 function developer_options_show_detection() {
     const page = document.getElementById('pageDevOptions');
@@ -478,13 +458,6 @@ function developer_options_show_detection() {
                 <button class="btn-action" data-check="libreoffice">检测</button>
             </div>
         </div>
-        <div class="setting-item">
-            <span class="setting-label">Mem Reduct</span>
-            <div style="display:flex;align-items:center;gap:8px;">
-                <span id="devMemreductStatus" style="font-size:13px;color:var(--color-muted, #888);">未检测</span>
-                <button class="btn-action" data-check="memreduct">检测</button>
-            </div>
-        </div>
         <div class="setting-item" style="border-bottom:none;justify-content:center;padding-top:20px;">
             <button class="btn-action" id="devCleanMemory" style="color:var(--color-error, #ef4444);border-color:rgba(239,68,68,0.2);">清理内存</button>
         </div>
@@ -494,15 +467,21 @@ function developer_options_show_detection() {
 
     const cleanBtn = document.getElementById('devCleanMemory');
     if (cleanBtn) {
-        cleanBtn.addEventListener('click', () => {
+        cleanBtn.addEventListener('click', async () => {
             const invoke = window.__TAURI__?.core?.invoke;
-            if (invoke) {
-                invoke('memreduct_clean_now');
-            }
+            if (!invoke) return;
+            cleanBtn.textContent = '清理中...';
+            cleanBtn.disabled = true;
+            const ok = await invoke('memreduct_clean_now');
+            cleanBtn.textContent = ok ? '✓ 清理完成' : '✗ 清理失败';
+            cleanBtn.disabled = false;
+            setTimeout(() => {
+                cleanBtn.textContent = '清理内存';
+            }, 3000);
         });
     }
 
-    const statusIds = { word: 'devWordStatus', wps: 'devWpsStatus', libreoffice: 'devLibreStatus', memreduct: 'devMemreductStatus' };
+    const statusIds = { word: 'devWordStatus', wps: 'devWpsStatus', libreoffice: 'devLibreStatus' };
     const invoke = window.__TAURI__?.core?.invoke;
     if (!invoke) return;
 
@@ -517,14 +496,7 @@ function developer_options_show_detection() {
             statusEl.style.fontSize = '13px';
             statusEl.style.fontWeight = 'normal';
 
-            let promise;
-            if (check === 'memreduct') {
-                promise = invoke('memreduct_check_installed');
-            } else {
-                promise = invoke('office_check_runtime').then(r => r[check]);
-            }
-
-            promise
+            invoke('office_check_runtime').then(r => r[check])
                 .then(ok => {
                     statusEl.textContent = ok ? '✓' : '✗';
                     statusEl.style.color = ok ? '#2ecc71' : '#e74c3c';

@@ -466,32 +466,39 @@ document.addEventListener('DOMContentLoaded', async () => {
                     blackboardToggle.checked = blackboardEnabled;
                 }
 
-                // Mem Reduct 自动清理开关
+                // 内存自动清理开关
                 const memreductCleanToggle = document.getElementById('memreductCleanToggle');
-                const memreductCleanItem = document.getElementById('memreductCleanItem');
-                const memreductCleanHint = document.getElementById('memreductCleanHint');
-                if (memreductCleanToggle && memreductCleanItem && window.__TAURI__) {
+                if (memreductCleanToggle) {
+                    const enabled = settings.memreductCleanEnabled !== false;
+                    memreductCleanToggle.checked = enabled;
+                    if (enabled && window.__TAURI__) {
+                        try {
+                            const { invoke } = window.__TAURI__.core;
+                            invoke('memreduct_setup').catch(() => {});
+                        } catch (_) {}
+                    }
+                }
+
+                // 文档关联状态检测（功能检测）
+                async function checkAssociation(ext, statusElId) {
+                    const statusEl = document.getElementById(statusElId);
+                    if (!statusEl || !window.__TAURI__) return;
                     try {
                         const { invoke } = window.__TAURI__.core;
-                        const platform = await invoke('app_fetch_platform');
-                        if (platform !== 'windows') {
-                            memreductCleanItem.style.display = 'none';
-                        } else {
-                            const is_installed = await invoke('memreduct_check_installed');
-                            if (!is_installed) {
-                                memreductCleanToggle.checked = false;
-                                memreductCleanToggle.disabled = true;
-                                memreductCleanItem.classList.add('disabled');
-                                if (memreductCleanHint) {
-                                    memreductCleanHint.textContent = window.i18n?.format_translate('settings.memreductCleanHint') || '需安装 Mem Reduct 才能使用';
-                                    memreductCleanHint.style.display = '';
-                                }
-                            } else {
-                                memreductCleanToggle.checked = settings.memreductCleanEnabled === true;
-                            }
-                        }
-                    } catch (_) { /* 忽略平台检测失败 */ }
+                        const cmd = ext === 'pdf' ? 'filetype_validate_pdf_default' : 'filetype_validate_word_default';
+                        const ok = await invoke(cmd);
+                        statusEl.textContent = ok ? '✓' : '✗';
+                        statusEl.className = 'association-status ' + (ok ? 'associated' : 'not-associated');
+                        statusEl.title = ok
+                            ? (window.i18n?.format_translate('settings.defaultSet') || '已设为默认')
+                            : (window.i18n?.format_translate('settings.defaultNotSet') || '未关联');
+                    } catch (_) {
+                        statusEl.textContent = '✗';
+                        statusEl.className = 'association-status not-associated';
+                    }
                 }
+                checkAssociation('pdf', 'pdfDefaultStatus');
+                checkAssociation('word', 'wordDefaultStatus');
                 
                 return settings;
             } catch (error) {
@@ -742,82 +749,68 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
     });
     
+    // 统一接管所有自定义下拉框的展开/关闭（stopPropagation 防止事件冲突）
+    function settings_init_all_selects() {
+        document.addEventListener('click', () => {
+            document.querySelectorAll('.custom-select.open').forEach(s => s.classList.remove('open'));
+        });
+        document.querySelectorAll('.custom-select').forEach(select => {
+            const selected = select.querySelector('.select-selected');
+            if (!selected || select.dataset.selectInitialized) return;
+            select.dataset.selectInitialized = 'true';
+            selected.addEventListener('click', (e) => {
+                e.stopPropagation();
+                document.querySelectorAll('.custom-select').forEach(s => {
+                    if (s !== select) s.classList.remove('open');
+                });
+                select.classList.toggle('open');
+            });
+        });
+    }
+    settings_init_all_selects();
+
+    // 语言选择
     const languageSelect = document.getElementById('languageSelect');
     const selectSelected = document.getElementById('selectSelected');
     const languageOptions = document.querySelectorAll('#selectOptions .select-option');
-    
     if (languageSelect && selectSelected) {
-        selectSelected.addEventListener('click', () => {
-            languageSelect.classList.toggle('open');
-        });
-        
         languageOptions.forEach(option => {
             option.addEventListener('click', async () => {
                 const value = option.dataset.value;
                 selectSelected.textContent = option.textContent;
-                
                 languageOptions.forEach(opt => opt.classList.remove('selected'));
                 option.classList.add('selected');
-                
                 languageSelect.classList.remove('open');
-                
                 const saved = await settings_save_all_local({ language: value });
-                
                 if (saved) {
                     const restartModal = document.getElementById('restartModal');
-                    if (restartModal) {
-                        restartModal.classList.add('active');
-                    }
+                    if (restartModal) restartModal.classList.add('active');
                 } else {
                     settings_show_dialog(window.i18n?.format_translate('settings.saveFailed') || '保存失败', window.i18n?.format_translate('settings.saveFailedRetry') || '保存设置失败，请重试', 'error');
                 }
             });
         });
-        
-        document.addEventListener('click', (e) => {
-            if (!languageSelect.contains(e.target)) {
-                languageSelect.classList.remove('open');
-            }
-        });
     }
     
+    // 摄像头选择
     const cameraSelect = document.getElementById('cameraSelect');
     const cameraSelected = document.getElementById('cameraSelected');
-    
     if (cameraSelect && cameraSelected) {
-        cameraSelected.addEventListener('click', () => {
-            cameraSelect.classList.toggle('open');
-        });
-        
-        document.addEventListener('click', (e) => {
-            if (!cameraSelect.contains(e.target)) {
-                cameraSelect.classList.remove('open');
-            }
-        });
-        
         cameraSelect.addEventListener('click', async (e) => {
             const option = e.target.closest('.select-option');
             if (!option) return;
-            
             const value = option.dataset.value;
             cameraSelected.textContent = option.textContent;
-            
-            const cameraOptions = cameraSelect.querySelectorAll('.select-option');
-            cameraOptions.forEach(opt => opt.classList.remove('selected'));
+            cameraSelect.querySelectorAll('.select-option').forEach(opt => opt.classList.remove('selected'));
             option.classList.add('selected');
-            
             cameraSelect.classList.remove('open');
-            
             try {
                 const saved = await settings_save_all_local({ defaultCamera: value });
-                
                 if (saved) {
                     const currentResolutionOption = document.querySelector('#cameraResolutionOptions .select-option.selected');
                     const currentWidth = currentResolutionOption ? parseInt(currentResolutionOption.dataset.width) : null;
                     const currentHeight = currentResolutionOption ? parseInt(currentResolutionOption.dataset.height) : null;
-                    
                     const success = await settings_update_camera_resolution_options(value, currentWidth, currentHeight);
-                    
                     if (success) {
                         const newResolutionOption = document.querySelector('#cameraResolutionOptions .select-option.selected');
                         if (newResolutionOption) {
@@ -841,37 +834,20 @@ document.addEventListener('DOMContentLoaded', async () => {
     // 摄像头分辨率选择
     const cameraResolutionSelect = document.getElementById('cameraResolutionSelect');
     const cameraResolutionSelected = document.getElementById('cameraResolutionSelected');
-    
     if (cameraResolutionSelect && cameraResolutionSelected) {
-        cameraResolutionSelected.addEventListener('click', () => {
-            cameraResolutionSelect.classList.toggle('open');
-        });
-        
-        document.addEventListener('click', (e) => {
-            if (!cameraResolutionSelect.contains(e.target)) {
-                cameraResolutionSelect.classList.remove('open');
-            }
-        });
-        
         cameraResolutionSelect.addEventListener('click', async (e) => {
             const option = e.target.closest('.select-option');
             if (!option) return;
-            
             const width = parseInt(option.dataset.width);
             const height = parseInt(option.dataset.height);
             cameraResolutionSelected.textContent = option.textContent;
-            
-            const resOptions = cameraResolutionSelect.querySelectorAll('.select-option');
-            resOptions.forEach(opt => opt.classList.remove('selected'));
+            cameraResolutionSelect.querySelectorAll('.select-option').forEach(opt => opt.classList.remove('selected'));
             option.classList.add('selected');
-            
             cameraResolutionSelect.classList.remove('open');
-            
             try {
                 await settings_save_all_local({ cameraWidth: width, cameraHeight: height });
             } catch (error) {
                 console.error('保存分辨率设置失败:', error);
-                settings_show_dialog(window.i18n?.format_translate('settings.saveFailed') || '保存失败', String(error), 'error');
             }
         });
     }
@@ -879,54 +855,32 @@ document.addEventListener('DOMContentLoaded', async () => {
     // DPR 限制选择
     const dprLimitSelect = document.getElementById('dprLimitSelect');
     const dprLimitSelected = document.getElementById('dprLimitSelected');
-    
     if (dprLimitSelect && dprLimitSelected) {
-        dprLimitSelected.addEventListener('click', () => {
-            dprLimitSelect.classList.toggle('open');
-        });
-        
-        document.addEventListener('click', (e) => {
-            if (!dprLimitSelect.contains(e.target)) {
-                dprLimitSelect.classList.remove('open');
-            }
-        });
-        
         dprLimitSelect.addEventListener('click', async (e) => {
             const option = e.target.closest('.select-option');
             if (!option) return;
-            
             const value = parseFloat(option.dataset.value);
             dprLimitSelected.textContent = option.textContent;
-            
-            const dprLimitOptions = dprLimitSelect.querySelectorAll('.select-option');
-            dprLimitOptions.forEach(opt => opt.classList.remove('selected'));
+            dprLimitSelect.querySelectorAll('.select-option').forEach(opt => opt.classList.remove('selected'));
             option.classList.add('selected');
-            
             dprLimitSelect.classList.remove('open');
-            
             const saved = await settings_save_all_local({ dprLimit: value });
-            
             if (saved) {
                 const restartModal = document.getElementById('restartModal');
                 const modalMessage = restartModal?.querySelector('.modal-message');
-                if (modalMessage) {
-                    modalMessage.textContent = window.i18n?.format_translate('settings.dprChanged') || '画面精度已更改，建议重启应用以确保完全生效。';
-                }
-                if (restartModal) {
-                    restartModal.classList.add('active');
-                }
+                if (modalMessage) modalMessage.textContent = window.i18n?.format_translate('settings.dprChanged') || '画面精度已更改，建议重启应用以确保完全生效。';
+                if (restartModal) restartModal.classList.add('active');
             } else {
                 settings_show_dialog(window.i18n?.format_translate('settings.saveFailed') || '保存失败', window.i18n?.format_translate('settings.saveFailedRetry') || '保存设置失败，请重试', 'error');
             }
         });
     }
 
+    // 通用选择保存（dprMin / dprMax）
     function settings_bind_select_save(id, settingsKey) {
         const sel = document.getElementById(id);
         const selSelected = document.getElementById(id.replace('Select', 'Selected'));
         if (!sel || !selSelected) return;
-        selSelected.addEventListener('click', () => sel.classList.toggle('open'));
-        document.addEventListener('click', (e) => { if (!sel.contains(e.target)) sel.classList.remove('open'); });
         sel.addEventListener('click', async (e) => {
             const option = e.target.closest('.select-option');
             if (!option) return;
@@ -1467,31 +1421,16 @@ document.addEventListener('DOMContentLoaded', async () => {
     // 默认旋转角度选择
     const defaultRotationSelect = document.getElementById('defaultRotationSelect');
     const defaultRotationSelected = document.getElementById('defaultRotationSelected');
-    
     if (defaultRotationSelect && defaultRotationSelected) {
-        defaultRotationSelected.addEventListener('click', () => {
-            defaultRotationSelect.classList.toggle('open');
-        });
-        
-        const rotationOptions = document.querySelectorAll('#defaultRotationOptions .select-option');
-        rotationOptions.forEach(option => {
+        document.querySelectorAll('#defaultRotationOptions .select-option').forEach(option => {
             option.addEventListener('click', async () => {
                 const value = parseInt(option.dataset.value);
                 defaultRotationSelected.textContent = option.textContent;
-                
-                rotationOptions.forEach(opt => opt.classList.remove('selected'));
+                document.querySelectorAll('#defaultRotationOptions .select-option').forEach(opt => opt.classList.remove('selected'));
                 option.classList.add('selected');
-                
                 defaultRotationSelect.classList.remove('open');
-                
                 await settings_save_all_local({ defaultRotation: value });
             });
-        });
-        
-        document.addEventListener('click', (e) => {
-            if (!defaultRotationSelect.contains(e.target)) {
-                defaultRotationSelect.classList.remove('open');
-            }
         });
     }
     
@@ -1829,16 +1768,6 @@ document.addEventListener('DOMContentLoaded', async () => {
     const autoClearCacheOptions = document.getElementById('autoClearCacheOptions');
     
     if (autoClearCacheSelect && autoClearCacheSelected && autoClearCacheOptions && window.__TAURI__) {
-        autoClearCacheSelected.addEventListener('click', () => {
-            autoClearCacheSelect.classList.toggle('open');
-        });
-        
-        document.addEventListener('click', (e) => {
-            if (!autoClearCacheSelect.contains(e.target)) {
-                autoClearCacheSelect.classList.remove('open');
-            }
-        });
-        
         autoClearCacheOptions.querySelectorAll('.select-option').forEach(option => {
             option.addEventListener('click', async () => {
                 const days = parseInt(option.dataset.value);
@@ -1870,11 +1799,17 @@ document.addEventListener('DOMContentLoaded', async () => {
         });
     }
 
-    // Mem Reduct 自动清理开关
+    // 内存自动清理开关
     const memreductCleanToggle = document.getElementById('memreductCleanToggle');
     if (memreductCleanToggle) {
         memreductCleanToggle.addEventListener('change', async () => {
             await settings_save_all_local({ memreductCleanEnabled: memreductCleanToggle.checked });
+            if (memreductCleanToggle.checked && window.__TAURI__) {
+                try {
+                    const { invoke } = window.__TAURI__.core;
+                    await invoke('memreduct_setup');
+                } catch (_) {}
+            }
         });
     }
     if (btnOpenLogDir && window.__TAURI__) {

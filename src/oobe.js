@@ -404,9 +404,10 @@ function oobe_setup_page3_buttons() {
         const activeBtn = penEffectGroup?.querySelector('.option-btn.active');
         oobe_cached_settings.penEffectMode = activeBtn?.dataset.value || 'limited';
 
-        const dprOption = document.querySelector('#dprLimitSelect .select-option.selected');
-        if (dprOption) {
-            oobe_cached_settings.dprLimit = parseFloat(dprOption.dataset.value);
+        const memToggle = document.getElementById('oobeMemCleanToggle');
+        oobe_cached_settings.memreductCleanEnabled = memToggle ? memToggle.checked : true;
+        if (oobe_cached_settings.memreductCleanEnabled && invoke) {
+            invoke('memreduct_setup').catch(() => {});
         }
 
         oobe_show_page4();

@@ -1926,6 +1926,21 @@ button {
 .button-group {
     display: flex;
     gap: 10px;
+    align-items: center;
+}
+
+.association-status {
+    font-size: 13px;
+    font-weight: 500;
+    white-space: nowrap;
+}
+
+.association-status.associated {
+    color: #2ecc71;
+}
+
+.association-status.not-associated {
+    color: var(--color-muted, #888);
 }
 
 .slider {

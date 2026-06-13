@@ -87,17 +87,12 @@
                     <button class="option-btn" data-value="full" data-i18n="settings.penEffectFull">完整</button>
                 </div>
             </div>
-            <div class="setting-item">
-                <span class="setting-label" data-i18n="settings.dprLimit">画面精度</span>
-                <div class="custom-select" id="dprLimitSelect">
-                    <div class="select-selected" id="dprLimitSelected">2x</div>
-                    <div class="select-options" id="dprLimitOptions">
-                        <div class="select-option" data-value="0.5">0.5x</div>
-                        <div class="select-option" data-value="1">1x</div>
-                        <div class="select-option" data-value="1.5">1.5x</div>
-                        <div class="select-option selected" data-value="2">2x</div>
-                    </div>
-                </div>
+            <div class="setting-item" style="align-items:flex-start;">
+                <span class="setting-label" data-i18n="settings.memreductClean">内存自动清理</span>
+                <label class="toggle-switch">
+                    <input type="checkbox" id="oobeMemCleanToggle" checked>
+                    <span class="toggle-slider"></span>
+                </label>
             </div>
         </div>
 
