@@ -244,27 +244,6 @@ export async function history_handle_undo() {
 }
 
 /**
- * 执行重做：弹出 redo 栈顶命令并调用 redo()
- * @returns {Promise<Command|null>} 被重做的命令，无命令可重做时返回 null
- */
-export async function history_handle_redo() {
-    if (history_state.is_executing || history_state.redo_list.length === 0) return null;
-
-    history_state.is_executing = true;
-    let command;
-    try {
-        command = history_state.redo_list.pop();
-        history_state.undo_list.push(command);
-        await command.redo();
-    } finally {
-        history_state.is_executing = false;
-    }
-
-    history_handle_state_change();
-    return command;
-}
-
-/**
  * 清空 undo/redo 栈
  */
 export function history_delete_all() {
@@ -274,43 +253,11 @@ export function history_delete_all() {
 }
 
 /**
- * 清空 redo 栈
- */
-export function history_delete_redo_stack() {
-    history_state.redo_list = [];
-    history_handle_state_change();
-}
-
-/**
- * 获取 undo 栈长度
- * @returns {number}
- */
-export function history_fetch_undo_length() {
-    return history_state.undo_list.length;
-}
-
-/**
- * 获取 redo 栈长度
- * @returns {number}
- */
-export function history_fetch_redo_length() {
-    return history_state.redo_list.length;
-}
-
-/**
  * 获取 undo 栈引用
  * @returns {Array}
  */
 export function history_fetch_undo_stack() {
     return history_state.undo_list;
-}
-
-/**
- * 获取 redo 栈引用
- * @returns {Array}
- */
-export function history_fetch_redo_stack() {
-    return history_state.redo_list;
 }
 
 export function history_handle_state_change() {

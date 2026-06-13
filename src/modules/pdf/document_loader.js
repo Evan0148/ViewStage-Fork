@@ -171,24 +171,6 @@ export function show_error_dialog(title, message, retry_callback = null) {
 // ====== Blob URL 管理 ======
 
 /**
- * 释放指定文档的所有页面 blob URL
- * @param {number} doc_number - 文档编号
- */
-export function revoke_document_blob_urls(doc_number) {
-    const folder = window.state?.fileList?.find(f => f.docNumber === doc_number);
-    if (folder) {
-        folder.pages.forEach(page => {
-            if (page.full && page.full.startsWith('blob:')) {
-                URL.revokeObjectURL(page.full);
-            }
-            if (page.thumbnail && page.thumbnail.startsWith('blob:') && page.thumbnail !== page.full) {
-                URL.revokeObjectURL(page.thumbnail);
-            }
-        });
-    }
-}
-
-/**
  * 释放所有文档的全部页面 blob URL
  */
 export function revoke_all_document_blob_urls() {
@@ -214,6 +196,5 @@ export const DocLoader = {
     update_loading_progress,
     hide_loading_overlay,
     show_error_dialog,
-    revoke_document_blob_urls,
     revoke_all_document_blob_urls
 };

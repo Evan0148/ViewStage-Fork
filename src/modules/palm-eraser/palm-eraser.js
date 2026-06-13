@@ -31,21 +31,6 @@ export function compute_palm_eraser_size_from_pointer(width, height) {
     return Math.max(40, Math.min(150, size));
 }
 
-export function compute_palm_eraser_size(touches) {
-    let cx = 0, cy = 0;
-    for (const t of touches) { cx += t.clientX; cy += t.clientY; }
-    cx /= touches.length;
-    cy /= touches.length;
-    let sumSq = 0;
-    for (const t of touches) {
-        const dx = t.clientX - cx;
-        const dy = t.clientY - cy;
-        sumSq += dx * dx + dy * dy;
-    }
-    const stdDev = touches.length > 1 ? Math.sqrt(sumSq / touches.length) : 0;
-    return Math.max(40, Math.min(150, stdDev * 3));
-}
-
 export function is_palm_by_touch_count(touches) {
     if (touches.length < PALM_CONFIG.fallbackTouchCount) return false;
     let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;

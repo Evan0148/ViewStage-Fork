@@ -122,19 +122,6 @@ const i18n = {
         });
     },
 
-    // 获取当前语言代码
-    fetch_locale() {
-        return this.current_locale;
-    },
-
-    // 获取支持的语言列表
-    fetch_supported_locales() {
-        return [
-            { code: 'zh-CN', name: '简体中文' },
-            { code: 'zh-TW', name: '繁體中文' },
-            { code: 'en-US', name: 'English' }
-        ];
-    }
 };
 
 window.i18n = i18n;

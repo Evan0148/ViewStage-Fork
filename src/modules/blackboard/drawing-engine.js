@@ -360,11 +360,6 @@ export class DrawingEngine {
 
     // ====== 事件处理器 ======
 
-    /** 由消费者在合适的时机调用（如 pointerdown） */
-    before_draw_interaction(e) {
-        this.draw_canvas_rect = this._get_canvas_rect();
-    }
-
     // --- PointerEvent ---
 
     handle_pointer_down(e) {
@@ -497,38 +492,6 @@ export class DrawingEngine {
             this.last_x = x;
             this.last_y = y;
         }
-    }
-
-    async handle_mouse_up(e) {
-        if (this._move_state) {
-            this._move_state = null;
-            return;
-        }
-        if (!this.is_drawing) return;
-        this.is_drawing = false;
-        this.draw_canvas_rect = null;
-        await this._submit_stroke();
-    }
-
-    // --- TouchEvent ---
-
-    _calc_touch_dist_sq(t1, t2) {
-        const dx = t2.clientX - t1.clientX;
-        const dy = t2.clientY - t1.clientY;
-        return dx * dx + dy * dy;
-    }
-
-    handle_touch_start(e) {
-        // 子类应重写此方法处理双指缩放等特殊逻辑
-        // 这里只处理单指绘制
-    }
-
-    handle_touch_move(e) {
-        // 子类应重写此方法
-    }
-
-    handle_touch_end(e) {
-        // 子类应重写此方法
     }
 
     /** 为消费者提供的单指绘制处理（用于 touch 事件） */
@@ -731,16 +694,6 @@ export class DrawingEngine {
         this.draw_mode = this.savedDrawMode || 'comment';
         this.savedDrawMode = null;
         this.current_stroke = null;
-    }
-
-    /** 由消费者在 eraser mode 切换时调用 */
-    on_eraser_mode_changed() {
-        if (this.draw_mode === 'eraser') {
-            this._show_eraser_hint();
-        } else {
-            this._hide_eraser_hint();
-            this._hide_palm_eraser_hint();
-        }
     }
 
     // ====== 清理 ======

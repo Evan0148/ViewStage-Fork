@@ -1627,15 +1627,6 @@ function main_fetch_visible_rect() {
     return cachedVisibleRect;
 }
 
-function main_validate_stroke_visible(stroke, visibleRect) {
-    if (!stroke.bounds) return true;
-    
-    return !(stroke.bounds.maxX < visibleRect.x ||
-             stroke.bounds.minX > visibleRect.x + visibleRect.width ||
-             stroke.bounds.maxY < visibleRect.y ||
-             stroke.bounds.minY > visibleRect.y + visibleRect.height);
-}
-
 // 绑定所有事件
 function main_setup_all_events() {
     main_setup_mode_events();
@@ -2425,16 +2416,6 @@ function main_calc_rgb_to_hex(r, g, b) {
     }).join('');
 }
 
-// 十六进制颜色转RGB
-function main_calc_hex_to_rgb(hex) {
-    const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
-    return result ? {
-        r: parseInt(result[1], 16),
-        g: parseInt(result[2], 16),
-        b: parseInt(result[3], 16)
-    } : null;
-}
-
 function main_update_color_buttons() {
     const colorButtons = document.querySelectorAll('.pen-color-btn');
     colorButtons.forEach((btn, index) => {
@@ -2715,22 +2696,6 @@ async function main_end_palm_erase() {
 }
 
 // === 画布交互事件：鼠标/触控 绘制、拖拽、缩放 ===
-
-function main_setup_canvas_mouse_events() {
-    if (window.PointerEvent) {
-        dom.canvasWrapper.addEventListener('pointerdown', main_handle_pointer_down);
-        dom.canvasWrapper.addEventListener('pointermove', main_handle_pointer_move);
-        dom.canvasWrapper.addEventListener('pointerup', main_handle_pointer_up);
-        dom.canvasWrapper.addEventListener('pointerleave', main_handle_pointer_leave);
-        dom.canvasWrapper.addEventListener('pointercancel', main_handle_pointer_up);
-    } else {
-        dom.canvasWrapper.addEventListener('mousedown', main_handle_mouse_down);
-        dom.canvasWrapper.addEventListener('mousemove', main_handle_mouse_move);
-        dom.canvasWrapper.addEventListener('mouseup', main_handle_mouse_up);
-        dom.canvasWrapper.addEventListener('mouseleave', main_handle_mouse_leave);
-    }
-    dom.canvasWrapper.addEventListener('wheel', main_handle_wheel, { passive: true });
-}
 
 /**
  * Pointer 按下处理
@@ -3031,14 +2996,6 @@ function main_handle_wheel(e) {
             main_update_canvas_transform_smooth(state.canvasX, state.canvasY, state.scale, 150);
         }, 150);
     }
-}
-
-// 画布触控事件
-function main_setup_canvas_touch_events() {
-    dom.canvasWrapper.addEventListener('touchstart', main_handle_touch_start, { passive: false });
-    dom.canvasWrapper.addEventListener('touchmove', main_handle_touch_move, { passive: false });
-    dom.canvasWrapper.addEventListener('touchend', main_handle_touch_end, { passive: false });
-    dom.canvasWrapper.addEventListener('touchcancel', main_handle_touch_end, { passive: false });
 }
 
 async function main_handle_touch_start(e) {
@@ -4007,14 +3964,6 @@ async function main_handle_compact_strokes() {
     console.log('笔画已异步压缩，保留最近', history_fetch_undo_stack().length, '步可撤销');
 }
 
-function main_format_compact_strokes() {
-    main_init_compact();
-}
-
-async function main_save_snapshot() {
-    await main_submit_stroke();
-}
-
 async function main_handle_undo() {
     if (compactIdleId !== null) {
         cancelIdleCallback(compactIdleId);
@@ -4571,26 +4520,6 @@ async function main_update_image_selection(index) {
     img.src = imgData.full;
     
     console.log(`切换到图片 ${index + 1}`);
-}
-
-function main_save_draw_data() {
-    if (state.currentImageIndex >= 0 && state.currentImageIndex < state.imageList.length) {
-        const imgData = state.imageList[state.currentImageIndex];
-        
-        if (imgData.sourceId) {
-            main_save_current_source_data();
-        }
-    }
-}
-
-async function main_load_draw_data(index) {
-    if (index >= 0 && index < state.imageList.length) {
-        const imgData = state.imageList[index];
-        
-        if (imgData.sourceId) {
-            await main_update_source(imgData.sourceId);
-        }
-    }
 }
 
 function main_delete_image(index) {
@@ -5585,13 +5514,6 @@ function main_apply_camera_filters() {
     if (img) img.style.filter = filterStr;
 }
 
-function main_start_camera_preview() {
-    const video = dom.cameraVideo;
-    if (!video) return;
-    
-    main_update_camera_video_style();
-}
-
 function main_create_camera_controls() {
     main_update_photo_button_state();
 }
@@ -5858,39 +5780,6 @@ async function main_load_image() {
     };
     
     input.click();
-}
-
-async function main_save_image_to_list(img, name, isLast = true) {
-    const blob = await fetch(img.src).then(r => r.blob());
-    const blobUrl = URL.createObjectURL(blob);
-    
-    const imgData = {
-        full: blobUrl,
-        thumbnail: blobUrl,
-        name: name,
-        width: img.width,
-        height: img.height,
-        sourceId: main_create_source_id('pic')
-    };
-    
-    state.imageList.push(imgData);
-    state.currentImageIndex = state.imageList.length - 1;
-    state.currentImage = img;
-    state.currentFolderIndex = -1;
-    state.currentFolderPageIndex = -1;
-    
-    await main_update_source(imgData.sourceId);
-    
-    if (isLast) {
-        if (state.isCameraOpen) {
-            await main_update_camera_state(false);
-        }
-        img.src = blobUrl;
-        main_render_image_centered(img);
-        
-        main_update_sidebar_content();
-        main_update_photo_button_state();
-    }
 }
 
 async function main_save_image_to_list_no_highlight(img, name, captureFilter) {
