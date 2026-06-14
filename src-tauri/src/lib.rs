@@ -3606,6 +3606,34 @@ pub fn mem_clean_perform() -> i32 {
     extern "system" {
         fn GetModuleHandleW(name: *const u16) -> isize;
         fn GetProcAddress(module: isize, name: *const u8) -> *const c_void;
+        fn GetCurrentProcess() -> isize;
+        fn OpenProcessToken(process: isize, desired_access: u32, token: *mut isize) -> i32;
+        fn LookupPrivilegeValueW(system: *const u16, name: *const u16, luid: *mut i64) -> i32;
+        fn AdjustTokenPrivileges(token: isize, disable_all: i32, new_state: *const u8, buffer_len: u32, prev: *mut u8, ret_len: *mut u32) -> i32;
+    }
+
+    // Enable SeIncreaseQuotaPrivilege (required by NtSetSystemInformation when running as admin)
+    unsafe {
+        let mut token: isize = 0;
+        if OpenProcessToken(GetCurrentProcess(), 0x0020, &mut token) != 0 {
+            let name = "SeIncreaseQuotaPrivilege\0".encode_utf16().collect::<Vec<u16>>();
+            let mut luid: i64 = 0;
+            if LookupPrivilegeValueW(ptr::null(), name.as_ptr(), &mut luid) != 0 {
+                #[repr(C)]
+                struct TokenPrivileges {
+                    count: u32,
+                    luid: i64,
+                    attributes: u32,
+                }
+                let tp = TokenPrivileges { count: 1, luid, attributes: 0x02 }; // SE_PRIVILEGE_ENABLED
+                AdjustTokenPrivileges(
+                    token, 0,
+                    &tp as *const TokenPrivileges as *const u8,
+                    std::mem::size_of::<TokenPrivileges>() as u32,
+                    ptr::null_mut(), ptr::null_mut(),
+                );
+            }
+        }
     }
 
     const SII_SYSTEM_MEMORY_LIST: i32 = 0x50;
@@ -3714,65 +3742,147 @@ pub fn mem_clean_perform() -> i32 {
     0
 }
 
-/// 运行 schtasks 命令（直接调用，避免 cmd /C 引号转义问题）
+/// 安装计划任务：ShellExecuteW(runas, schtasks.exe /create /xml)
+/// 不需要外部 PowerShell
 #[cfg(target_os = "windows")]
-fn schtasks_run(args: &[&str]) -> Result<(), String> {
+fn memhelper_task_install() -> Result<(), String> {
+    log::info!("内存清理: 提权安装计划任务（UAC 弹窗）");
+
+    let exe = std::env::current_exe()
+        .map_err(|e| format!("无法获取程序路径: {}", e))?;
+    let exe_str = exe.display().to_string();
+
+    // 将 XML 写入临时文件（schtasks /create /xml 要求）
+    let xml = format!(
+        r#"<?xml version="1.0" encoding="UTF-8"?>
+<Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
+  <RegistrationInfo><Description>ViewStage Memory Clean Task</Description></RegistrationInfo>
+  <Principals><Principal id="Author">
+      <RunLevel>HighestAvailable</RunLevel>
+    </Principal></Principals>
+  <Settings>
+    <AllowStartIfOnBatteries>true</AllowStartIfOnBatteries>
+    <StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>
+    <StartWhenAvailable>true</StartWhenAvailable>
+    <Hidden>true</Hidden>
+  </Settings>
+  <Actions Context="Author">
+    <Exec>
+      <Command>"{}"</Command>
+      <Arguments>--mem-clean</Arguments>
+    </Exec>
+  </Actions>
+</Task>"#,
+        exe_str
+    );
+
+    let temp_dir = std::env::temp_dir();
+    let xml_path = temp_dir.join("ViewStage_MemClean.xml");
+    std::fs::write(&xml_path, xml.as_bytes())
+        .map_err(|e| format!("写入任务 XML 失败: {}", e))?;
+
+    // 先删旧任务（schtasks /delete 非管理员也能删带 IU 权限的任务）
+    let _ = std::process::Command::new("schtasks")
+        .args(["/delete", "/tn", "ViewStage_MemClean", "/f"])
+        .creation_flags(CREATE_NO_WINDOW)
+        .output();
+
+    // 用 ShellExecuteW(runas) 提权启动 schtasks.exe /create
+    // 比 ShellExecuteExW 简单可靠，不需要结构体对齐
+    let xml_quoted = format!("\"{}\"", xml_path.display());
+    let args = format!("/create /xml {} /tn \"ViewStage_MemClean\" /f", xml_quoted);
+
+    #[link(name = "shell32")]
+    extern "system" {
+        fn ShellExecuteW(
+            hwnd: isize,
+            operation: *const u16,
+            file: *const u16,
+            parameters: *const u16,
+            directory: *const u16,
+            show_cmd: i32,
+        ) -> isize;
+    }
+
+    let verb = "runas\0";
+    let binary = "schtasks\0";
+    let verb_w: Vec<u16> = verb.encode_utf16().collect();
+    let binary_w: Vec<u16> = binary.encode_utf16().collect();
+    let args_w: Vec<u16> = args.encode_utf16().chain(std::iter::once(0)).collect();
+
+    let ret = unsafe {
+        ShellExecuteW(0, verb_w.as_ptr(), binary_w.as_ptr(), args_w.as_ptr(), std::ptr::null(), 0)
+    };
+
+    // ShellExecuteW > 32 表示成功启劜了进程
+    if ret as i32 <= 32 {
+        let _ = std::fs::remove_file(&xml_path);
+        let err_code = ret as i32;
+        if err_code == 1223 {
+            return Err("用户取消了 UAC 提权".to_string());
+        }
+        return Err(format!("提权启动 schtasks.exe 失败, 错误码: {}", err_code));
+    }
+
+    // 轮询等待任务创建（schtasks /create 通常几毫秒完成）
+    for _ in 0..120 {
+        if memhelper_task_exists() {
+            let _ = std::fs::remove_file(&xml_path);
+            log::info!("内存清理: 计划任务安装成功");
+            return Ok(());
+        }
+        std::thread::sleep(std::time::Duration::from_millis(500));
+    }
+
+    let _ = std::fs::remove_file(&xml_path);
+    Err("计划任务创建超时（60 秒），请检查是否有权限问题".to_string())
+}
+
+/// 触发清理任务（使用 schtasks /run，无 UAC）
+#[cfg(target_os = "windows")]
+fn memhelper_task_run() -> Result<(), String> {
+    log::info!("内存清理: 触发计划任务");
     let output = std::process::Command::new("schtasks")
-        .args(args)
+        .args(["/run", "/tn", "ViewStage_MemClean"])
         .creation_flags(CREATE_NO_WINDOW)
         .output()
         .map_err(|e| format!("schtasks 执行失败: {}", e))?;
 
     if output.status.success() {
+        log::info!("内存清理: 计划任务执行成功");
         Ok(())
     } else {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        let msg = if !stderr.is_empty() { stderr } else { stdout };
+        let msg = if stderr.is_empty() {
+            String::from_utf8_lossy(&output.stdout).to_string()
+        } else {
+            stderr.to_string()
+        };
+        log::warn!("内存清理: 计划任务执行失败 - {}", msg.trim());
         Err(msg.trim().to_string())
     }
 }
 
-/// 安装计划任务（需要管理员权限，仅首次执行一次）
-/// 任务执行 ViewStage.exe --mem-clean（自动根据当前路径定位）
-#[cfg(target_os = "windows")]
-fn memhelper_task_install() -> Result<(), String> {
-    log::info!("内存清理: 提权安装计划任务（UAC 弹窗）");
-    let exe = std::env::current_exe()
-        .map_err(|e| format!("无法获取程序路径: {}", e))?;
-
-    let tr = format!(r#""{}" --mem-clean"#, exe.display());
-
-    let result = schtasks_run(&[
-        "/create", "/tn", "ViewStage_MemClean",
-        "/tr", &tr,
-        "/sc", "once",
-        "/st", "00:00",
-        "/ru", "SYSTEM",
-        "/rl", "HIGHEST",
-        "/f",
-    ]);
-    match &result {
-        Ok(_) => log::info!("内存清理: 计划任务安装成功"),
-        Err(e) => log::warn!("内存清理: 计划任务安装失败 - {}", e),
-    }
-    result
-}
-
-/// 触发清理任务（无 UAC）
-#[cfg(target_os = "windows")]
-fn memhelper_task_run() -> Result<(), String> {
-    log::info!("内存清理: 触发计划任务");
-    schtasks_run(&["/run", "/tn", "ViewStage_MemClean"])
-}
-
-/// 删除计划任务
+/// 删除计划任务（使用 schtasks /delete，无 UAC）
 #[cfg(target_os = "windows")]
 fn memhelper_task_delete() -> Result<(), String> {
-    schtasks_run(&["/delete", "/tn", "ViewStage_MemClean", "/f"])
+    let output = std::process::Command::new("schtasks")
+        .args(["/delete", "/tn", "ViewStage_MemClean", "/f"])
+        .creation_flags(CREATE_NO_WINDOW)
+        .output()
+        .map_err(|e| format!("schtasks 删除失败: {}", e))?;
+
+    if output.status.success() {
+        log::info!("内存清理: 计划任务已移除");
+        Ok(())
+    } else {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        log::warn!("内存清理: 移除计划任务失败 - {}", stderr.trim());
+        Err(stderr.trim().to_string())
+    }
 }
 
-/// 检查计划任务是否存在
+/// 检查计划任务是否存在（用 schtasks /query 仅查询，无需特殊权限）
 #[cfg(target_os = "windows")]
 fn memhelper_task_exists() -> bool {
     let output = std::process::Command::new("schtasks")
@@ -3809,15 +3919,7 @@ fn memreduct_check_installed() -> bool {
 #[tauri::command]
 fn memreduct_clean_now() -> bool {
     #[cfg(target_os = "windows")]
-    {
-        let ok = memhelper_task_run().is_ok();
-        if ok {
-            log::info!("内存清理: 计划任务执行成功");
-        } else {
-            log::warn!("内存清理: 计划任务执行失败");
-        }
-        ok
-    }
+    { memhelper_task_run().is_ok() }
     #[cfg(not(target_os = "windows"))]
     { false }
 }
@@ -3844,22 +3946,13 @@ fn memreduct_uninstall() -> Result<(), String> {
     #[cfg(target_os = "windows")]
     {
         log::info!("内存清理: 开始移除计划任务 ViewStage_MemClean");
-        match memhelper_task_delete() {
-            Ok(()) => {
-                log::info!("内存清理: 计划任务已移除");
-                Ok(())
-            }
-            Err(e) => {
-                log::warn!("内存清理: 移除计划任务失败: {}", e);
-                Err(e)
-            }
-        }
+        memhelper_task_delete()
     }
     #[cfg(not(target_os = "windows"))]
     { Err("仅 Windows 平台支持".to_string()) }
 }
 
-/// 后台内存监控线程（每 5 分钟检查，RAM > 80% 时触发清理）
+/// 后台内存监控线程（每 5 分钟检查，RAM > 80% 时触发清理，无 UAC）
 #[cfg(target_os = "windows")]
 fn memhelper_start_monitor() {
     const CHECK_INTERVAL_SECS: u64 = 300;
