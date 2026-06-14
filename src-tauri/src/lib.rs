@@ -2702,17 +2702,6 @@ fn office_detect_linux() -> OfficeDetectionResult {
     }
 }
 
-/// 非 Windows 平台：Office 检测始终返回无
-#[cfg(not(target_os = "windows"))]
-fn office_detect_windows() -> OfficeDetectionResult {
-    OfficeDetectionResult {
-        has_word: false,
-        has_wps: false,
-        has_libreoffice: false,
-        recommended: OfficeSoftware::None,
-    }
-}
-
 #[tauri::command]
 fn office_detect_all() -> OfficeDetectionResult {
     #[cfg(target_os = "windows")]
@@ -3880,8 +3869,6 @@ fn memhelper_start_monitor() {
     });
 }
 
-#[cfg(not(target_os = "windows"))]
-fn memhelper_start_monitor() {}
 
 /// 应用入口函数
 ///
