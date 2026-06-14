@@ -6,7 +6,7 @@
 </div>
 
 <p align="center">
-    <img src="https://img.shields.io/badge/version-0.17.5-blue.svg" alt="版本">
+    <img src="https://img.shields.io/badge/version-0.20.0-blue.svg" alt="版本">
     <img src="https://img.shields.io/badge/Tauri-2-ffc131.svg" alt="Tauri v2">
     <img src="https://img.shields.io/badge/license-MIT-green.svg" alt="许可证">
 </p>
@@ -47,7 +47,7 @@
 
 ### 系统要求
 
-- **操作系统**：Windows 10 或更高版本（当前仅支持 Windows）
+- **操作系统**：Windows 10 或更高版本、Linux（x86_64）
 - **运行时**：WebView2（[下载地址](https://developer.microsoft.com/en-us/microsoft-edge/webview2/#download-section)）
 
 ### 硬件要求
@@ -103,6 +103,15 @@ CI 触发器：推送 `v*` 标签或手动触发。
 - [rayon](https://github.com/rayon-rs/rayon) — 数据并行计算
 - [chrono](https://github.com/chronotope/chrono) — 日期时间库
 - [reqwest](https://github.com/seanmonstar/reqwest) — HTTP 客户端
+- [winreg](https://github.com/gentoo90/winreg-rs) — Windows 注册表操作（文件关联）
+- [simplelog](https://github.com/dermesser/simplelog) — 日志记录
+- [windows-sys](https://github.com/microsoft/windows-rs) — Windows API 绑定（内存清理 FFI）
+
+### 前端库
+
+- [PDF.js](https://mozilla.github.io/pdf.js/) — Mozilla 的 PDF 渲染库
+- [mammoth.js](https://github.com/mwilliamson/mammoth.js) — Word 文档转为 HTML
+- [html2canvas](https://html2canvas.hertzen.com/) — HTML 元素渲染为 Canvas
 
 ### Tauri 插件
 
