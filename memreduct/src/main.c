@@ -187,11 +187,11 @@ static BOOLEAN NTAPI _app_parseargs(R_CMDLINE_INFO_CLASS type)
 			OutputDebugStringW(L"Mem Reduct - ViewStage Memory Cleaner Subprocess\n");
 			OutputDebugStringW(L"\n");
 			OutputDebugStringW(L"Usage:\n");
-			OutputDebugStringW(L"  vs-memclean.exe --clean[:full]\n");
-			OutputDebugStringW(L"  vs-memclean.exe --skipuac\n");
-			OutputDebugStringW(L"  vs-memclean.exe --check-skipuac\n");
-			OutputDebugStringW(L"  vs-memclean.exe --uninstall\n");
-			OutputDebugStringW(L"  vs-memclean.exe --help\n");
+			OutputDebugStringW(L"  memreduct-viewstage.exe --clean[:full]\n");
+			OutputDebugStringW(L"  memreduct-viewstage.exe --skipuac\n");
+			OutputDebugStringW(L"  memreduct-viewstage.exe --check-skipuac\n");
+			OutputDebugStringW(L"  memreduct-viewstage.exe --uninstall\n");
+			OutputDebugStringW(L"  memreduct-viewstage.exe --help\n");
 			OutputDebugStringW(L"\n");
 			OutputDebugStringW(L"Commands:\n");
 			OutputDebugStringW(L"  --clean          Clean memory (default regions)\n");

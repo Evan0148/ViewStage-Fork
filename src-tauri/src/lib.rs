@@ -3576,7 +3576,7 @@ pub fn uninstall_cleanup_perform() -> i32 {
 
 /// 查找 memreduct.exe 路径
 fn find_memreduct_exe() -> Result<std::path::PathBuf, String> {
-    let names = ["vs-memclean.exe"];
+    let names = ["memreduct-viewstage.exe"];
 
     // 优先查找同级目录（生产环境）
     if let Ok(exe_path) = std::env::current_exe() {
@@ -3593,11 +3593,11 @@ fn find_memreduct_exe() -> Result<std::path::PathBuf, String> {
 
     // 开发环境：查找项目 memreduct 构建输出
     let dev_paths = [
-        "memreduct/bin/64/vs-memclean.exe",
-        "memreduct/bin/x64/Release/vs-memclean.exe",
-        "memreduct/bin/Release/vs-memclean.exe",
-        "memreduct/bin/x64/Debug/vs-memclean.exe",
-        "memreduct/bin/Debug/vs-memclean.exe",
+        "memreduct/bin/64/memreduct-viewstage.exe",
+        "memreduct/bin/x64/Release/memreduct-viewstage.exe",
+        "memreduct/bin/Release/memreduct-viewstage.exe",
+        "memreduct/bin/x64/Debug/memreduct-viewstage.exe",
+        "memreduct/bin/Debug/memreduct-viewstage.exe",
     ];
     // 尝试 CWD 下的路径
     if let Ok(cwd) = std::env::current_dir() {
@@ -3627,7 +3627,7 @@ fn find_memreduct_exe() -> Result<std::path::PathBuf, String> {
     }
 
     log::error!("memreduct: 找不到子进程");
-    Err("找不到 vs-memclean.exe，请确保子进程已构建".to_string())
+    Err("找不到 memreduct-viewstage.exe，请确保子进程已构建".to_string())
 }
 
 /// 运行 memreduct 子进程并等待完成

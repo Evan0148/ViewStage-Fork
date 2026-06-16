@@ -95,15 +95,15 @@ jobs:
           restore-keys: |
             ${{ matrix.label }}-target-
 
-      # ── vs-memclean subprocess (Windows only) ─────────────
-      - name: Cache vs-memclean build
+      # ── memreduct-viewstage subprocess (Windows only) ─────
+      - name: Cache subprocess build
         id: cache-memclean
         if: runner.os == 'Windows'
         uses: actions/cache@v4
         with:
           path: |
-            memreduct/bin/64/vs-memclean.exe
-            memreduct/x64/Release/vs-memclean/
+            memreduct/bin/64/memreduct-viewstage.exe
+            memreduct/x64/Release/memreduct-viewstage/
           key: memclean-${{ hashFiles('memreduct/src/**', 'memreduct/routine/src/**', 'memreduct/*.vcxproj', 'memreduct/*.sln', 'memreduct/*.props') }}
 
       - name: Setup MSVC command prompt
@@ -112,7 +112,7 @@ jobs:
         with:
           arch: x64
 
-      - name: Build vs-memclean subprocess
+      - name: Build subprocess
         if: runner.os == 'Windows' && steps.cache-memclean.outputs.cache-hit != 'true'
         working-directory: memreduct
         run: msbuild memreduct.sln -property:Configuration=Release -property:Platform=x64 -verbosity:minimal
