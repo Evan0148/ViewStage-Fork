@@ -2325,6 +2325,11 @@ class DocumentReaderManager {
 
             const unclamped_s = this.dr_start_scale * ev.scale;
             this.dr_scale = Math.max(this.dr_min_scale, Math.min(this.dr_max_scale, unclamped_s));
+            this.dr_cached_inv_scale = 1 / this.dr_scale;
+            if (this.batch_draw) {
+                this.batch_draw._overlay_cached_rect_left = null;
+                this.batch_draw._overlay_cached_rect_top = null;
+            }
 
             if (this.dr_scale !== unclamped_s) {
                 this.dr_start_finger0_cx = (ev.finger0.x - this.dr_canvas_x) / this.dr_scale;
@@ -3836,11 +3841,19 @@ class DocumentReaderManager {
 
     /** 标记缩放进行中，延迟 300ms 后触发批量重绘 */
     _dr_set_zooming() {
-        if (!this._dr_is_zooming) this._dr_is_zooming = true;
+        if (!this._dr_is_zooming) {
+            this._dr_is_zooming = true;
+            if (this.batch_draw) {
+                this.batch_draw.hide_overlay();
+            }
+        }
         if (this._zoom_complete_timer !== null) clearTimeout(this._zoom_complete_timer);
         this._zoom_complete_timer = setTimeout(() => {
             this._zoom_complete_timer = null;
             this._dr_is_zooming = false;
+            if (this.batch_draw) {
+                this.batch_draw.show_overlay();
+            }
             // 缩放结束后批量重绘可见页 + 更新 tile DPR
             this._check_page_visibility();
             for (const i of this._pages_with_tiles) {
@@ -3986,6 +3999,11 @@ class DocumentReaderManager {
             this.dr_canvas_x = mouse_x - (mouse_x - this.dr_canvas_x) * ratio;
             this.dr_canvas_y = mouse_y - (mouse_y - this.dr_canvas_y) * ratio;
             this.dr_scale = new_s;
+            this.dr_cached_inv_scale = 1 / new_s;
+            if (this.batch_draw) {
+                this.batch_draw._overlay_cached_rect_left = null;
+                this.batch_draw._overlay_cached_rect_top = null;
+            }
 
             // will-change: 按需启用 GPU 合成层
             this._dr_enable_smooth_transform();

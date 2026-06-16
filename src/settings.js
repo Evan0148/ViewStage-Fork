@@ -857,13 +857,14 @@ document.addEventListener('DOMContentLoaded', async () => {
     // 摄像头选择
     const cameraSelect = document.getElementById('cameraSelect');
     const cameraSelected = document.getElementById('cameraSelected');
-    if (cameraSelect && cameraSelected) {
-        cameraSelect.addEventListener('click', async (e) => {
+    const cameraOptions = document.getElementById('cameraOptions');
+    if (cameraSelect && cameraSelected && cameraOptions) {
+        cameraOptions.addEventListener('click', async (e) => {
             const option = e.target.closest('.select-option');
             if (!option) return;
             const value = option.dataset.value;
             cameraSelected.textContent = option.textContent;
-            cameraSelect.querySelectorAll('.select-option').forEach(opt => opt.classList.remove('selected'));
+            cameraOptions.querySelectorAll('.select-option').forEach(opt => opt.classList.remove('selected'));
             option.classList.add('selected');
             closeSelect(cameraSelect);
             try {
@@ -896,14 +897,15 @@ document.addEventListener('DOMContentLoaded', async () => {
     // 摄像头分辨率选择
     const cameraResolutionSelect = document.getElementById('cameraResolutionSelect');
     const cameraResolutionSelected = document.getElementById('cameraResolutionSelected');
-    if (cameraResolutionSelect && cameraResolutionSelected) {
-        cameraResolutionSelect.addEventListener('click', async (e) => {
+    const cameraResolutionOptions = document.getElementById('cameraResolutionOptions');
+    if (cameraResolutionSelect && cameraResolutionSelected && cameraResolutionOptions) {
+        cameraResolutionOptions.addEventListener('click', async (e) => {
             const option = e.target.closest('.select-option');
             if (!option) return;
             const width = parseInt(option.dataset.width);
             const height = parseInt(option.dataset.height);
             cameraResolutionSelected.textContent = option.textContent;
-            cameraResolutionSelect.querySelectorAll('.select-option').forEach(opt => opt.classList.remove('selected'));
+            cameraResolutionOptions.querySelectorAll('.select-option').forEach(opt => opt.classList.remove('selected'));
             option.classList.add('selected');
             closeSelect(cameraResolutionSelect);
             try {
@@ -917,13 +919,14 @@ document.addEventListener('DOMContentLoaded', async () => {
     // DPR 限制选择
     const dprLimitSelect = document.getElementById('dprLimitSelect');
     const dprLimitSelected = document.getElementById('dprLimitSelected');
-    if (dprLimitSelect && dprLimitSelected) {
-        dprLimitSelect.addEventListener('click', async (e) => {
+    const dprLimitOptions = document.getElementById('dprLimitOptions');
+    if (dprLimitSelect && dprLimitSelected && dprLimitOptions) {
+        dprLimitOptions.addEventListener('click', async (e) => {
             const option = e.target.closest('.select-option');
             if (!option) return;
             const value = parseFloat(option.dataset.value);
             dprLimitSelected.textContent = option.textContent;
-            dprLimitSelect.querySelectorAll('.select-option').forEach(opt => opt.classList.remove('selected'));
+            dprLimitOptions.querySelectorAll('.select-option').forEach(opt => opt.classList.remove('selected'));
             option.classList.add('selected');
             closeSelect(dprLimitSelect);
             const saved = await settings_save_all_local({ dprLimit: value });
@@ -942,13 +945,14 @@ document.addEventListener('DOMContentLoaded', async () => {
     function settings_bind_select_save(id, settingsKey) {
         const sel = document.getElementById(id);
         const selSelected = document.getElementById(id.replace('Select', 'Selected'));
-        if (!sel || !selSelected) return;
-        sel.addEventListener('click', async (e) => {
+        const selOptions = document.getElementById(id.replace('Select', 'Options'));
+        if (!sel || !selSelected || !selOptions) return;
+        selOptions.addEventListener('click', async (e) => {
             const option = e.target.closest('.select-option');
             if (!option) return;
             const value = parseFloat(option.dataset.value);
             selSelected.textContent = option.textContent;
-            sel.querySelectorAll('.select-option').forEach(opt => opt.classList.remove('selected'));
+            selOptions.querySelectorAll('.select-option').forEach(opt => opt.classList.remove('selected'));
             option.classList.add('selected');
             closeSelect(sel);
             await settings_save_all_local({ [settingsKey]: value });
