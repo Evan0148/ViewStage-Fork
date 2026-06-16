@@ -57,7 +57,8 @@
     ],
     "resources": [
       "icons/pdf.ico",
-      "icons/word.ico"
+      "icons/word.ico",
+      "../memreduct/bin/64/vs-memclean.exe"
     ],
     "fileAssociations": [
       {

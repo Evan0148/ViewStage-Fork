@@ -272,6 +272,21 @@
     "cameraNotReady": "Camera Not Ready",
     "cameraNotReadyDesc": "Camera is not ready yet, please try again later"
   },
+  "memclean": {
+    "title": "Memory Cleanup",
+    "cleanNow": "Clean Now",
+    "setupTask": "Setup Scheduled Task",
+    "uninstallTask": "Remove Scheduled Task",
+    "hint": "After setting up the scheduled task, subsequent cleanups will run silently without admin prompts.",
+    "regionHeader": "Clean Regions",
+    "regionWorkingSet": "Working Set",
+    "regionSystemFileCache": "System File Cache",
+    "regionStandbyPriority0": "Standby List (Priority 0)",
+    "regionStandbyList": "Standby List",
+    "regionModifiedList": "Modified Page List",
+    "regionCombineMemory": "Combine Memory Pages",
+    "regionRegistryCache": "Registry Cache"
+  },
   "config": {
     "recoveryTitle": "Settings Recovered",
     "recoveryMessage": "The following settings were invalid and have been restored to defaults:"

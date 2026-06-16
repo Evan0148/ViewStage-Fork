@@ -272,5 +272,20 @@
   "config": {
     "recoveryTitle": "配置已恢復",
     "recoveryMessage": "以下配置項存在異常，已自動恢復為預設值："
+  },
+  "memclean": {
+    "title": "記憶體清理",
+    "cleanNow": "立即清理",
+    "setupTask": "設定排程任務",
+    "uninstallTask": "移除排程任務",
+    "hint": "設定排程任務後，後續清理不再需要管理員授權，系統會自動靜默清理。",
+    "regionHeader": "清理範圍",
+    "regionWorkingSet": "工作集",
+    "regionSystemFileCache": "系統檔案快取",
+    "regionStandbyPriority0": "待命清單（優先順序 0）",
+    "regionStandbyList": "待命清單",
+    "regionModifiedList": "已修改頁面清單",
+    "regionCombineMemory": "合併記憶體頁面",
+    "regionRegistryCache": "登錄檔快取"
   }
 }

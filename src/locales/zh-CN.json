@@ -272,6 +272,21 @@
     "cameraNotReady": "摄像头未就绪",
     "cameraNotReadyDesc": "摄像头尚未就绪，请稍后再试"
   },
+  "memclean": {
+    "title": "内存清理",
+    "cleanNow": "立即清理",
+    "setupTask": "设置计划任务",
+    "uninstallTask": "移除计划任务",
+    "hint": "设置计划任务后，后续清理不再需要管理员授权，系统会自动静默清理。",
+    "regionHeader": "清理范围",
+    "regionWorkingSet": "工作集",
+    "regionSystemFileCache": "系统文件缓存",
+    "regionStandbyPriority0": "待机列表（优先级 0）",
+    "regionStandbyList": "待机列表",
+    "regionModifiedList": "已修改页面列表",
+    "regionCombineMemory": "合并内存页面",
+    "regionRegistryCache": "注册表缓存"
+  },
   "config": {
     "recoveryTitle": "配置已恢复",
     "recoveryMessage": "以下配置项存在异常，已自动恢复为默认值："

@@ -406,9 +406,6 @@ function oobe_setup_page3_buttons() {
 
         const memToggle = document.getElementById('oobeMemCleanToggle');
         oobe_cached_settings.memreductCleanEnabled = memToggle ? memToggle.checked : true;
-        if (oobe_cached_settings.memreductCleanEnabled && invoke) {
-            invoke('memreduct_setup').catch(() => {});
-        }
 
         oobe_show_page4();
     });

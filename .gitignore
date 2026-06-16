@@ -45,3 +45,15 @@ example/
 
 # Theme package archives
 *.vst
+
+# vs-memclean subprocess build artifacts
+memreduct/bin/
+memreduct/x64/
+memreduct/ARM64/
+memreduct/Win32/
+memreduct/Release/
+memreduct/Debug/
+memreduct/ipch/
+memreduct/.vs/
+memreduct/*.user
+memreduct/*.suo

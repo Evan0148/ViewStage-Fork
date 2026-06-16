@@ -20,8 +20,7 @@ use std::os::windows::process::CommandExt;
 #[cfg(target_os = "windows")]
 const CREATE_NO_WINDOW: u32 = 0x08000000;
 
-#[cfg(target_os = "windows")]
-use windows_sys::Win32::System::SystemInformation::{GlobalMemoryStatusEx, MEMORYSTATUSEX};
+
 
 
 
@@ -1201,7 +1200,7 @@ async fn window_show_settings(app: tauri::AppHandle) -> Result<(), String> {
     .map_err(|e| format!("Failed to create settings window: {}", e))?;
     
     window.set_focus().map_err(|e| format!("Failed to focus new settings window: {}", e))?;
-    
+
     Ok(())
 }
 
@@ -1436,11 +1435,13 @@ fn config_fetch_default() -> serde_json::Value {
         "eraserSpeedEnabled": false,
         "eraserSizePresets": [5, 15, 25, 38, 50],
         "penEffectMode": "limited",
-        "memreductCleanEnabled": true,
         "developerMode": false,
         "penMinWidthRatio": 0.2,
         "lastOpenDoc": null,
-        "restoreLastDoc": true
+        "restoreLastDoc": true,
+        "memclean": {
+            "mask": 231
+        }
     })
 }
 
@@ -3566,438 +3567,175 @@ pub fn uninstall_cleanup_perform() -> i32 {
         log::info!("卸载清理: 文件关联清理完成");
     }
     
-    log::info!("卸载清理: 开始移除计划任务 ViewStage_MemClean");
-    if let Err(e) = memhelper_task_delete() {
-        log::warn!("卸载清理: 移除计划任务失败: {}", e);
-    } else {
-        log::info!("卸载清理: 计划任务已移除");
-    }
-    
-    0
-}
-// ==================== 内存清理核心函数 ====================
-
-/// 执行内存清理（SYSTEM 级别权限要求，通过计划任务调用）
-#[cfg(target_os = "windows")]
-/// 向调试器输出日志（SYSTEM 进程无法使用文件日志）
-#[cfg(target_os = "windows")]
-fn dbg_log(msg: &str) {
-    use std::ffi::OsStr;
-    use std::os::windows::ffi::OsStrExt;
-    #[link(name = "kernel32")]
-    extern "system" {
-        fn OutputDebugStringW(lpoutputstring: *const u16);
-    }
-    let wide: Vec<u16> = OsStr::new(msg)
-        .encode_wide()
-        .chain(std::iter::once(0))
-        .collect();
-    unsafe { OutputDebugStringW(wide.as_ptr()) };
-}
-
-#[cfg(target_os = "windows")]
-pub fn mem_clean_perform() -> i32 {
-    use std::ffi::c_void;
-    use std::ptr;
-
-    type NtSetSystemInformation = unsafe extern "system" fn(i32, *const c_void, i32) -> i32;
-
-    #[link(name = "kernel32")]
-    extern "system" {
-        fn GetModuleHandleW(name: *const u16) -> isize;
-        fn GetProcAddress(module: isize, name: *const u8) -> *const c_void;
-        fn GetCurrentProcess() -> isize;
-        fn OpenProcessToken(process: isize, desired_access: u32, token: *mut isize) -> i32;
-        fn LookupPrivilegeValueW(system: *const u16, name: *const u16, luid: *mut i64) -> i32;
-        fn AdjustTokenPrivileges(token: isize, disable_all: i32, new_state: *const u8, buffer_len: u32, prev: *mut u8, ret_len: *mut u32) -> i32;
-    }
-
-    // Enable SeIncreaseQuotaPrivilege (required by NtSetSystemInformation when running as admin)
-    unsafe {
-        let mut token: isize = 0;
-        if OpenProcessToken(GetCurrentProcess(), 0x0020, &mut token) != 0 {
-            let name = "SeIncreaseQuotaPrivilege\0".encode_utf16().collect::<Vec<u16>>();
-            let mut luid: i64 = 0;
-            if LookupPrivilegeValueW(ptr::null(), name.as_ptr(), &mut luid) != 0 {
-                #[repr(C)]
-                struct TokenPrivileges {
-                    count: u32,
-                    luid: i64,
-                    attributes: u32,
-                }
-                let tp = TokenPrivileges { count: 1, luid, attributes: 0x02 }; // SE_PRIVILEGE_ENABLED
-                AdjustTokenPrivileges(
-                    token, 0,
-                    &tp as *const TokenPrivileges as *const u8,
-                    std::mem::size_of::<TokenPrivileges>() as u32,
-                    ptr::null_mut(), ptr::null_mut(),
-                );
-            }
-        }
-    }
-
-    const SII_SYSTEM_MEMORY_LIST: i32 = 0x50;
-    const SII_SYSTEM_FILE_CACHE: i32 = 0x55;
-    const SII_REGISTRY_CACHE: i32 = 0x80;
-    const SII_COMBINE_MEMORY: i32 = 0x8B;
-
-    const CMD_EMPTY_WORKING_SETS: i32 = 0;
-    const CMD_FLUSH_MODIFIED_LIST: i32 = 1;
-    const CMD_PURGE_STANDBY_LIST: i32 = 2;
-    const CMD_PURGE_LOW_PRIORITY: i32 = 3;
-
-    const MASK_WS: u32 = 0x01;
-    const MASK_SFC: u32 = 0x02;
-    const MASK_SP0: u32 = 0x04;
-    const MASK_SBL: u32 = 0x08;
-    const MASK_MPL: u32 = 0x10;
-    const MASK_CML: u32 = 0x20;
-    const MASK_RGC: u32 = 0x40;
-    const MASK_MFC: u32 = 0x80;
-
-    const MASK_DEFAULT: u32 = MASK_WS | MASK_SFC | MASK_SP0 | MASK_RGC | MASK_CML | MASK_MFC;
-
-    #[repr(C)]
-    struct SystemFileCacheInfo {
-        min_ws: usize,
-        max_ws: usize,
-        flags: u32,
-    }
-
-    #[repr(C)]
-    struct MemoryCombineInfoEx {
-        handle: isize,
-        pages_combined: u32,
-        flags: u32,
-    }
-
-    // Load NtSetSystemInformation from ntdll
-    let nt_set_sys_info: NtSetSystemInformation = unsafe {
-        let mut name = [0u16; 10];
-        for (i, c) in "ntdll.dll\0".encode_utf16().enumerate() {
-            name[i] = c;
-        }
-        let ntdll = GetModuleHandleW(name.as_ptr());
-        if ntdll == 0 {
-            dbg_log("[MemClean] 失败: 无法加载 ntdll.dll");
-            return 1;
-        }
-        let func_name = b"NtSetSystemInformation\0";
-        let addr = GetProcAddress(ntdll, func_name.as_ptr());
-        if addr.is_null() {
-            dbg_log("[MemClean] 失败: 找不到 NtSetSystemInformation");
-            return 1;
-        }
-        std::mem::transmute(addr)
-    };
-
-    let mask = MASK_DEFAULT;
-    dbg_log("[MemClean] 开始执行内存清理");
-
-    unsafe {
-        // 1. Working set
-        if mask & MASK_WS != 0 {
-            let cmd = CMD_EMPTY_WORKING_SETS;
-            nt_set_sys_info(SII_SYSTEM_MEMORY_LIST, &cmd as *const i32 as *const c_void, std::mem::size_of::<i32>() as i32);
-            dbg_log("[MemClean] 已清空工作集");
-        }
-        // 2. System file cache
-        if mask & MASK_SFC != 0 {
-            let sfci = SystemFileCacheInfo { min_ws: usize::MAX, max_ws: usize::MAX, flags: 0 };
-            nt_set_sys_info(SII_SYSTEM_FILE_CACHE, &sfci as *const SystemFileCacheInfo as *const c_void, std::mem::size_of::<SystemFileCacheInfo>() as i32);
-            dbg_log("[MemClean] 已清空系统文件缓存");
-        }
-        // 3. Modified page list
-        if mask & MASK_MPL != 0 {
-            let cmd = CMD_FLUSH_MODIFIED_LIST;
-            nt_set_sys_info(SII_SYSTEM_MEMORY_LIST, &cmd as *const i32 as *const c_void, std::mem::size_of::<i32>() as i32);
-            dbg_log("[MemClean] 已刷新修改页列表");
-        }
-        // 4. Standby list
-        if mask & MASK_SBL != 0 {
-            let cmd = CMD_PURGE_STANDBY_LIST;
-            nt_set_sys_info(SII_SYSTEM_MEMORY_LIST, &cmd as *const i32 as *const c_void, std::mem::size_of::<i32>() as i32);
-            dbg_log("[MemClean] 已清空备用列表");
-        }
-        // 5. Standby priority-0 list
-        if mask & MASK_SP0 != 0 {
-            let cmd = CMD_PURGE_LOW_PRIORITY;
-            nt_set_sys_info(SII_SYSTEM_MEMORY_LIST, &cmd as *const i32 as *const c_void, std::mem::size_of::<i32>() as i32);
-            dbg_log("[MemClean] 已清空低优先级备用列表");
-        }
-        // 6. Registry cache
-        if mask & MASK_RGC != 0 {
-            nt_set_sys_info(SII_REGISTRY_CACHE, ptr::null(), 0);
-            dbg_log("[MemClean] 已清理注册表缓存");
-        }
-        // 7. Combine memory lists
-        if mask & MASK_CML != 0 {
-            let info = MemoryCombineInfoEx { handle: 0, pages_combined: 0, flags: 0 };
-            nt_set_sys_info(SII_COMBINE_MEMORY, &info as *const MemoryCombineInfoEx as *const c_void, std::mem::size_of::<MemoryCombineInfoEx>() as i32);
-            dbg_log("[MemClean] 已合并内存列表");
-        }
-    }
-
-    dbg_log("[MemClean] 内存清理完成");
     0
 }
 
-/// 安装计划任务：ShellExecuteW(runas, schtasks.exe /create /xml)
-/// 不需要外部 PowerShell
-#[cfg(target_os = "windows")]
-fn memhelper_task_install() -> Result<(), String> {
-    log::info!("内存清理: 提权安装计划任务（UAC 弹窗）");
 
-    let exe = std::env::current_exe()
-        .map_err(|e| format!("无法获取程序路径: {}", e))?;
-    let exe_str = exe.display().to_string();
 
-    // 将 XML 写入临时文件（schtasks /create /xml 要求）
-    let xml = format!(
-        r#"<?xml version="1.0" encoding="UTF-8"?>
-<Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
-  <RegistrationInfo><Description>ViewStage Memory Clean Task</Description></RegistrationInfo>
-  <Principals><Principal id="Author">
-      <RunLevel>HighestAvailable</RunLevel>
-    </Principal></Principals>
-  <Settings>
-    <AllowStartIfOnBatteries>true</AllowStartIfOnBatteries>
-    <StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>
-    <StartWhenAvailable>true</StartWhenAvailable>
-    <Hidden>true</Hidden>
-  </Settings>
-  <Actions Context="Author">
-    <Exec>
-      <Command>"{}"</Command>
-      <Arguments>--mem-clean</Arguments>
-    </Exec>
-  </Actions>
-</Task>"#,
-        exe_str
-    );
+// ==================== 内存清理子进程（memreduct.exe） ====================
 
-    let temp_dir = std::env::temp_dir();
-    let xml_path = temp_dir.join("ViewStage_MemClean.xml");
-    std::fs::write(&xml_path, xml.as_bytes())
-        .map_err(|e| format!("写入任务 XML 失败: {}", e))?;
+/// 查找 memreduct.exe 路径
+fn find_memreduct_exe() -> Result<std::path::PathBuf, String> {
+    let names = ["vs-memclean.exe"];
 
-    // 先删旧任务（schtasks /delete 非管理员也能删带 IU 权限的任务）
-    let _ = std::process::Command::new("schtasks")
-        .args(["/delete", "/tn", "ViewStage_MemClean", "/f"])
-        .creation_flags(CREATE_NO_WINDOW)
-        .output();
-
-    // 用 ShellExecuteW(runas) 提权启动 schtasks.exe /create
-    // 比 ShellExecuteExW 简单可靠，不需要结构体对齐
-    let xml_quoted = format!("\"{}\"", xml_path.display());
-    let args = format!("/create /xml {} /tn \"ViewStage_MemClean\" /f", xml_quoted);
-
-    #[link(name = "shell32")]
-    extern "system" {
-        fn ShellExecuteW(
-            hwnd: isize,
-            operation: *const u16,
-            file: *const u16,
-            parameters: *const u16,
-            directory: *const u16,
-            show_cmd: i32,
-        ) -> isize;
-    }
-
-    let verb = "runas\0";
-    let binary = "schtasks\0";
-    let verb_w: Vec<u16> = verb.encode_utf16().collect();
-    let binary_w: Vec<u16> = binary.encode_utf16().collect();
-    let args_w: Vec<u16> = args.encode_utf16().chain(std::iter::once(0)).collect();
-
-    let ret = unsafe {
-        ShellExecuteW(0, verb_w.as_ptr(), binary_w.as_ptr(), args_w.as_ptr(), std::ptr::null(), 0)
-    };
-
-    // ShellExecuteW > 32 表示成功启劜了进程
-    if ret as i32 <= 32 {
-        let _ = std::fs::remove_file(&xml_path);
-        let err_code = ret as i32;
-        if err_code == 1223 {
-            return Err("用户取消了 UAC 提权".to_string());
-        }
-        return Err(format!("提权启动 schtasks.exe 失败, 错误码: {}", err_code));
-    }
-
-    // 轮询等待任务创建（schtasks /create 通常几毫秒完成）
-    for _ in 0..120 {
-        if memhelper_task_exists() {
-            let _ = std::fs::remove_file(&xml_path);
-            log::info!("内存清理: 计划任务安装成功");
-            return Ok(());
-        }
-        std::thread::sleep(std::time::Duration::from_millis(500));
-    }
-
-    let _ = std::fs::remove_file(&xml_path);
-    Err("计划任务创建超时（60 秒），请检查是否有权限问题".to_string())
-}
-
-/// 触发清理任务（使用 schtasks /run，无 UAC）
-#[cfg(target_os = "windows")]
-fn memhelper_task_run() -> Result<(), String> {
-    log::info!("内存清理: 触发计划任务");
-    let output = std::process::Command::new("schtasks")
-        .args(["/run", "/tn", "ViewStage_MemClean"])
-        .creation_flags(CREATE_NO_WINDOW)
-        .output()
-        .map_err(|e| format!("schtasks 执行失败: {}", e))?;
-
-    if output.status.success() {
-        log::info!("内存清理: 计划任务执行成功");
-        Ok(())
-    } else {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        let msg = if stderr.is_empty() {
-            String::from_utf8_lossy(&output.stdout).to_string()
-        } else {
-            stderr.to_string()
-        };
-        log::warn!("内存清理: 计划任务执行失败 - {}", msg.trim());
-        Err(msg.trim().to_string())
-    }
-}
-
-/// 删除计划任务（使用 schtasks /delete，无 UAC）
-#[cfg(target_os = "windows")]
-fn memhelper_task_delete() -> Result<(), String> {
-    let output = std::process::Command::new("schtasks")
-        .args(["/delete", "/tn", "ViewStage_MemClean", "/f"])
-        .creation_flags(CREATE_NO_WINDOW)
-        .output()
-        .map_err(|e| format!("schtasks 删除失败: {}", e))?;
-
-    if output.status.success() {
-        log::info!("内存清理: 计划任务已移除");
-        Ok(())
-    } else {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        log::warn!("内存清理: 移除计划任务失败 - {}", stderr.trim());
-        Err(stderr.trim().to_string())
-    }
-}
-
-/// 检查计划任务是否存在（用 schtasks /query 仅查询，无需特殊权限）
-#[cfg(target_os = "windows")]
-fn memhelper_task_exists() -> bool {
-    let output = std::process::Command::new("schtasks")
-        .args(["/query", "/tn", "ViewStage_MemClean", "/nh"])
-        .creation_flags(CREATE_NO_WINDOW)
-        .output();
-    matches!(output, Ok(o) if o.status.success())
-}
-
-/// 获取当前物理内存使用率（%）
-#[cfg(target_os = "windows")]
-fn memhelper_fetch_memory_load() -> Option<u32> {
-    unsafe {
-        let mut status: MEMORYSTATUSEX = std::mem::zeroed();
-        status.dwLength = std::mem::size_of::<MEMORYSTATUSEX>() as u32;
-        if GlobalMemoryStatusEx(&mut status) == 0 {
-            None
-        } else {
-            Some(status.dwMemoryLoad)
-        }
-    }
-}
-
-/// Tauri IPC：检查计划任务是否已安装
-#[tauri::command]
-fn memreduct_check_installed() -> bool {
-    #[cfg(target_os = "windows")]
-    { memhelper_task_exists() }
-    #[cfg(not(target_os = "windows"))]
-    { false }
-}
-
-/// Tauri IPC：立即清理内存（通过计划任务触发，无 UAC）
-#[tauri::command]
-fn memreduct_clean_now() -> bool {
-    #[cfg(target_os = "windows")]
-    { memhelper_task_run().is_ok() }
-    #[cfg(not(target_os = "windows"))]
-    { false }
-}
-
-/// Tauri IPC：安装计划任务（弹一次 UAC 管理员授权）
-#[tauri::command]
-fn memreduct_setup() -> Result<(), String> {
-    #[cfg(target_os = "windows")]
-    {
-        if memhelper_task_exists() {
-            log::info!("内存清理: 计划任务已存在，跳过安装");
-            return Ok(());
-        }
-        log::info!("内存清理: 计划任务不存在，开始安装（需管理员授权）");
-        memhelper_task_install()
-    }
-    #[cfg(not(target_os = "windows"))]
-    { Err("仅 Windows 平台支持".to_string()) }
-}
-
-/// Tauri IPC：卸载计划任务
-#[tauri::command]
-fn memreduct_uninstall() -> Result<(), String> {
-    #[cfg(target_os = "windows")]
-    {
-        log::info!("内存清理: 开始移除计划任务 ViewStage_MemClean");
-        memhelper_task_delete()
-    }
-    #[cfg(not(target_os = "windows"))]
-    { Err("仅 Windows 平台支持".to_string()) }
-}
-
-/// 后台内存监控线程（每 5 分钟检查，RAM > 80% 时触发清理，无 UAC）
-#[cfg(target_os = "windows")]
-fn memhelper_start_monitor() {
-    const CHECK_INTERVAL_SECS: u64 = 300;
-    const CLEAN_COOLDOWN_SECS: u64 = 600;
-    const MEMORY_THRESHOLD: u32 = 80;
-
-    std::thread::spawn(move || {
-        let mut last_clean = std::time::Instant::now()
-            .checked_sub(std::time::Duration::from_secs(CLEAN_COOLDOWN_SECS))
-            .unwrap_or_else(std::time::Instant::now);
-
-        loop {
-            std::thread::sleep(std::time::Duration::from_secs(CHECK_INTERVAL_SECS));
-
-            if last_clean.elapsed().as_secs() < CLEAN_COOLDOWN_SECS {
-                continue;
-            }
-
-            let Some(load) = memhelper_fetch_memory_load() else {
-                log::warn!("内存清理监控: 获取内存占用失败");
-                continue;
-            };
-
-            if load <= MEMORY_THRESHOLD {
-                continue;
-            }
-
-            if !memhelper_task_exists() {
-                log::info!("内存清理监控: RAM {}%，计划任务未安装，跳过", load);
-                continue;
-            }
-
-            match memhelper_task_run() {
-                Ok(_) => {
-                    last_clean = std::time::Instant::now();
-                    log::info!("内存清理监控: 已触发清理，RAM {}%", load);
-                }
-                Err(e) => {
-                    log::warn!("内存清理监控: 触发失败，RAM {}%, err={}", load, e);
+    // 优先查找同级目录（生产环境）
+    if let Ok(exe_path) = std::env::current_exe() {
+        if let Some(parent) = exe_path.parent() {
+            for name in &names {
+                let candidate = parent.join(name);
+                if candidate.exists() {
+                    log::info!("memreduct: 找到子进程: {}", candidate.display());
+                    return Ok(candidate);
                 }
             }
         }
-    });
+    }
+
+    // 开发环境：查找项目 memreduct 构建输出
+    let dev_paths = [
+        "memreduct/bin/64/vs-memclean.exe",
+        "memreduct/bin/x64/Release/vs-memclean.exe",
+        "memreduct/bin/Release/vs-memclean.exe",
+        "memreduct/bin/x64/Debug/vs-memclean.exe",
+        "memreduct/bin/Debug/vs-memclean.exe",
+    ];
+    // 尝试 CWD 下的路径
+    if let Ok(cwd) = std::env::current_dir() {
+        for rel in &dev_paths {
+            let candidate = cwd.join(rel);
+            if candidate.exists() {
+                log::info!("memreduct: 找到子进程: {}", candidate.display());
+                return Ok(candidate);
+            }
+            // CWD 可能是 src-tauri，尝试父目录
+            if let Some(parent) = cwd.parent() {
+                let candidate2 = parent.join(rel);
+                if candidate2.exists() {
+                    log::info!("memreduct: 找到子进程: {}", candidate2.display());
+                    return Ok(candidate2);
+                }
+            }
+        }
+    }
+    // 也尝试直接相对路径（备用）
+    for rel in &dev_paths {
+        let candidate = std::path::PathBuf::from(rel);
+        if candidate.exists() {
+            log::info!("memreduct: 找到子进程: {}", candidate.canonicalize().unwrap_or(candidate.clone()).display());
+            return Ok(candidate);
+        }
+    }
+
+    log::error!("memreduct: 找不到子进程");
+    Err("找不到 vs-memclean.exe，请确保子进程已构建".to_string())
 }
 
+/// 运行 memreduct 子进程并等待完成
+#[cfg(target_os = "windows")]
+fn run_memreduct(args: &[&str]) -> Result<(), String> {
+    use std::process::Command;
+
+    let exe = find_memreduct_exe()?;
+
+    log::info!("memreduct: 执行 {:?} {:?}", exe.file_name().unwrap_or_default(), args);
+
+    let output = Command::new(&exe)
+        .args(args)
+        .creation_flags(CREATE_NO_WINDOW)
+        .output()
+        .map_err(|e| {
+            log::error!("memreduct: 启动失败: {}", e);
+            format!("启动 memreduct 失败: {}", e)
+        })?;
+
+    if output.status.success() {
+        log::info!("memreduct: 执行成功 {:?}", args);
+        Ok(())
+    } else {
+        let code = output.status.code().unwrap_or(-1);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        log::error!("memreduct: 退出码 {} {:?}", code, args);
+        if !stderr.is_empty() {
+            log::error!("memreduct: stderr: {}", stderr.trim());
+        }
+        Err(format!("memreduct 退出码 {}: {}", code, stderr.trim()))
+    }
+}
+
+/// IPC 命令：立刻清理内存
+/// mask 可选，0 或 None 使用默认值 / 配置文件中的 ReductMask2
+#[cfg(target_os = "windows")]
+#[tauri::command]
+async fn memreduct_clean_now(mask: Option<u32>) -> Result<(), String> {
+    match mask {
+        Some(0) | None => run_memreduct(&["--clean"]),
+        Some(m) => run_memreduct(&[&format!("--clean:{}", m)]),
+    }
+}
+
+/// IPC 命令：设置跳过 UAC（创建计划任务）
+#[cfg(target_os = "windows")]
+#[tauri::command]
+async fn memreduct_setup() -> Result<(), String> {
+    run_memreduct(&["--skipuac"])
+}
+
+/// IPC 命令：卸载跳过 UAC 计划任务
+#[cfg(target_os = "windows")]
+#[tauri::command]
+async fn memreduct_uninstall() -> Result<(), String> {
+    run_memreduct(&["--uninstall"])
+}
+
+/// IPC 命令：检查计划任务是否已安装
+#[cfg(target_os = "windows")]
+#[tauri::command]
+async fn memreduct_check_skipuac() -> bool {
+    match run_memreduct_raw(&["--check-skipuac"]) {
+        Ok(exit_code) => exit_code == 0,
+        Err(_) => false,
+    }
+}
+
+/// 运行 memreduct 子进程并获取退出码（不映射为 Result）
+#[cfg(target_os = "windows")]
+fn run_memreduct_raw(args: &[&str]) -> Result<i32, String> {
+    use std::process::Command;
+
+    let exe = find_memreduct_exe()?;
+
+    log::info!("memreduct: 执行 {:?} {:?}", exe.file_name().unwrap_or_default(), args);
+
+    let output = Command::new(&exe)
+        .args(args)
+        .creation_flags(CREATE_NO_WINDOW)
+        .output()
+        .map_err(|e| {
+            log::error!("memreduct: 启动失败: {}", e);
+            format!("启动 memreduct 失败: {}", e)
+        })?;
+
+    let code = output.status.code().unwrap_or(-1);
+    log::info!("memreduct: 退出码 {} {:?}", code, args);
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    if !stderr.is_empty() {
+        log::error!("memreduct: stderr: {}", stderr.trim());
+    }
+
+    Ok(code)
+}
+
+/// 非 Windows 平台空实现
+#[cfg(not(target_os = "windows"))]
+fn run_memreduct(_args: &[&str]) -> Result<(), String> {
+    Err("内存清理仅在 Windows 上可用".to_string())
+}
+
+#[cfg(not(target_os = "windows"))]
+fn run_memreduct_raw(_args: &[&str]) -> Result<i32, String> {
+    Err("内存清理仅在 Windows 上可用".to_string())
+}
 
 /// 应用入口函数
 ///
@@ -4117,11 +3855,6 @@ pub fn app_init_run() {
                 
             }
             
-            #[cfg(target_os = "windows")]
-            {
-                memhelper_start_monitor();
-            }
-            
             Ok(())
         })
         // 注册所有 Tauri IPC 命令
@@ -4171,10 +3904,10 @@ pub fn app_init_run() {
             filetype_set_icons,
             filetype_delete_icons,
             device_detect_all,
-            memreduct_check_installed,
             memreduct_clean_now,
             memreduct_setup,
-            memreduct_uninstall
+            memreduct_uninstall,
+            memreduct_check_skipuac
         ])
         .run(tauri::generate_context!())
         .unwrap_or_else(|e| {

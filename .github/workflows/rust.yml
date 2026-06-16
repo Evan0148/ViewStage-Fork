@@ -45,6 +45,9 @@ jobs:
     runs-on: ${{ matrix.os }}
     timeout-minutes: 60
 
+    env:
+      RUSTC_WRAPPER: sccache
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -65,26 +68,66 @@ jobs:
             libssl-dev \
             libayatana-appindicator3-dev
 
-      - name: Cache Cargo registry and build artifacts
+      # ── sccache (compiler cache) ──────────────────────────
+      - name: Start sccache
+        uses: mozilla-actions/sccache-action@v0
+
+      # ── Cargo / Rust cache ────────────────────────────────
+      - name: Cache Cargo registry
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/registry
+          key: cargo-registry-${{ hashFiles('src-tauri/Cargo.lock') }}
+
+      - name: Cache Cargo git
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/git
+          key: cargo-git-${{ hashFiles('src-tauri/Cargo.lock') }}
+
+      - name: Cache Tauri build target
         uses: actions/cache@v4
         with:
           path: |
-            ~/.cargo/registry
-            ~/.cargo/git
             src-tauri/target
-          key: ${{ matrix.label }}-${{ hashFiles('src-tauri/Cargo.lock') }}
+            !src-tauri/target/release/bundle
+          key: ${{ matrix.label }}-target-${{ hashFiles('src-tauri/Cargo.lock') }}
           restore-keys: |
-            ${{ matrix.label }}-
+            ${{ matrix.label }}-target-
 
+      # ── vs-memclean subprocess (Windows only) ─────────────
+      - name: Cache vs-memclean build
+        id: cache-memclean
+        if: runner.os == 'Windows'
+        uses: actions/cache@v4
+        with:
+          path: |
+            memreduct/bin/64/vs-memclean.exe
+            memreduct/x64/Release/vs-memclean/
+          key: memclean-${{ hashFiles('memreduct/src/**', 'memreduct/routine/src/**', 'memreduct/*.vcxproj', 'memreduct/*.sln', 'memreduct/*.props') }}
+
+      - name: Setup MSVC command prompt
+        if: runner.os == 'Windows'
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      - name: Build vs-memclean subprocess
+        if: runner.os == 'Windows' && steps.cache-memclean.outputs.cache-hit != 'true'
+        working-directory: memreduct
+        run: msbuild memreduct.sln -property:Configuration=Release -property:Platform=x64 -verbosity:minimal
+
+      # ── Tauri CLI ─────────────────────────────────────────
       - name: Install cargo-binstall
         uses: cargo-bins/cargo-binstall@main
 
       - name: Install Tauri CLI
         run: cargo binstall tauri-cli --locked -y
 
-      - name: Verify Tauri CLI version
+      - name: Verify Tauri CLI
         run: cargo tauri --version
 
+      # ── Build Tauri application ───────────────────────────
       - name: Clean previous bundle artifacts
         shell: bash
         run: rm -rf src-tauri/target/release/bundle
@@ -95,6 +138,7 @@ jobs:
           TAURI_PRIVATE_KEY: ${{ secrets.TAURI_PRIVATE_KEY }}
           TAURI_KEY_PASSWORD: ${{ secrets.TAURI_KEY_PASSWORD }}
 
+      # ── Rename artifacts with platform suffix ─────────────
       - name: Rename artifacts with platform suffix
         shell: bash
         run: |
@@ -213,4 +257,3 @@ jobs:
           prerelease: ${{ steps.prerelease.outputs.prerelease }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-

@@ -1,0 +1,92 @@
+.memclean-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 16px;
+  border-radius: 8px;
+  background: var(--color-surface, rgba(255,255,255,0.04));
+  margin-bottom: 8px;
+}
+
+.memclean-status-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.memclean-status-dot.active { background: #2ecc71; }
+.memclean-status-dot.inactive { background: #888; }
+.memclean-status-dot.error { background: #ef4444; }
+
+.memclean-status-text {
+  flex: 1;
+  font-size: 13px;
+  color: var(--color-muted, #888);
+}
+
+.memclean-btn-row {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-top: 20px;
+}
+
+.memclean-btn-row .btn-action {
+  width: 100%;
+  justify-content: center;
+  padding: 10px 0;
+}
+
+.memclean-btn-row .btn-action:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.memclean-hint {
+  font-size: 11px;
+  color: var(--color-muted, #666);
+  text-align: center;
+  padding: 12px 0 0;
+  line-height: 1.5;
+}
+
+.memclean-section-title {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--color-text, #ddd);
+  margin: 20px 0 10px;
+}
+
+.memclean-regions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px 20px;
+  padding: 0 4px;
+}
+
+.memclean-region-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 13px;
+  color: var(--color-text, #ccc);
+  user-select: none;
+}
+
+.memclean-region-item:hover {
+  background: rgba(255,255,255,0.04);
+}
+
+.memclean-region-item input[type="checkbox"] {
+  accent-color: #4fc;
+}
+
+.memclean-divider {
+  border: none;
+  border-top: 1px solid rgba(255,255,255,0.06);
+  margin: 18px 0 4px;
+}
