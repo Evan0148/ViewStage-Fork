@@ -23,6 +23,9 @@ import {
 import { DocLoader } from './modules/pdf/document_loader.js';
 import { InputSource, DragTapSource, PinchZoomSource, TOLERANCE } from './modules/gesture/index.js';
 import { CameraManager, camera_format_blob_to_data_url } from './modules/camera/camera.js';
+import { resetContextState, updateContextState } from './modules/canvas/context-state.js';
+import { renderStrokesToContext, getPenEffectMode } from './modules/canvas/stroke-renderer.js';
+import { createHistoryCompactor } from './modules/canvas/history-compactor.js';
 
 // === 全局变量 ===
 let last_canvas_transform = { x: null, y: null, scale: null };
@@ -907,6 +910,22 @@ const cameraManager = new CameraManager({
     updateMoveBound: () => main_update_move_bound(),
     updateCanvasPosition: () => main_update_canvas_position(),
     updatePhotoButtonState: () => cameraManager.updatePhotoButtonState(),
+});
+
+const historyCompactor = createHistoryCompactor({
+    state,
+    cloneStrokeDeep: (strokes) => main_main_stroke_clone_deep(strokes),
+    fetchOffscreenCanvas: () => main_fetch_offscreen_canvas(),
+    releaseOffscreenCanvas: (c) => main_release_offscreen_canvas(c),
+    renderAllStrokes: (bounds) => main_render_all_strokes(bounds),
+    loadBaseImage: (url) => main_load_base_image(url),
+    safeScaleFn: main_fetch_safe_scale,
+    penManager: () => realPenManager,
+    historyValidateCompact: history_validate_compact,
+    historyFetchUndoStack: history_fetch_undo_stack,
+    historyFetchCommandsToCompact: history_fetch_commands_to_compact,
+    historyFormatCompact: history_format_compact,
+    SnapshotCommand,
 });
 
 let cachedCanvasRect = null;
@@ -3599,395 +3618,38 @@ async function main_render_all_strokes(bounds) {
     tr.rebuild_all();
 }
 
-function get_pen_effect_mode() {
-    return DRAW_CONFIG.penEffectMode || 'off';
-}
+function get_pen_effect_mode() { return getPenEffectMode(); }
 window.get_pen_effect_mode = get_pen_effect_mode;
 
-let compactIdleId = null;
-
-// 重置上下文状态缓存（在 tile rendering 后调用，避免缓存失效）
-function main_reset_context_state() {
-    currentContextState.strokeStyle = null;
-    currentContextState.fillStyle = null;
-    currentContextState.lineWidth = null;
-    currentContextState.lineCap = null;
-    currentContextState.lineJoin = null;
-    currentContextState.globalCompositeOperation = null;
-}
+function main_reset_context_state() { resetContextState(); }
 window.main_reset_context_state = main_reset_context_state;
 
-// === 批注绘制系统 ===
-// Canvas上下文状态缓存、笔画绘制、批注压缩
-
-let currentContextState = {
-    strokeStyle: null,
-    fillStyle: null,
-    lineWidth: null,
-    lineCap: null,
-    lineJoin: null,
-    globalCompositeOperation: null
-};
-
-// === 上下文状态管理 ===
-
-/**
- * 设置上下文状态（只更新变化的属性，避免冗余调用）
- * @param {CanvasRenderingContext2D} ctx
- * @param {Object} state - 含 strokeStyle/fillStyle/lineWidth/lineCap/lineJoin/globalCompositeOperation
- */
-function main_update_context_state(ctx, state) {
-    if (currentContextState.strokeStyle !== state.strokeStyle) {
-        ctx.strokeStyle = state.strokeStyle;
-        currentContextState.strokeStyle = state.strokeStyle;
-    }
-
-    if (currentContextState.fillStyle !== state.fillStyle) {
-        ctx.fillStyle = state.fillStyle;
-        currentContextState.fillStyle = state.fillStyle;
-    }
-    
-    if (currentContextState.lineWidth !== state.lineWidth) {
-        ctx.lineWidth = state.lineWidth;
-        currentContextState.lineWidth = state.lineWidth;
-    }
-    
-    if (currentContextState.lineCap !== state.lineCap) {
-        ctx.lineCap = state.lineCap;
-        currentContextState.lineCap = state.lineCap;
-    }
-    
-    if (currentContextState.lineJoin !== state.lineJoin) {
-        ctx.lineJoin = state.lineJoin;
-        currentContextState.lineJoin = state.lineJoin;
-    }
-    
-    if (currentContextState.globalCompositeOperation !== state.globalCompositeOperation) {
-        ctx.globalCompositeOperation = state.globalCompositeOperation;
-        currentContextState.globalCompositeOperation = state.globalCompositeOperation;
-    }
-}
+function main_update_context_state(ctx, s) { updateContextState(ctx, s); }
 window.main_update_context_state = main_update_context_state;
 
 /**
  * 按原始顺序逐个绘制笔画：draw/comment 用 source-over，erase 用 destination-out
- * 优化：可变宽度段按线宽分组合并连续段到同一条路径，减少 stroke() 调用
  * @param {CanvasRenderingContext2D} ctx
  * @param {Array} strokes - 笔画数组
  */
 async function main_render_strokes_to_context(ctx, strokes) {
-    if (strokes.length === 0) return;
-
-    main_reset_context_state();
-
-    main_update_context_state(ctx, {
-        lineCap: 'round',
-        lineJoin: 'round'
-    });
-
-    let currentEraserShape = 'round';
-    const pen_effect = get_pen_effect_mode();
-
-    /* 批处理状态：合并连续同色/同线宽段到一条路径 */
-    let batchActive = false;
-    let batchColor = null;
-    let batchLineWidth = 0;
-    let batchIsErase = false;
-    let batchPrevMidX = 0;
-    let batchPrevMidY = 0;
-
-    const batch_flush = () => {
-        if (batchActive) {
-            ctx.stroke();
-            batchActive = false;
-        }
-    };
-
-    for (const stroke of strokes) {
-        if (!stroke.points || stroke.points.length < 1) continue;
-
-        const hasVariableWidths = stroke.variableWidths && stroke.variableWidths.length > 0;
-        const strokeColor = stroke.color || DRAW_CONFIG.penColor;
-        const renderScale = main_fetch_safe_scale();
-        const strokeScale = stroke.scale || 1;
-        let baseLineWidth;
-        if (stroke.type === 'erase') {
-            // 用 stroke 自身的 canvas 坐标线宽，不做实时缩放
-            baseLineWidth = stroke.eraserSize || (stroke.eraserSizeRaw / (stroke.scale || 1));
-        } else if (stroke.type === 'draw') {
-            baseLineWidth = (stroke.lineWidth || DRAW_CONFIG.penWidth) * strokeScale / renderScale;
-        } else {
-            baseLineWidth = (stroke.lineWidth || (stroke.type === 'erase' ? DRAW_CONFIG.eraserSize : DRAW_CONFIG.penWidth)) * strokeScale / renderScale;
-        }
-
-        if (stroke.type === 'erase') {
-            /* 擦除与前一批绘制颜色不同，先刷出绘制批 */
-            batch_flush();
-            main_update_context_state(ctx, {
-                globalCompositeOperation: 'destination-out',
-                fillStyle: '#000000',
-                strokeStyle: '#000000'
-            });
-        } else {
-            /* 上一个是擦除 → 刷出，切回绘制 */
-            if (batchIsErase) batch_flush();
-            main_update_context_state(ctx, {
-                globalCompositeOperation: 'source-over'
-            });
-
-            if (pen_effect !== 'off' && stroke.type === 'draw') {
-                /* 笔锋路径：不参与批处理，刷出前批后单独渲染 */
-                batch_flush();
-                const tessellated = realPenManager.build_tessellated_stroke(stroke, pen_effect);
-                if (tessellated) {
-                    realPenManager.render_tessellated_stroke(ctx, tessellated);
-                    continue;
-                }
-            }
-
-            main_update_context_state(ctx, {
-                strokeStyle: strokeColor
-            });
-            batchColor = strokeColor;
-            batchIsErase = false;
-        }
-
-        if (hasVariableWidths) {
-            batch_flush();
-            if (stroke.type === 'erase') {
-                const eraser = window.__eraser;
-                if (eraser) eraser.renderEraseStroke(ctx, stroke, baseLineWidth, strokeScale, renderScale);
-                continue;
-            }
-            let varBatchActive = false;
-            let varBatchWidth = 0;
-            let varPrevMidX = 0, varPrevMidY = 0;
-
-            for (let i = 0; i < stroke.points.length; i++) {
-                const point = stroke.points[i];
-                const lineWidth = stroke.variableWidths[i] !== undefined
-                    ? stroke.variableWidths[i] * strokeScale / renderScale
-                    : baseLineWidth;
-                const midX = (point.fromX + point.toX) / 2;
-                const midY = (point.fromY + point.toY) / 2;
-
-                if (!varBatchActive || Math.abs(lineWidth - varBatchWidth) >= 0.5) {
-                    if (varBatchActive) ctx.stroke();
-                    main_update_context_state(ctx, { lineWidth });
-                    varBatchWidth = lineWidth;
-                    ctx.beginPath();
-                    if (!varBatchActive) {
-                        ctx.moveTo(point.fromX, point.fromY);
-                        ctx.lineTo(midX, midY);
-                    } else {
-                        ctx.moveTo(varPrevMidX, varPrevMidY);
-                        ctx.quadraticCurveTo(point.fromX, point.fromY, midX, midY);
-                    }
-                    varBatchActive = true;
-                } else {
-                    ctx.quadraticCurveTo(point.fromX, point.fromY, midX, midY);
-                }
-                varPrevMidX = midX;
-                varPrevMidY = midY;
-            }
-            if (varBatchActive) ctx.stroke();
-            continue;
-        }
-
-        if (stroke.type === 'erase') {
-            batch_flush();
-            const eraser = window.__eraser;
-            if (eraser) eraser.renderEraseStroke(ctx, stroke, baseLineWidth, strokeScale, renderScale);
-            continue;
-        }
-
-        /* 固定宽度：尝试合并连续同色/同线宽笔画 */
-        if (!batchActive ||
-            batchIsErase !== (stroke.type === 'erase') ||
-            batchColor !== strokeColor ||
-            Math.abs(baseLineWidth - batchLineWidth) >= 0.5) {
-            batch_flush();
-            main_update_context_state(ctx, { lineWidth: baseLineWidth });
-            batchLineWidth = baseLineWidth;
-            batchColor = strokeColor;
-            batchIsErase = (stroke.type === 'erase');
-
-            const pts = stroke.points;
-            const path = new Path2D();
-            path.moveTo(pts[0].fromX, pts[0].fromY);
-            path.lineTo(pts[0].toX, pts[0].toY);
-            for (let i = 1; i < pts.length; i++) {
-                const p = pts[i];
-                path.lineTo(p.fromX, p.fromY);
-                path.lineTo(p.toX, p.toY);
-            }
-            ctx.stroke(path);
-            batchPrevMidX = midX;
-            batchPrevMidY = midY;
-        } else {
-            const pts = stroke.points;
-            if (!batchActive) {
-                batchActive = true;
-                ctx.beginPath();
-                ctx.moveTo(batchPrevMidX, batchPrevMidY);
-            }
-            ctx.lineTo(pts[0].fromX, pts[0].fromY);
-            let midX = (pts[0].fromX + pts[0].toX) / 2;
-            let midY = (pts[0].fromY + pts[0].toY) / 2;
-            ctx.lineTo(midX, midY);
-            for (let i = 1; i < pts.length; i++) {
-                const nmidX = (pts[i].fromX + pts[i].toX) / 2;
-                const nmidY = (pts[i].fromY + pts[i].toY) / 2;
-                ctx.moveTo(midX, midY);
-                ctx.quadraticCurveTo(pts[i].fromX, pts[i].fromY, nmidX, nmidY);
-                midX = nmidX;
-                midY = nmidY;
-            }
-            batchPrevMidX = midX;
-            batchPrevMidY = midY;
-        }
-    }
-
-    batch_flush();
-
-    main_update_context_state(ctx, {
-        globalCompositeOperation: 'source-over',
-        lineCap: 'round',
-        lineJoin: 'round'
+    return renderStrokesToContext(ctx, strokes, {
+        renderScale: main_fetch_safe_scale(),
+        penManager: realPenManager
     });
 }
+window.main_render_strokes_to_context = main_render_strokes_to_context;
 
-function main_init_compact() {
-    if (window.__HISTORY_ISOLATED) return;
-    if (!history_validate_compact()) return;
-    if (compactIdleId !== null) return;
-    
-    const undoStack = history_fetch_undo_stack();
-    const hasNonCompactible = undoStack.some(cmd => cmd.can_compact && !cmd.can_compact());
-    if (hasNonCompactible) {
-        console.log('检测到不可压缩的操作，跳过压缩');
-        return;
-    }
-    
-    compactIdleId = requestIdleCallback((deadline) => {
-        compactIdleId = null;
-        main_handle_compact_strokes();
-    }, { timeout: 2000 });
-}
+function main_init_compact() { historyCompactor.initCompaction(); }
 
-async function main_handle_compact_strokes() {
-    if (window.__HISTORY_ISOLATED) return;
-    if (!history_validate_compact()) return;
-    
-    const undoStack = history_fetch_undo_stack();
-    const hasNonCompactible = undoStack.some(cmd => cmd.can_compact && !cmd.can_compact());
-    if (hasNonCompactible) {
-        console.log('压缩执行前检测到不可压缩的操作，取消压缩');
-        return;
-    }
-    
-    const commandsToCompact = history_fetch_commands_to_compact();
-    if (commandsToCompact.length === 0) return;
-    const compactTargetCount = commandsToCompact.length;
-    
-    const loadId = ++state.baseImageLoadId;
-    state.compactSnapshotId = (state.compactSnapshotId || 0) + 1;
-    const compactSnapshotId = state.compactSnapshotId;
-    
-    const beforeStrokes = main_main_stroke_clone_deep(state.strokeHistory);
-    const frozenImageURL = state.baseImageURL;
-    
-    const strokesToCompactSet = new Set();
-    commandsToCompact.forEach(cmd => {
-        if (cmd.stroke) {
-            strokesToCompactSet.add(cmd.stroke);
-        }
-    });
-    const strokesToCompact = Array.from(strokesToCompactSet);
-    
-    if (!history_validate_compact()) {
-        console.log('压缩期间撤销栈已变化，取消压缩');
-        return;
-    }
-    
-    const offscreen = main_fetch_offscreen_canvas();
-    const tempCtx = offscreen.ctx;
-    
-    if (state.baseImageObj) {
-        tempCtx.drawImage(state.baseImageObj, 0, 0, DRAW_CONFIG.canvasW, DRAW_CONFIG.canvasH);
-    }
-    
-    await main_render_strokes_to_context(tempCtx, strokesToCompact);
-    
-    if (loadId !== state.baseImageLoadId) {
-        main_release_offscreen_canvas(offscreen);
-        return;
-    }
-    
-    if (compactSnapshotId !== state.compactSnapshotId) {
-        console.log('压缩快照已过期,取消操作');
-        main_release_offscreen_canvas(offscreen);
-        return;
-    }
-    
-    const afterImageURL = offscreen.canvas.toDataURL('image/png');
-    
-    const remainingStrokes = state.strokeHistory.filter(s => {
-        return !strokesToCompactSet.has(s);
-    });
-    
-    state.strokeHistory.length = 0;
-    remainingStrokes.forEach(s => state.strokeHistory.push(s));
-    
-    const afterStrokes = [...state.strokeHistory];
-    
-    const snapshotCmd = new SnapshotCommand({
-        beforeImageURL: frozenImageURL,
-        afterImageURL,
-        beforeStrokes,
-        afterStrokes,
-        strokeHistoryRef: state.strokeHistory,
-        baseImageURLRef: { get value() { return state.baseImageURL; }, set value(v) { state.baseImageURL = v; } },
-        baseImageObjRef: { get value() { return state.baseImageObj; }, set value(v) { state.baseImageObj = v; } },
-        redrawFn: () => main_render_all_strokes(),
-        loadBaseImageFn: (url) => main_load_base_image(url)
-    });
-    
-    history_format_compact(snapshotCmd, compactTargetCount);
-    
-    state.baseImageURL = afterImageURL;
-    state.baseImageObj = null;
-    const img = new Image();
-    img.onload = () => {
-        if (loadId === state.baseImageLoadId) {
-            state.baseImageObj = img;
-            if (window.tileRenderer) window.tileRenderer.mark_all();
-        }
-        main_release_offscreen_canvas(offscreen);
-    };
-    img.onerror = () => {
-        main_release_offscreen_canvas(offscreen);
-    };
-    img.src = afterImageURL;
-    
-    console.log('笔画已异步压缩，保留最近', history_fetch_undo_stack().length, '步可撤销');
-}
+async function main_handle_compact_strokes() { await historyCompactor.handleCompactStrokes(); }
 
 async function main_handle_undo() {
-    if (compactIdleId !== null) {
-        cancelIdleCallback(compactIdleId);
-        compactIdleId = null;
-        console.log('撤销操作：取消正在进行的压缩任务');
-    }
-    
+    historyCompactor.cancelCompaction();
     state.baseImageLoadId++;
     state.compactSnapshotId = (state.compactSnapshotId || 0) + 1;
-    
-    // 撤销前清除钢笔效果缓存，使所有笔画使用当前设置重新计算
     realPenManager.invalidate_cache();
-    
     await history_handle_undo();
-    
     console.log('撤销操作');
 }
 
