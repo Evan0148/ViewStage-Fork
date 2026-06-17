@@ -22,6 +22,7 @@ import {
 } from './modules/history.js';
 import { DocLoader } from './modules/pdf/document_loader.js';
 import { InputSource, DragTapSource, PinchZoomSource, TOLERANCE } from './modules/gesture/index.js';
+import { CameraManager, camera_format_blob_to_data_url } from './modules/camera/camera.js';
 
 // === 全局变量 ===
 let last_canvas_transform = { x: null, y: null, scale: null };
@@ -885,6 +886,27 @@ let dom = {};  // DOM 元素引用缓存
 // 将 dom 暴露到全局，供 batch-draw.js 使用
 window.dom = dom;
 window.state = state;
+
+const cameraManager = new CameraManager({
+    state, dom, DRAW_CONFIG, ThemeManager,
+    saveCurrentSourceData: () => main_save_current_source_data(),
+    updateSource: (id) => main_update_source(id),
+    updateSettingsControlsState: () => main_update_settings_controls_state(),
+    deleteSidebarSelection: () => main_delete_sidebar_selection(),
+    renderImageCentered: (img) => main_render_image_centered(img),
+    deleteImageLayer: () => main_delete_image_layer(),
+    deleteDrawCanvas: () => main_delete_draw_canvas(),
+    historyDeleteAll: () => history_delete_all(),
+    showErrorDialog: (t, d) => main_show_error_dialog(t, d),
+    showSidebarIfHidden: () => main_show_sidebar_if_hidden(),
+    saveImageToList: (img, name, filter) => main_save_image_to_list_no_highlight(img, name, filter),
+    updateSidebarContent: () => main_update_sidebar_content(),
+    updateCanvasBgColor: (c) => main_update_canvas_bg_color(c),
+    updateCanvasTransform: () => main_update_canvas_transform(),
+    updateMoveBound: () => main_update_move_bound(),
+    updateCanvasPosition: () => main_update_canvas_position(),
+    updatePhotoButtonState: () => cameraManager.updatePhotoButtonState(),
+});
 
 let cachedCanvasRect = null;
 let cachedVisibleRect = null;
@@ -4121,47 +4143,8 @@ function main_save_merged_canvas() {
     main_release_offscreen_canvas(offscreen);
 }
 
-let lastPhotoButtonState = null;
-
 function main_update_photo_button_state() {
-    const btnPhoto = dom.btnPhoto;
-    
-    if (!state.cameraAvailable) {
-        if (btnPhoto) btnPhoto.style.display = 'none';
-        return;
-    }
-    
-    if (btnPhoto) btnPhoto.style.display = '';
-    
-    if (!btnPhoto) return;
-    
-    let newState;
-    let html, title;
-    
-    const photoText = window.i18n?.format_translate('toolbar.photo') || '拍照';
-    const switchToCameraText = window.i18n?.format_translate('camera.switchToCamera') || '切换到摄像头';
-    const showText = ThemeManager.theme_fetch_toolbar_text();
-    
-    if (state.isCameraOpen) {
-        newState = 'camera';
-        html = `${ThemeManager.theme_fetch_icon('camera', { alt: photoText })}${showText ? photoText : ''}`;
-        title = window.i18n?.format_translate('camera.captureFrame') || '捕获摄像头画面';
-    } else if ((state.currentImageIndex >= 0 && state.imageList.length > 0) || 
-               (state.currentFolderIndex >= 0 && state.currentFolderPageIndex >= 0)) {
-        newState = 'switch';
-        html = `${ThemeManager.theme_fetch_icon('camera-fill', { alt: switchToCameraText })}${showText ? switchToCameraText : ''}`;
-        title = window.i18n?.format_translate('camera.switchToCamera') || '返回摄像头';
-    } else {
-        newState = 'save';
-        html = `${ThemeManager.theme_fetch_icon('camera', { alt: photoText })}${showText ? photoText : ''}`;
-        title = window.i18n?.format_translate('camera.saveScreenshot') || '保存画布截图';
-    }
-    
-    if (lastPhotoButtonState === newState) return;
-    lastPhotoButtonState = newState;
-    
-    btnPhoto.innerHTML = html;
-    btnPhoto.title = title;
+    cameraManager.updatePhotoButtonState();
 }
 
 // 设置功能
@@ -5040,323 +5023,28 @@ function main_hide_file_sidebar() {
     console.log('收起文件侧边栏');
 }
 
-// === 摄像头功能 ===
-// 摄像头开启/关闭、帧渲染、拍照、旋转、镜像
+// === 摄像头功能（委托给 cameraManager） ===
 
-/**
- * 统一的摄像头状态管理
- * @param {boolean} open - true:开启 false:关闭
- * @param {Object} [options] - {forceClose: true} 强制关闭
- */
 async function main_update_camera_state(open, options = {}) {
-    const { forceClose = false } = options;
-    
     if (open) {
-        if (state.isCameraOpen) {
-            return;
-        }
-        
-        try {
-            // 保存当前源数据
-            main_save_current_source_data();
-            
-            let constraints;
-            
-            if (state.defaultCameraId) {
-                constraints = {
-                    video: {
-                        deviceId: { exact: state.defaultCameraId },
-                        width: { ideal: state.cameraWidth || 1280 },
-                        height: { ideal: state.cameraHeight || 720 }
-                    },
-                    audio: false
-                };
-            } else {
-                const desiredFacingMode = state.useFrontCamera ? 'user' : 'environment';
-                let useFacingMode = true;
-                try {
-                    const devices = await navigator.mediaDevices.enumerateDevices();
-                    const videoDevices = devices.filter(d => d.kind === 'videoinput');
-                    if (videoDevices.length <= 1) {
-                        useFacingMode = false;
-                    }
-                } catch (_) {
-                    useFacingMode = false;
-                }
-                constraints = {
-                    video: {
-                        width: { ideal: state.cameraWidth || 1280 },
-                        height: { ideal: state.cameraHeight || 720 },
-                        ...(useFacingMode ? { facingMode: desiredFacingMode } : {})
-                    },
-                    audio: false
-                };
-            }
-            
-            try {
-                state.cameraStream = await navigator.mediaDevices.getUserMedia(constraints);
-            } catch (constraintError) {
-                if (constraintError.name === 'OverconstrainedError') {
-                    console.warn('指定摄像头不可用，使用默认摄像头');
-                    const fallbackConstraints = {
-                        video: {
-                            width: { ideal: state.cameraWidth || 1280 },
-                            height: { ideal: state.cameraHeight || 720 }
-                        },
-                        audio: false
-                    };
-                    state.cameraStream = await navigator.mediaDevices.getUserMedia(fallbackConstraints);
-                } else {
-                    throw constraintError;
-                }
-            }
-            
-            state.isCameraOpen = true;
-            state.cameraAvailable = true;
-
-            main_update_settings_controls_state();
-            
-            await main_update_source('cam');
-            
-            // 重置索引，避免摄像头批注被错误保存至旧图片源
-            state.currentImageIndex = -1;
-            state.currentFolderIndex = -1;
-            state.currentFolderPageIndex = -1;
-            
-            main_hide_no_camera_message();
-            
-            const videoTrack = state.cameraStream.getVideoTracks()[0];
-            const settings = videoTrack.getSettings();
-            const label = videoTrack.label.toLowerCase();
-            state.isMirrored = label.includes('front') || label.includes('user') || label.includes('前置') || settings.facingMode === 'user';
-            
-            main_create_camera_video();
-            main_create_camera_controls();
-            main_delete_sidebar_selection();
-            
-            console.log('摄像头已打开:', videoTrack.label || '未知设备', '分辨率:', settings.width, 'x', settings.height);
-        } catch (error) {
-            if (error.name === 'NotFoundError' || error.name === 'DevicesNotFoundError') {
-                console.log('未检测到摄像头');
-            } else if (error.name === 'NotAllowedError' || error.name === 'PermissionDeniedError') {
-                console.log('摄像头权限被拒绝');
-            } else {
-                console.error('无法访问摄像头:', error);
-            }
-            throw error;
-        }
+        try { await cameraManager.open(); } catch (e) { throw e; }
     } else {
-        // 关闭摄像头
-        if (state.cameraStream) {
-            state.cameraStream.getTracks().forEach(track => track.stop());
-            state.cameraStream = null;
-        }
-        
-        state.isCameraOpen = false;
-        state.isCameraReady = false;
-
-        main_update_settings_controls_state();
-        if (dom.cameraVideo) {
-            dom.cameraVideo.style.display = 'none';
-            dom.cameraVideo.srcObject = null;
-        }
-        
-        main_update_photo_button_state();
-        
-        // 保存摄像头数据
-        main_save_current_source_data();
-        
-        // 恢复之前的数据
-        if (state.currentImage && state.currentImageIndex >= 0) {
-            const imgData = state.imageList[state.currentImageIndex];
-            if (imgData && imgData.sourceId) {
-                await main_update_source(imgData.sourceId);
-            }
-            main_render_image_centered(state.currentImage);
-        } else if (state.currentImage && state.currentFolderIndex >= 0 && state.currentFolderPageIndex >= 0) {
-            const folder = state.fileList[state.currentFolderIndex];
-            const page = folder.pages[state.currentFolderPageIndex];
-            if (page && page.sourceId) {
-                await main_update_source(page.sourceId);
-            }
-            main_render_image_centered(state.currentImage);
-        } else {
-            main_delete_image_layer();
-            main_delete_draw_canvas();
-            state.strokeHistory = [];
-            history_delete_all();
-            currentSourceId = null;
-        }
-        
-        console.log('摄像头已关闭');
+        await cameraManager.close();
     }
 }
 
-/**
- * 打开/关闭摄像头（用户交互入口）
- */
-async function main_init_camera() {
-    if (state.isCameraOpen) {
-        await main_update_camera_state(false);
-    } else {
-        await main_update_camera_state(true);
-    }
-}
-
-/**
- * 延迟摄像头初始化：启动时权限未缓存（NotAllowedError）时注册一次性交互监听器
- * 用户首次点击/触摸页面时自动重试 getUserMedia（此时拥有用户手势瞬态激活）
- * 仅在 main_init_camera 因权限拒绝失败后调用，不反复注册
- */
-let _deferred_camera_setup = false;
-function main_setup_deferred_camera() {
-    if (_deferred_camera_setup) return;
-    _deferred_camera_setup = true;
-
-    const retry = async () => {
-        document.removeEventListener('click', retry);
-        document.removeEventListener('touchstart', retry);
-        _deferred_camera_setup = false;
-
-        try {
-            if (!state.isCameraOpen) {
-                await main_update_camera_state(true);
-            }
-        } catch (error) {
-            const err_name = error?.name || '';
-            if (err_name === 'NotAllowedError' || err_name === 'PermissionDeniedError') {
-                main_show_no_camera_message(
-                    window.i18n?.format_translate('camera.noPermission') || '无摄像头权限'
-                );
-            } else if (err_name === 'NotFoundError' || err_name === 'DevicesNotFoundError') {
-                main_show_no_camera_message(
-                    window.i18n?.format_translate('camera.notDetected') || '未检测到摄像头'
-                );
-            } else {
-                console.warn('[deferred-camera] 摄像头初始化失败:', err_name, error?.message);
-            }
-        }
-    };
-
-    document.addEventListener('click', retry, { once: true });
-    document.addEventListener('touchstart', retry, { once: true });
-}
-
-/**
- * 摄像头不可用时初始化，确保界面正常
- * @param {string} message - 无摄像头提示文字
- */
-async function main_init_without_camera(message) {
-    try {
-        state.isCameraOpen = false;
-        state.isCameraReady = false;
-        state.cameraAvailable = false;
-        state.cameraStream = null;
-
-        main_update_settings_controls_state();
-        
-        if (dom.cameraVideo) {
-            dom.cameraVideo.style.display = 'none';
-            dom.cameraVideo.srcObject = null;
-        }
-        
-        let bgColor = '#2a2a2a';
-        try {
-            const themeColor = ThemeManager.theme_fetch_canvas_bg_color();
-            if (themeColor && typeof themeColor === 'string' && themeColor.match(/^#[0-9a-fA-F]{6}$/)) {
-                bgColor = themeColor;
-            }
-        } catch (e) {
-            console.warn('获取主题背景色失败，使用默认值:', e);
-        }
-        main_update_canvas_bg_color(bgColor);
-        
-        await main_update_source('cam');
-        
-        main_update_canvas_transform();
-        main_update_move_bound();
-        main_update_canvas_position();
-        main_update_photo_button_state();
-        
-        main_show_no_camera_message(message);
-        
-        console.log('无摄像头模式初始化完成');
-    } catch (error) {
-        console.error('无摄像头模式初始化失败:', error);
-        
-        let fallbackBgColor = '#2a2a2a';
-        try {
-            const themeColor = ThemeManager.theme_fetch_canvas_bg_color();
-            if (themeColor && typeof themeColor === 'string') {
-                fallbackBgColor = themeColor;
-            }
-        } catch (e) {
-            console.warn('获取主题背景色失败:', e);
-        }
-        main_update_canvas_bg_color(fallbackBgColor);
-        
-        main_show_no_camera_message(message || '摄像头不可用');
-    }
-}
-
-function main_show_no_camera_message(message) {
-    if (!dom.canvasWrapper) {
-        console.error('main_show_no_camera_message: canvasWrapper 不存在');
-        return;
-    }
-    
-    let msgElement = document.getElementById('noCameraMessage');
-    if (!msgElement) {
-        msgElement = document.createElement('div');
-        msgElement.id = 'noCameraMessage';
-        dom.canvasWrapper.appendChild(msgElement);
-    }
-    
-    let style = {
-        textColor: '#ffffff',
-        secondaryTextColor: 'rgba(255,255,255,0.8)',
-        tertiaryTextColor: 'rgba(255,255,255,0.5)',
-        textShadow: '0 1px 3px rgba(0,0,0,0.5)'
-    };
-    
-    try {
-        const themeStyle = ThemeManager.theme_fetch_no_camera_style();
-        if (themeStyle) {
-            style = themeStyle;
-        }
-    } catch (e) {
-        console.warn('获取主题样式失败，使用默认值:', e);
-    }
-    
-    msgElement.style.cssText = `
-        position: absolute;
-        top: 0;
-        left: 0;
-        width: ${DRAW_CONFIG.canvasW}px;
-        height: ${DRAW_CONFIG.canvasH}px;
-        display: flex;
-        flex-direction: column;
-        align-items: center;
-        justify-content: center;
-        z-index: 1;
-        pointer-events: none;
-    `;
-    
-    msgElement.dataset.message = message || '';
-    
-    msgElement.innerHTML = `
-        <div style="font-size: 4vw; color: ${style.textColor}; margin-bottom: 3vh; text-shadow: ${style.textShadow};">( $ _ $ )</div>
-        <div style="font-size: 1.8vw; color: ${style.secondaryTextColor}; margin-bottom: 1.5vh; text-shadow: ${style.textShadow};">${window.i18n?.format_translate('camera.deviceNotFound') || '找不到展台设备'}</div>
-        <div style="font-size: 1.2vw; color: ${style.tertiaryTextColor}; text-shadow: ${style.textShadow};">${message}</div>
-    `;
-}
-
-function main_hide_no_camera_message() {
-    const msgElement = document.getElementById('noCameraMessage');
-    if (msgElement) {
-        msgElement.style.display = 'none';
-    }
-}
+async function main_init_camera() { await cameraManager.toggle(); }
+function main_setup_deferred_camera() { cameraManager.setupDeferred(); }
+async function main_init_without_camera(message) { await cameraManager.initWithoutCamera(message); }
+function main_show_no_camera_message(message) { cameraManager.showNoCameraMessage(message); }
+function main_hide_no_camera_message() { cameraManager.hideNoCameraMessage(); }
+async function main_update_camera() { await cameraManager.switchCamera(); }
+function main_update_camera_video_style() { cameraManager.updateVideoStyle(); }
+function main_apply_camera_filters() { cameraManager.applyFilters(); }
+async function main_save_camera_image() { await cameraManager.saveImage(); }
+function main_update_camera_frame_rate(idealFps) { cameraManager.updateFrameRate(idealFps); }
+function main_create_camera_video() { cameraManager._createVideo(); }
+function main_create_camera_controls() { cameraManager.updatePhotoButtonState(); }
 
 function main_delete_sidebar_selection() {
     document.querySelectorAll('.sidebar:not(.file-sidebar) .sidebar-image-item').forEach(item => {
@@ -5369,286 +5057,12 @@ function main_delete_sidebar_selection() {
     state.currentFolderPageIndex = -1;
 }
 
-async function main_update_camera() {
-    state.useFrontCamera = !state.useFrontCamera;
-    
-    if (state.isCameraOpen) {
-        await main_update_camera_state(false);
-        await main_update_camera_state(true);
-    }
-    
-    console.log(state.useFrontCamera ? '已切换到前置摄像头' : '已切换到后置摄像头');
-}
-
-function main_create_camera_video() {
-    const video = dom.cameraVideo;
-    if (!video) {
-        console.error('找不到 video 元素');
-        return;
-    }
-    
-    video.srcObject = state.cameraStream;
-    video.play();
-    
-    video.onloadedmetadata = () => {
-        state.isCameraReady = true;
-        console.log('摄像头视频就绪:', video.videoWidth, 'x', video.videoHeight);
-        main_update_camera_video_style();
-        video.style.display = 'block';
-    };
-}
-
-// 缓存上次 video 样式的值，避免不必要的 DOM 更新
-let lastVideoStyleCache = {
-    drawW: 0, drawH: 0, offsetX: 0, offsetY: 0,
-    rotation: -1, isMirrored: null
-};
-
-function main_update_camera_video_style() {
-    const video = dom.cameraVideo;
-    if (!video) return;
-    
-    const videoW = video.videoWidth;
-    const videoH = video.videoHeight;
-    
-    if (!videoW || !videoH) return;
-    
-    const rotation = state.cameraRotation;
-    
-    const videoRatio = videoW / videoH;
-    
-    const screenW = DRAW_CONFIG.screenW;
-    const screenH = DRAW_CONFIG.screenH;
-    const screenRatio = screenW / screenH;
-    
-    let drawW, drawH;
-    if (videoRatio > screenRatio) {
-        drawW = screenW;
-        drawH = screenW / videoRatio;
-    } else {
-        drawH = screenH;
-        drawW = screenH * videoRatio;
-    }
-    
-    const canvasW = DRAW_CONFIG.canvasW;
-    const canvasH = DRAW_CONFIG.canvasH;
-    const offsetX = (canvasW - drawW) / 2;
-    const offsetY = (canvasH - drawH) / 2;
-    
-    const styleChanged = 
-        lastVideoStyleCache.drawW !== drawW ||
-        lastVideoStyleCache.drawH !== drawH ||
-        lastVideoStyleCache.offsetX !== offsetX ||
-        lastVideoStyleCache.offsetY !== offsetY ||
-        lastVideoStyleCache.rotation !== rotation ||
-        lastVideoStyleCache.isMirrored !== state.isMirrored;
-    
-    if (!styleChanged) return;
-    
-    lastVideoStyleCache = { drawW, drawH, offsetX, offsetY, rotation, isMirrored: state.isMirrored };
-    
-    let transforms = [];
-    
-    if (rotation !== 0) {
-        transforms.push(`rotate(${rotation}deg)`);
-    }
-    
-    if (state.isMirrored) {
-        transforms.push('scaleX(-1)');
-    }
-    
-    const transformStr = transforms.join(' ');
-    
-    // Apply transform and display
-    video.style.width = `${drawW}px`;
-    video.style.height = `${drawH}px`;
-    video.style.left = `${offsetX}px`;
-    video.style.top = `${offsetY}px`;
-    video.style.transform = transformStr;
-    video.style.transformOrigin = 'center center';
-    video.style.display = 'block';
-
-    // Apply brightness / contrast via CSS filter for preview
-    main_apply_camera_filters();
-}
-
-function main_apply_camera_filters() {
-    const video = dom.cameraVideo;
-    const img = dom.imageElement;
-    if (!video && !img) return;
-
-    // 如果当前显示的是拍摄的图片且带有 captureFilter，不覆盖它的 filter
-    if (img && state.currentImageIndex >= 0 && state.currentImageIndex < state.imageList.length) {
-        const curData = state.imageList[state.currentImageIndex];
-        if (curData && curData.captureFilter) {
-            if (video) video.style.filter = curData.captureFilter;
-            return;
-        }
-    }
-
-    const b = state.camera_brightness ?? 10;
-    const c = state.camera_contrast ?? 1.4;
-    const g = state.camera_grayscale ?? 0;
-
-    // CSS filter: brightness() expects a multiplier where 1 is normal.
-    const brightnessMultiplier = Math.max(0, 1 + b / 100);
-    const contrastMultiplier = Math.max(0, c);
-    const grayscaleFraction = Math.max(0, Math.min(1, g));
-
-    const filterStr = `brightness(${brightnessMultiplier}) contrast(${contrastMultiplier}) grayscale(${grayscaleFraction})`;
-    if (video) video.style.filter = filterStr;
-    if (img) img.style.filter = filterStr;
-}
-
-function main_create_camera_controls() {
-    main_update_photo_button_state();
-}
-
-async function main_save_camera_image() {
-    const video = document.getElementById('cameraVideo');
-    if (!video) {
-        console.error('找不到视频元素');
-        return;
-    }
-    
-    if (!state.isCameraReady) {
-        console.error('摄像头尚未就绪');
-        main_show_error_dialog(
-            window.i18n?.format_translate('camera.notReady') || '摄像头未就绪',
-            window.i18n?.format_translate('camera.notReadyDesc') || '摄像头尚未就绪，请稍后再试'
-        );
-        return;
-    }
-    
-    const videoW = video.videoWidth;
-    const videoH = video.videoHeight;
-    
-    if (!videoW || !videoH) {
-        console.error('视频尺寸无效:', videoW, videoH);
-        main_show_error_dialog(
-            window.i18n?.format_translate('camera.notReady') || '摄像头未就绪',
-            window.i18n?.format_translate('camera.notReadyDesc') || '摄像头尚未就绪，请稍后再试'
-        );
-        return;
-    }
-    
-    console.log('捕获摄像头画面:', videoW, 'x', videoH);
-    
-    // 保存摄像头批注数据
-    main_save_current_source_data();
-    
-    const tempCanvas = document.createElement('canvas');
-    const tempCtx = tempCanvas.getContext('2d');
-    
-    const rotation = state.cameraRotation || 0;
-    
-    if (rotation % 180 === 0) {
-        tempCanvas.width = videoW;
-        tempCanvas.height = videoH;
-    } else {
-        tempCanvas.width = videoH;
-        tempCanvas.height = videoW;
-    }
-    
-    tempCtx.save();
-    
-    tempCtx.translate(tempCanvas.width / 2, tempCanvas.height / 2);
-    
-    if (rotation !== 0) {
-        tempCtx.rotate(rotation * Math.PI / 180);
-    }
-    
-    if (state.isMirrored) {
-        tempCtx.scale(-1, 1);
-    }
-    
-    tempCtx.drawImage(video, -videoW / 2, -videoH / 2);
-    
-    tempCtx.restore();
-    
-    // 构建与实时预览完全一致的 CSS filter 字符串（不烘焙，仅附加到图片元素）
-    const b = state.camera_brightness ?? 10;
-    const c = state.camera_contrast ?? 1.4;
-    const g = state.camera_grayscale ?? 0;
-    const brightnessMul = Math.max(0, 1 + b / 100);
-    const contrastMul = Math.max(0, c);
-    const grayscaleFrac = Math.max(0, Math.min(1, g));
-    const captureFilter = `brightness(${brightnessMul}) contrast(${contrastMul}) grayscale(${grayscaleFrac})`;
-
-    // 原始帧数据（旋转+镜像，无 filter），用于侧边栏显示 + 后续通过 CSS filter 匹配实时预览
-    const rawDataUrl = tempCanvas.toDataURL('image/png');
-
-    if (window.__TAURI__) {
-        try {
-            const { invoke } = window.__TAURI__.core;
-            // 烘焙 filter 到像素用于存盘（Canvas2D filter，与 CSS 有微小差异但存盘可接受）
-            const bakeCanvas = document.createElement('canvas');
-            bakeCanvas.width = tempCanvas.width;
-            bakeCanvas.height = tempCanvas.height;
-            const bakeCtx = bakeCanvas.getContext('2d');
-            bakeCtx.filter = captureFilter;
-            bakeCtx.drawImage(tempCanvas, 0, 0);
-            const bakeBlob = await new Promise((resolve, reject) => {
-                bakeCanvas.toBlob(b => { if (b) resolve(b); else reject(new Error('Failed to create blob')); }, 'image/png');
-            });
-            const bakeDataUrl = await main_format_blob_to_data_url(bakeBlob);
-            const result = await invoke('image_save_file', { 
-                imageData: bakeDataUrl,
-                prefix: 'photo'
-            });
-            console.log('图片已保存:', result.path);
-        } catch (error) {
-            console.error('保存图片失败:', error);
-        }
-    }
-
-    // 侧边栏使用原始帧 + captureFilter 字符串（CSS filter 保证与实时预览完全一致）
-    const img = new Image();
-    img.src = rawDataUrl;
-    img.onload = () => {
-        const photoName = window.i18n?.format_translate('camera.photoName', { n: state.imageList.length + 1 }) || `拍摄${state.imageList.length + 1}`;
-        main_save_image_to_list_no_highlight(img, photoName, captureFilter);
-        main_show_sidebar_if_hidden();
-        console.log('已捕获摄像头画面并保存到图片列表');
-    };
-    img.onerror = () => {
-        console.error('加载拍摄的图片失败');
-    };
-}
-
-/**
- * 批注模式下动态降低摄像头帧率，减少 GPU/解码占用。
- * 使用 MediaStreamTrack.applyConstraints 在线调整，无需重启流。
- * @param {number|null} idealFps - 目标帧率（null 表示移除帧率限制）
- */
-function main_update_camera_frame_rate(idealFps) {
-    if (!state.cameraStream) return;
-    const track = state.cameraStream.getVideoTracks()[0];
-    if (!track) return;
-
-    const constraints = idealFps !== null
-        ? { frameRate: { ideal: idealFps } }
-        : { frameRate: { ideal: 30 } };
-    track.applyConstraints(constraints).catch(e => console.warn('摄像头帧率约束设置失败:', e));
-}
-
-async function main_format_blob_to_data_url(blob) {
-    return new Promise((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onload = () => resolve(reader.result);
-        reader.onerror = reject;
-        reader.readAsDataURL(blob);
-    });
-}
+async function main_format_blob_to_data_url(blob) { return camera_format_blob_to_data_url(blob); }
 
 function main_show_sidebar_if_hidden() {
     const sidebar = document.querySelector('.sidebar');
-    if (!sidebar) {
-        main_show_sidebar();
-    } else if (sidebar.classList.contains('file-sidebar')) {
-        sidebar.remove();
-        main_show_sidebar();
-    }
+    if (!sidebar) { main_show_sidebar(); }
+    else if (sidebar.classList.contains('file-sidebar')) { sidebar.remove(); main_show_sidebar(); }
 }
 
 // === 图像导入功能 ===
