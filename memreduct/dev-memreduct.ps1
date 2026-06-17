@@ -1,10 +1,9 @@
 # dev-memreduct.ps1 — 编译 memreduct-viewstage.exe 供 cargo tauri dev 使用
-# 用法: .\dev-memreduct.ps1
+# 用法: cd memreduct; .\dev-memreduct.ps1
 
 $ErrorActionPreference = 'Stop'
 
-$scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
-$memreductDir = Join-Path $scriptDir 'memreduct'
+$memreductDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $outExe = Join-Path $memreductDir 'bin\64\memreduct-viewstage.exe'
 
 # 查找 vcvarsall.bat
