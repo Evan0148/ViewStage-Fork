@@ -4,7 +4,7 @@
  * 工具栏全部在右侧，支持 IntersectionObserver 懒加载
  */
 
-import { InputSource, PinchZoomSource } from '../../gesture/index.js';
+import { InputSource, PinchZoomSource } from '../gesture/index.js';
 import { DocumentReaderPageManager } from './document_reader_page.js';
 import {
     history_execute_command,

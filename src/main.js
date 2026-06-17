@@ -21,7 +21,7 @@ import {
     MAX_HISTORY_STEPS
 } from './modules/history.js';
 import { DocLoader } from './modules/pdf/document_loader.js';
-import { InputSource, DragTapSource, PinchZoomSource, TOLERANCE } from './gesture/index.js';
+import { InputSource, DragTapSource, PinchZoomSource, TOLERANCE } from './modules/gesture/index.js';
 
 // === 全局变量 ===
 let last_canvas_transform = { x: null, y: null, scale: null };

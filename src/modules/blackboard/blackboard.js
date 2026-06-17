@@ -4,7 +4,7 @@
  * 使用 DrawingEngine 管理绘制管线
  */
 
-import { InputSource, PinchZoomSource } from '../../gesture/index.js';
+import { InputSource, PinchZoomSource } from '../gesture/index.js';
 import { BlackboardPageManager } from './blackboard-page.js';
 import { DrawingEngine } from './drawing-engine.js';
 import { history_state, history_validate_undo, history_reset_executing } from '../history.js';
