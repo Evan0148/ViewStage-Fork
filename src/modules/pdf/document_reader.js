@@ -92,6 +92,8 @@ class DocumentReaderManager {
         this.dr_start_canvas_x = 0;
         this.dr_start_canvas_y = 0;
         this.dr_start_distance_sq = 0;
+        this._dragFingerId = null;
+        this._pinchProcessedFirstDelta = false;
         this.dr_min_scale = 0.25;
         this.dr_max_scale = 4;
         this.dr_cached_inv_scale = 1;
@@ -2169,6 +2171,7 @@ class DocumentReaderManager {
             // 拖拽平移（move 模式）
             if (this.draw_mode === 'move') {
                 this.dr_is_dragging = true;
+                this._dragFingerId = ev.id;
                 this.dr_start_drag_x = ev.position.x - this.dr_canvas_x;
                 this.dr_start_drag_y = ev.position.y - this.dr_canvas_y;
                 this._dr_last_canvas_x = this.dr_canvas_x;
@@ -2209,6 +2212,9 @@ class DocumentReaderManager {
 
             // 拖拽平移
             if (this.dr_is_dragging) {
+                // 缩放进行中且尚未收到缩放 delta：仅处理原始拖拽手指，忽略第二指
+                if (this.dr_is_scaling && ev.id !== this._dragFingerId) return;
+
                 this.dr_canvas_x = ev.position.x - this.dr_start_drag_x;
                 this.dr_canvas_y = ev.position.y - this.dr_start_drag_y;
                 this._dr_update_canvas_position();
@@ -2262,6 +2268,8 @@ class DocumentReaderManager {
             }
 
             if (this.dr_is_dragging) {
+                // 缩放进行中且尚未收到缩放 delta：仅响应原始拖拽手指抬起，忽略误触手指
+                if (this.dr_is_scaling && ev.id !== this._dragFingerId) return;
                 this.dr_is_dragging = false;
                 if (this.draw_mode === 'move' && (Math.abs(this._dr_gesture_vx) > 2 || Math.abs(this._dr_gesture_vy) > 2)) {
                     this._dr_update_move_bound();
@@ -2305,13 +2313,18 @@ class DocumentReaderManager {
             }
 
             this.dr_is_scaling = true;
-            this.dr_is_dragging = false;
+            // 不立即杀死拖拽：fingers 可能在 tolerance 阈值内，
+            // 让原始拖拽手指继续移动直到收到第一个缩放 delta
             this.dr_start_scale = this.dr_scale;
+            this._pinchProcessedFirstDelta = false;
 
+            // 以两指中点为缩放中心（替代只用 finger0，两指操作更自然）
             const positions = input.getActivePositions();
             if (positions.length >= 2) {
-                this.dr_start_finger0_cx = (positions[0].x - this.dr_canvas_x) / this.dr_scale;
-                this.dr_start_finger0_cy = (positions[0].y - this.dr_canvas_y) / this.dr_scale;
+                const midX = (positions[0].x + positions[1].x) / 2;
+                const midY = (positions[0].y + positions[1].y) / 2;
+                this.dr_start_finger0_cx = (midX - this.dr_canvas_x) / this.dr_scale;
+                this.dr_start_finger0_cy = (midY - this.dr_canvas_y) / this.dr_scale;
             }
             this.dr_start_canvas_x = this.dr_canvas_x;
             this.dr_start_canvas_y = this.dr_canvas_y;
@@ -2323,6 +2336,16 @@ class DocumentReaderManager {
         pinch.onPinchDelta = (ev) => {
             if (!this.is_open || !this.dr_is_scaling) return;
 
+            // 收到第一个缩放 delta：结束拖拽，切换到缩放模式
+            if (!this._pinchProcessedFirstDelta) {
+                this._pinchProcessedFirstDelta = true;
+                this.dr_is_dragging = false;
+                // 此时手指可能已移动，以当前中点为基准重算缩放中心
+                this.dr_start_finger0_cx = (ev.centerX - this.dr_canvas_x) / this.dr_scale;
+                this.dr_start_finger0_cy = (ev.centerY - this.dr_canvas_y) / this.dr_scale;
+                this.dr_start_scale = this.dr_scale;
+            }
+
             const unclamped_s = this.dr_start_scale * ev.scale;
             this.dr_scale = Math.max(this.dr_min_scale, Math.min(this.dr_max_scale, unclamped_s));
             this.dr_cached_inv_scale = 1 / this.dr_scale;
@@ -2332,13 +2355,13 @@ class DocumentReaderManager {
             }
 
             if (this.dr_scale !== unclamped_s) {
-                this.dr_start_finger0_cx = (ev.finger0.x - this.dr_canvas_x) / this.dr_scale;
-                this.dr_start_finger0_cy = (ev.finger0.y - this.dr_canvas_y) / this.dr_scale;
+                this.dr_start_finger0_cx = (ev.centerX - this.dr_canvas_x) / this.dr_scale;
+                this.dr_start_finger0_cy = (ev.centerY - this.dr_canvas_y) / this.dr_scale;
                 this.dr_start_scale = this.dr_scale;
             }
 
-            this.dr_canvas_x = ev.finger0.x - this.dr_start_finger0_cx * this.dr_scale;
-            this.dr_canvas_y = ev.finger0.y - this.dr_start_finger0_cy * this.dr_scale;
+            this.dr_canvas_x = ev.centerX - this.dr_start_finger0_cx * this.dr_scale;
+            this.dr_canvas_y = ev.centerY - this.dr_start_finger0_cy * this.dr_scale;
 
             this._dr_update_move_bound();
             this._dr_update_canvas_position();
@@ -2381,6 +2404,24 @@ class DocumentReaderManager {
             if (!this.is_open) return;
             this.dr_is_scaling = false;
             this._dr_cancel_zoom_debounce();
+
+            // 没有处理过缩放 delta（误触或两指平移刚过 tolerance 但未缩放）
+            // 拖拽状态未丢失，无需额外处理
+            if (!this._pinchProcessedFirstDelta) {
+                this._pinchProcessedFirstDelta = false;
+                this._dragFingerId = null;
+                // 缩放结束后：如果剩一指且在 move 模式，继续拖拽
+                if (input.activeCount === 1 && this.draw_mode === 'move') {
+                    const ev = input.activeEvents[0];
+                    if (ev) {
+                        this.dr_is_dragging = true;
+                        this.dr_start_drag_x = ev.position.x - this.dr_canvas_x;
+                        this.dr_start_drag_y = ev.position.y - this.dr_canvas_y;
+                    }
+                }
+                return;
+            }
+            this._pinchProcessedFirstDelta = false;
 
             // 缩放结束后：如果剩一指且在 move 模式，继续拖拽
             if (input.activeCount === 1 && this.draw_mode === 'move') {

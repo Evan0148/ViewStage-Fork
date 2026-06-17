@@ -33,6 +33,10 @@ export class PinchZoomSource {
         this._toleranceSq = 0;
         this._beyondTolerance = false;
 
+        // 两指都在当前 batch 内收到过 inputMove 时才触发 onPinchDelta
+        // 避免 PointerEvents 模式下，仅一指更新而另一指位置陈旧导致的偏斜
+        this._movedThisBatch = [];
+
         // 预分配热路径对象（避免每帧 GC）
         this._finger0 = { x: 0, y: 0 };
         this._finger1 = { x: 0, y: 0 };
@@ -104,6 +108,7 @@ export class PinchZoomSource {
         this._startFinger1.y = positions[1].y;
         this._currentScale = 1;
         this._beyondTolerance = false;
+        this._movedThisBatch = [];
 
         const tol = getTolerance(this._toleranceSet, DeviceType.Touch);
         this._toleranceSq = tol * tol;
@@ -156,6 +161,14 @@ export class PinchZoomSource {
             this._beyondTolerance = true;
         }
 
+        // Batch 追踪：仅在两指都在当前 batch 内收到过 inputMove 时才触发 delta，
+        // 避免 PointerEvents 模式下一指先更新另一指仍陈旧导致中点/距离偏斜
+        if (this._movedThisBatch.indexOf(ev.id) === -1) {
+            this._movedThisBatch.push(ev.id);
+        }
+        if (!this._pinchIds.every(id => this._movedThisBatch.indexOf(id) !== -1)) return;
+        this._movedThisBatch = [];
+
         if (this.onPinchDelta) {
             this._finger0.x = positions[0].x;
             this._finger0.y = positions[0].y;
@@ -186,6 +199,7 @@ export class PinchZoomSource {
         if (!this._isPinching) return;
         this._isPinching = false;
         this._pinchIds = [];
+        this._movedThisBatch = [];
         this._startFinger0.x = 0;
         this._startFinger0.y = 0;
         this._startFinger1.x = 0;
