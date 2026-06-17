@@ -115,7 +115,7 @@ jobs:
       - name: Build subprocess
         if: runner.os == 'Windows' && steps.cache-memclean.outputs.cache-hit != 'true'
         working-directory: memreduct
-        run: msbuild memreduct.sln -property:Configuration=Release -property:Platform=x64 -verbosity:minimal
+        run: msbuild memreduct.vcxproj -property:Configuration=Release -property:Platform=x64 -verbosity:minimal
 
       # ── Tauri CLI ─────────────────────────────────────────
       - name: Install cargo-binstall
