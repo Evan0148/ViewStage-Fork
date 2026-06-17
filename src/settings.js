@@ -10,6 +10,16 @@
 
 document.addEventListener('DOMContentLoaded', async () => {
     await i18n.init_start();
+
+    // Linux平台隐藏内存清理相关UI
+    try {
+        const { invoke } = window.__TAURI__.core;
+        const platform = await invoke('app_fetch_platform');
+        if (platform === 'linux') {
+            const el = document.getElementById('memreductCleanItem');
+            if (el) el.style.display = 'none';
+        }
+    } catch (_) {}
     
     // ==================== 自定义弹窗函数 ====================
     function settings_show_dialog(title, message, type = 'info') {
@@ -1863,6 +1873,22 @@ document.addEventListener('DOMContentLoaded', async () => {
                 modalMessage.textContent = window.i18n?.format_translate('settings.languageChanged') || '需要重启应用才能生效。';
             }
             if (restartModal) restartModal.classList.add('active');
+        });
+    }
+
+    // 内存自动清理开关（仅保存偏好）
+    const memreductCleanToggle = document.getElementById('memreductCleanToggle');
+    if (memreductCleanToggle) {
+        const invoke = window.__TAURI__?.core?.invoke;
+        if (invoke) {
+            invoke('settings_fetch_all').then(r => {
+                memreductCleanToggle.checked = r.settings?.memreductCleanEnabled !== false;
+            }).catch(() => {});
+        }
+        memreductCleanToggle.addEventListener('change', async () => {
+            if (invoke) {
+                await invoke('settings_save_all', { settings: { memreductCleanEnabled: memreductCleanToggle.checked } });
+            }
         });
     }
 
