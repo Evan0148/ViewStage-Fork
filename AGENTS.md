@@ -13,6 +13,12 @@ cargo tauri dev
 ```
 Frontend lives in `src/` and is served directly (no bundler). No `package.json`.
 
+**memreduct-viewstage.exe** is a subprocess used by the memory clean feature (`memreduct/` is a separate C++ project). The exe is gitignored; to build it for dev:
+```
+.\dev-memreduct.ps1
+```
+Requires Visual Studio 2022+ with "Desktop development with C++" workload. The exe is placed at `memreduct/bin/64/memreduct-viewstage.exe`.
+
 **CI** triggers on `v*` tags and manual dispatch. Requires `cargo install tauri-cli --locked` first.
 
 ## Rust Backend (`src-tauri/`)
