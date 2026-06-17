@@ -1063,11 +1063,8 @@ fn canvas_delete_line(canvas: &mut RgbaImage, x1: i32, y1: i32, x2: i32, y2: i32
                 let px = x + wx;
                 let py = y + wy;
                 if px >= 0 && py >= 0 && (px as u32) < canvas.width() && (py as u32) < canvas.height() {
-                    let dist = ((wx * wx + wy * wy) as f32).sqrt();
-                    if dist <= half_width as f32 {
-                        let pixel = canvas.get_pixel_mut(px as u32, py as u32);
-                        pixel[3] = 0;
-                    }
+                    let pixel = canvas.get_pixel_mut(px as u32, py as u32);
+                    pixel[3] = 0;
                 }
             }
         }

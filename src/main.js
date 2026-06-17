@@ -3453,7 +3453,7 @@ function main_start_stroke(type, eraserShape) {
         lineWidth: (type === 'draw' ? DRAW_CONFIG.penWidth : DRAW_CONFIG.eraserSize) * invScale,
         eraserSize: baseEraserSize,
         eraserSizeRaw: DRAW_CONFIG.eraserSize,
-        eraserShape: eraserShape || 'round',
+        eraserShape: eraserShape || 'square',
         ...(window.__eraserSpeed ? window.__eraserSpeed.eraser_speed_build_config(DRAW_CONFIG, invScale) : { eraserSpeedEnabled: false }),
         scale: state.scale,
         bounds: {
@@ -3726,7 +3726,7 @@ async function main_render_strokes_to_context(ctx, strokes) {
                 globalCompositeOperation: 'destination-out',
                 strokeStyle: '#000000'
             });
-            const shape = stroke.eraserShape || 'round';
+            const shape = stroke.eraserShape || 'square';
             if (shape !== currentEraserShape) {
                 currentEraserShape = shape;
                 main_update_context_state(ctx, {

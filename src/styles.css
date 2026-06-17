@@ -206,7 +206,7 @@ body {
     position: absolute;
     z-index: 9;
     border: 2px solid var(--color-error);
-    border-radius: 50%;
+    border-radius: 0;
     background-color: rgba(239, 68, 68, 0.4);
     pointer-events: none;
     display: none;

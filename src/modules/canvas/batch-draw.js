@@ -56,7 +56,7 @@ class RealtimeBatchDrawManager {
         this._overlayDprSettleMs = 300;
 
         this._tileRenderer = null;
-        this.eraserShape = 'round';
+        this.eraserShape = 'square';
     }
 
     /**
@@ -696,7 +696,7 @@ class RealtimeBatchDrawManager {
         this._storedWidths = [];
         this._segmentTimes = [];
         this._dirtyBoundsCanvas = null;
-        this.eraserShape = 'round';
+        this.eraserShape = 'square';
 
         if (this.is_adaptive) {
             this.currentFps = this.LOW_LOAD_FPS;
