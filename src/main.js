@@ -4965,9 +4965,7 @@ window.main_hide_pen_control_panel = main_hide_pen_control_panel;
 window.main_hide_settings_panel = main_hide_settings_panel;
 window.main_render_image_centered = main_render_image_centered;
 window.main_render_all_strokes = main_render_all_strokes;
-window.main_reset_context_state = main_reset_context_state;
 window.main_fetch_visible_rect = main_fetch_visible_rect;
-window.main_render_strokes_to_context = main_render_strokes_to_context;
 window.StrokeQuadTree = StrokeQuadTree;
 
 /** 同步所有 overlay DPR（主界面 + 阅读器 + 黑板） */

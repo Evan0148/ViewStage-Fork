@@ -37,10 +37,8 @@ export function createHistoryCompactor(deps) {
 
             _compactIdleId = requestIdleCallback(() => {
                 _compactIdleId = null;
-                compactor.handleCompactStrokes();
+                this.handleCompactStrokes();
             }, { timeout: 2000 });
-
-            const compactor = this;
         },
 
         async handleCompactStrokes() {
