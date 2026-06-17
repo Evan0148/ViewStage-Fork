@@ -897,6 +897,7 @@ const cameraManager = new CameraManager({
     deleteImageLayer: () => main_delete_image_layer(),
     deleteDrawCanvas: () => main_delete_draw_canvas(),
     historyDeleteAll: () => history_delete_all(),
+    resetSourceId: () => { currentSourceId = null; },
     showErrorDialog: (t, d) => main_show_error_dialog(t, d),
     showSidebarIfHidden: () => main_show_sidebar_if_hidden(),
     saveImageToList: (img, name, filter) => main_save_image_to_list_no_highlight(img, name, filter),
@@ -5027,7 +5028,7 @@ function main_hide_file_sidebar() {
 
 async function main_update_camera_state(open, options = {}) {
     if (open) {
-        try { await cameraManager.open(); } catch (e) { throw e; }
+        await cameraManager.open();
     } else {
         await cameraManager.close();
     }

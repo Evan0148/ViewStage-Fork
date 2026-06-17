@@ -113,6 +113,7 @@ export class CameraManager {
             this.d.deleteDrawCanvas();
             state.strokeHistory = [];
             this.d.historyDeleteAll();
+            this.d.resetSourceId();
         }
         console.log('摄像头已关闭');
     }
