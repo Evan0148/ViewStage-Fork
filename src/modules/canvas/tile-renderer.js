@@ -101,11 +101,23 @@ class TileRenderer {
         }
         if (!changed) return;
 
+        // 非可见瓦片需要升级（dpr < targetDpr）时不应用迟滞，
+        // 确保平移后重新进入视野时分辨率正确。迟滞仅用于阻止
+        // 缩放边界上的可见瓦片 DPR 反复跳动。
         if (!force && !visibleChanged) {
-            const cfg = window.DRAW_CONFIG;
-            const hysteresis = Math.max(0.15, (cfg.dprStep || 0.5) / Math.max(0.5, cfg.baseDpr || window.devicePixelRatio || 1));
-            if (Math.abs(scale - this._lastDprUpdateScale) < hysteresis) {
-                return;
+            let needsUpgrade = false;
+            for (const info of this.tileInfos) {
+                if (!keys.has(info.key) && info.dpr < targetDpr) {
+                    needsUpgrade = true;
+                    break;
+                }
+            }
+            if (!needsUpgrade) {
+                const cfg = window.DRAW_CONFIG;
+                const hysteresis = Math.max(0.15, (cfg.dprStep || 0.5) / Math.max(0.5, cfg.baseDpr || window.devicePixelRatio || 1));
+                if (Math.abs(scale - this._lastDprUpdateScale) < hysteresis) {
+                    return;
+                }
             }
         }
         this._lastDprUpdateScale = scale;
@@ -329,6 +341,9 @@ class TileRenderer {
                 if (info.dpr !== targetDpr) {
                     this._recreate_tile(info, targetDpr);
                 }
+            } else if (info.dpr < targetDpr) {
+                // 预升级非可见瓦片，使其在进入视野时已有正确分辨率
+                this._recreate_tile(info, targetDpr);
             }
         }
         this.rebuild_visible(keys);
