@@ -439,11 +439,9 @@ function developer_options_show_main(currentWidthRatio, currentMaxScale, perfMon
     })();
 
     // 动态加载 memclean 模块（供子页面使用）
-    if (!window.__memclean_loaded) {
-        window.__memclean_loaded = true;
+    if (typeof memclean_init !== 'function') {
         const script = document.createElement('script');
         script.src = './modules/memclean/memclean.js';
-        script.onload = () => { if (typeof memclean_init === 'function') memclean_init(); };
         document.body.appendChild(script);
     }
 }
@@ -478,17 +476,14 @@ function developer_options_show_memclean() {
 
     document.getElementById('devBackFromMemclean')?.addEventListener('click', developer_options_init);
 
-    // 初始化 memclean（如果已加载）
+    // 加载并初始化 memclean 模块
     if (typeof memclean_init === 'function') {
         memclean_init();
-    } else if (!window.__memclean_loaded) {
-        window.__memclean_loaded = true;
+    } else {
         const script = document.createElement('script');
         script.src = './modules/memclean/memclean.js';
         script.onload = () => { if (typeof memclean_init === 'function') memclean_init(); };
         document.body.appendChild(script);
-    } else if (typeof memclean_refresh === 'function') {
-        memclean_refresh();
     }
 }
 

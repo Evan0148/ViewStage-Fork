@@ -1,5 +1,4 @@
 let _memclean_invoke = null;
-let _memclean_loaded = false;
 let _memclean_mask = 231;
 
 const REGIONS = [
@@ -154,9 +153,9 @@ async function _memclean_do_uninstall() {
 }
 
 function memclean_init() {
-  if (_memclean_loaded) return;
-  _memclean_loaded = true;
-  _memclean_invoke = window.__TAURI__?.core?.invoke;
+  if (!_memclean_invoke) {
+    _memclean_invoke = window.__TAURI__?.core?.invoke;
+  }
 
   _memclean_build_region_ui(REGIONS);
   _memclean_load_mask();
