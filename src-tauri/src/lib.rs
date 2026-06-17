@@ -3538,36 +3538,87 @@ async fn filetype_delete_icons_windows() -> Result<(), String> {
     filetype_delete_icons_windows_sync()
 }
 
-/// 卸载清理：移除文件关联注册表 + 删除计划任务
-/// 如果检测到 ViewStage-upgrading 标记文件（表示正在升级），则跳过清理
-/// 标记文件超过 5 分钟视为过期失效（升级中途崩溃残留），仍执行清理
+/// 卸载清理：移除文件关联、计划任务、注册表残留
+///
+/// 如果检测到 ViewStage-upgrading 标记文件（正在升级中）则跳过，
+/// 标记超过 5 分钟视为升级中断残留，仍执行清理。
 #[cfg(target_os = "windows")]
 pub fn uninstall_cleanup_perform() -> i32 {
+    use std::process::Command;
+
+    // ── 升级标记检测 ──────────────────────────────────────
     let marker = std::env::temp_dir().join("ViewStage-upgrading");
     if marker.exists() {
-        let is_fresh = std::fs::metadata(&marker)
+        let fresh = std::fs::metadata(&marker)
             .ok()
             .and_then(|m| m.modified().ok())
             .and_then(|t| t.elapsed().ok())
-            .map(|d| d.as_secs() < 300)
-            .unwrap_or(false);
-        if is_fresh {
-            log::info!("卸载清理: 检测到升级标记文件（5分钟内），跳过清理");
+            .is_some_and(|d| d.as_secs() < 300);
+        if fresh {
+            log::info!("卸载清理: 检测到升级标记（5分钟内），跳过");
             let _ = std::fs::remove_file(&marker);
             return 0;
         }
-        log::info!("卸载清理: 升级标记文件已过期（>5分钟），视为升级中断残留，执行清理");
+        log::info!("卸载清理: 升级标记已过期（>5分钟），视为中断残留，继续清理");
         let _ = std::fs::remove_file(&marker);
     }
-    
+
+    // ── 计划任务清理 ──────────────────────────────────────
+    for name in &["ViewStage_MemClean", "memreduct-viewstageTask"] {
+        log::info!("卸载清理: 尝试删除计划任务 {}", name);
+        let output = Command::new("schtasks")
+            .args(["/delete", "/f", "/tn", name])
+            .creation_flags(CREATE_NO_WINDOW)
+            .output();
+        match output {
+            Ok(o) if o.status.success() => log::info!("卸载清理: 计划任务 {} 已删除", name),
+            Ok(o) => {
+                let stderr = String::from_utf8_lossy(&o.stderr);
+                log::info!("卸载清理: 计划任务 {} 不存在或已删除 ({})", name, stderr.trim());
+            }
+            Err(e) => log::warn!("卸载清理: 无法执行 schtasks 删除 {}: {}", name, e),
+        }
+    }
+
+    // ── 文件关联清理 ──────────────────────────────────────
     log::info!("卸载清理: 开始清理文件关联注册表");
     if let Err(e) = filetype_delete_icons_windows_sync() {
         log::warn!("卸载清理: 文件关联清理失败: {}", e);
     } else {
         log::info!("卸载清理: 文件关联清理完成");
     }
-    
+
+    // ── 应用数据目录清理 ──────────────────────────────────
+    if let Some(appdata) = dirs_data_dir() {
+        let config_path = appdata.join("config.json");
+        if config_path.exists() {
+            log::info!("卸载清理: 删除配置文件 {}", config_path.display());
+            let _ = std::fs::remove_file(&config_path);
+        }
+        let log_dir = appdata.join("log");
+        if log_dir.exists() {
+            log::info!("卸载清理: 删除日志目录 {}", log_dir.display());
+            let _ = std::fs::remove_dir_all(&log_dir);
+        }
+        let models_dir = appdata.join("models");
+        if models_dir.exists() {
+            log::info!("卸载清理: 删除模型目录 {}", models_dir.display());
+            let _ = std::fs::remove_dir_all(&models_dir);
+        }
+    }
+
+    log::info!("卸载清理: 完成");
     0
+}
+
+/// 获取应用数据目录（%APPDATA%/SECTL/ViewStage）
+#[cfg(target_os = "windows")]
+fn dirs_data_dir() -> Option<std::path::PathBuf> {
+    std::env::var("APPDATA").ok().map(|a| {
+        let p = std::path::PathBuf::from(a).join("SECTL").join("ViewStage");
+        log::info!("应用数据目录: {}", p.display());
+        p
+    })
 }
 
 

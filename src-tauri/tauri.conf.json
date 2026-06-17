@@ -57,8 +57,7 @@
     ],
     "resources": [
       "icons/pdf.ico",
-      "icons/word.ico",
-      "../memreduct/bin/64/memreduct-viewstage.exe"
+      "icons/word.ico"
     ],
     "fileAssociations": [
       {
