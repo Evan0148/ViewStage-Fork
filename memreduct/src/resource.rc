@@ -47,3 +47,24 @@ FILEFLAGS		VS_FF_PATCHED | VS_FF_PRERELEASE
 		VALUE "Translation", 0x0409, 1252
 	}
 }
+
+//
+// String Table
+//
+STRINGTABLE
+{
+    IDS_UPDATE_INSTALL       "Update available. Do you want to install it now?"
+    IDS_UPDATE_DONE          "Downloading update finished."
+    IDS_UPDATE_ERROR         "Update server connection error."
+    IDS_UPDATE_YES           "Update available. Download and install now?"
+    IDS_UPDATE_NO            "No updates available."
+    IDS_UPDATE_INIT          "Checking for new releases..."
+    IDS_UPDATE_DOWNLOAD      "Downloading update..."
+    IDS_UPDATE_AUTOINSTALL   "Automatically install non-executable updates"
+    IDS_ABOUT                "About"
+    IDS_DONATE               "Donate!"
+    IDS_QUESTION_FLAG_CHK    "Do not ask again"
+    IDS_SETTINGS             "Settings"
+    IDS_RESET                "Reset"
+    IDS_CLOSE                "Close"
+}

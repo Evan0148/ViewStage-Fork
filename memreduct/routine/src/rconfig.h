@@ -76,12 +76,7 @@
 #define APP_LANGUAGE_DEFAULT L"English"
 #define APP_SKIPUAC_NAME APP_NAME_SHORT L"Task"
 
-#if defined(APP_COMMENT)
-#pragma PR_PRINT_WARNING_DEFINE(APP_COMMENT)
-#else
-#define APP_COMMENT \
-	"What a tragedy it is for these words to fall upon deaf ears doomed to never reach their subject..."
-#endif /// APP_COMMENT
+// APP_COMMENT is defined in app.h
 
 // update checking period (in days)
 #if defined(APP_UPDATE_PERIOD)
