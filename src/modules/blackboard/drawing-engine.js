@@ -625,81 +625,52 @@ export class DrawingEngine {
         this._palm_eraser_hint.style.transform = 'translate(-50%, -50%)';
     }
 
+    _init_palm_session() {
+        if (this._palmSession || !window.__palmEraser) return;
+        const self = this;
+        this._palmSession = new window.__palmEraser.PalmEraserSession({
+            getCanvasRect: () => self.draw_canvas_rect,
+            getScale: () => self._fetch_safe_scale(),
+            batchDrawManager: self.batch_draw,
+            showHint: () => self._show_palm_eraser_hint(),
+            updateHint: (cx, cy, size) => self._update_palm_eraser_hint(cx, cy, size),
+            hideHint: () => self._hide_palm_eraser_hint(),
+            submitStroke: () => self._submit_stroke(),
+            onSessionStart(stroke, session) {
+                self.isPalmErasing = true;
+                self.savedDrawMode = self.draw_mode;
+                self.draw_mode = 'eraser';
+                self.palmEraserSize = session.palmEraserSize;
+                self.is_drawing = true;
+                self.current_stroke = stroke;
+                self.cached_draw_type = 'erase';
+                self.cached_draw_color = '#000000';
+                self.cached_draw_line_width = session.palmEraserSize * session.cachedInvScale;
+            },
+            onSessionEnd() {
+                self.isPalmErasing = false;
+                self.is_drawing = false;
+                self.draw_canvas_rect = null;
+                self.draw_mode = self.savedDrawMode || 'comment';
+                self.savedDrawMode = null;
+                self.current_stroke = null;
+            }
+        });
+    }
+
     _start_palm_erase(clientX, clientY, eraserWidth) {
         this.draw_canvas_rect = this._get_canvas_rect();
         if (!this.draw_canvas_rect) return;
-        this.isPalmErasing = true;
-        this.savedDrawMode = this.draw_mode;
-        this.draw_mode = 'eraser';
-        this.palmEraserSize = eraserWidth || (window.DRAW_CONFIG?.palmEraserSize || 60);
-
-        const inv = 1 / this._fetch_safe_scale();
-        this.last_x = (clientX - this.draw_canvas_rect.left) * inv;
-        this.last_y = (clientY - this.draw_canvas_rect.top) * inv;
-
-        this._show_palm_eraser_hint();
-        this._update_palm_eraser_hint(clientX, clientY, this.palmEraserSize);
-
-        this.is_drawing = true;
-        const baseEraserSize = this.palmEraserSize * inv;
-        this.current_stroke = {
-            type: 'erase',
-            points: [],
-            color: '#000000',
-            lineWidth: baseEraserSize,
-            eraserSize: baseEraserSize,
-            eraserSizeRaw: this.palmEraserSize,
-            eraserShape: 'square',
-            eraserSpeedEnabled: false,
-            scale: this.coord.get_scale() || 1,
-            bounds: { minX: Infinity, minY: Infinity, maxX: -Infinity, maxY: -Infinity },
-            variableWidths: []
-        };
-
-        this.cached_draw_type = 'erase';
-        this.cached_draw_color = '#000000';
-        this.cached_draw_line_width = baseEraserSize;
-
-        if (this.batch_draw) {
-            this.batch_draw.batch_draw_init_start();
-            this.batch_draw.eraserShape = 'square';
-        }
+        this._init_palm_session();
+        if (this._palmSession) this._palmSession.start(clientX, clientY, eraserWidth);
     }
 
     _update_palm_erase(clientX, clientY) {
-        if (!this.isPalmErasing || !this.draw_canvas_rect) return;
-        const inv = 1 / this._fetch_safe_scale();
-        const x = (clientX - this.draw_canvas_rect.left) * inv;
-        const y = (clientY - this.draw_canvas_rect.top) * inv;
-        const dx = x - this.last_x;
-        const dy = y - this.last_y;
-
-        this._update_palm_eraser_hint(clientX, clientY, this.palmEraserSize);
-
-        if (dx !== 0 || dy !== 0) {
-            this._save_stroke_point(this.last_x, this.last_y, x, y, 0.5);
-            if (this.batch_draw) {
-                this.batch_draw.batch_draw_create_command(
-                    'erase', this.last_x, this.last_y, x, y,
-                    '#000000', this.palmEraserSize * inv
-                );
-            }
-            this.last_x = x;
-            this.last_y = y;
-        }
+        if (this._palmSession) this._palmSession.update(clientX, clientY);
     }
 
     async _end_palm_erase() {
-        if (!this.isPalmErasing) return;
-        this.isPalmErasing = false;
-        this.is_drawing = false;
-        this.draw_canvas_rect = null;
-        this._hide_palm_eraser_hint();
-
-        await this._submit_stroke();
-        this.draw_mode = this.savedDrawMode || 'comment';
-        this.savedDrawMode = null;
-        this.current_stroke = null;
+        if (this._palmSession) await this._palmSession.end();
     }
 
     // ====== 清理 ======

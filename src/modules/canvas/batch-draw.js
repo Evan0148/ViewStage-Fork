@@ -503,8 +503,6 @@ class RealtimeBatchDrawManager {
                 }
             } else if (this._overlayCtx) {
                 const ctx = this._overlayCtx;
-                const midX = (fromX + toX) / 2;
-                const midY = (fromY + toY) / 2;
 
                 const needsBreak = batchFirst ||
                     (cmd.color && cmd.color !== batchColor) ||
@@ -518,18 +516,24 @@ class RealtimeBatchDrawManager {
                     batchWidth = lineWidth;
                     ctx.beginPath();
 
+                    const midX = (fromX + toX) / 2;
+                    const midY = (fromY + toY) / 2;
                     const isFirstSeg = (i === 0 && (this._strokeStart || this._lastMidX === null));
                     if (isFirstSeg) {
                         ctx.moveTo(fromX, fromY);
                         ctx.lineTo(midX, midY);
-                    } else {
+                    } else if (batchFirst) {
                         const prevMx = (i === 0 ? this._lastMidX : ((commands[i - 1].fromX + commands[i - 1].toX) / 2));
                         const prevMy = (i === 0 ? this._lastMidY : ((commands[i - 1].fromY + commands[i - 1].toY) / 2));
                         ctx.moveTo(prevMx, prevMy);
                         ctx.quadraticCurveTo(fromX, fromY, midX, midY);
+                    } else {
+                        ctx.quadraticCurveTo(fromX, fromY, midX, midY);
                     }
                     batchFirst = false;
                 } else {
+                    const midX = (fromX + toX) / 2;
+                    const midY = (fromY + toY) / 2;
                     ctx.quadraticCurveTo(fromX, fromY, midX, midY);
                 }
             }
@@ -571,41 +575,20 @@ class RealtimeBatchDrawManager {
                     const dpr = info.dpr;
                     ctx.save();
                     ctx.setTransform(dpr, 0, 0, dpr, -info.rect.x * dpr, -info.rect.y * dpr);
-                    ctx.lineCap = this.eraserShape === 'square' ? 'square' : 'round';
-                    ctx.lineJoin = this.eraserShape === 'square' ? 'miter' : 'round';
                     ctx.globalCompositeOperation = 'destination-out';
                     ctx.strokeStyle = 'rgba(0,0,0,1)';
                     
-                    if (entry.lineWidths && entry.lineWidths.length > 0) {
-                        let batchWidth = entry.lineWidths[0] || 20;
-                        ctx.lineWidth = batchWidth;
+                    const eraser = window.__eraser;
+                    if (eraser) {
                         ctx.beginPath();
-                        ctx.moveTo(entry.paths[0].fromX, entry.paths[0].fromY);
-                        ctx.lineTo(entry.paths[0].toX, entry.paths[0].toY);
-                        for (let j = 1; j < entry.paths.length; j++) {
-                            const w = entry.lineWidths[j] || 20;
+                        for (let j = 0; j < entry.paths.length; j++) {
+                            const w = entry.lineWidths && entry.lineWidths.length > 0
+                                ? entry.lineWidths[j] || 20
+                                : entry.lineWidth || 20;
                             const p = entry.paths[j];
-                            if (Math.abs(w - batchWidth) >= 0.5) {
-                                ctx.stroke();
-                                batchWidth = w;
-                                ctx.lineWidth = batchWidth;
-                                ctx.beginPath();
-                                ctx.moveTo(p.fromX, p.fromY);
-                                ctx.lineTo(p.toX, p.toY);
-                            } else {
-                                ctx.moveTo(p.fromX, p.fromY);
-                                ctx.lineTo(p.toX, p.toY);
-                            }
+                            eraser.renderEraseSegment(ctx, p.fromX, p.fromY, p.toX, p.toY, w);
                         }
-                        ctx.stroke();
-                    } else {
-                        ctx.lineWidth = entry.lineWidth || 20;
-                        ctx.beginPath();
-                        for (const p of entry.paths) {
-                            ctx.moveTo(p.fromX, p.fromY);
-                            ctx.lineTo(p.toX, p.toY);
-                        }
-                        ctx.stroke();
+                        ctx.fill();
                     }
                     ctx.restore();
                 }

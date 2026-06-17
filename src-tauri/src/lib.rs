@@ -57,7 +57,7 @@ pub struct Stroke {
     pub points: Vec<StrokePoint>,
     pub color: Option<String>,
     pub line_width: Option<u32>,
-    pub eraser_size: Option<u32>,
+    pub eraser_size: Option<f32>,
 }
 
 /// 笔画压缩请求
@@ -1045,46 +1045,6 @@ fn canvas_render_line(canvas: &mut RgbaImage, x1: i32, y1: i32, x2: i32, y2: i32
     }
 }
 
-/// 在画布上用 Bresenham 算法擦除圆形区域（设置 alpha=0）
-fn canvas_delete_line(canvas: &mut RgbaImage, x1: i32, y1: i32, x2: i32, y2: i32, width: u32) {
-    let dx = (x2 - x1).abs();
-    let dy = (y2 - y1).abs();
-    let sx = if x1 < x2 { 1 } else { -1 };
-    let sy = if y1 < y2 { 1 } else { -1 };
-    let mut err = dx - dy;
-    let mut x = x1;
-    let mut y = y1;
-    
-    let half_width = (width / 2) as i32;
-    
-    loop {
-        for wx in -half_width..=half_width {
-            for wy in -half_width..=half_width {
-                let px = x + wx;
-                let py = y + wy;
-                if px >= 0 && py >= 0 && (px as u32) < canvas.width() && (py as u32) < canvas.height() {
-                    let pixel = canvas.get_pixel_mut(px as u32, py as u32);
-                    pixel[3] = 0;
-                }
-            }
-        }
-        
-        if x == x2 && y == y2 {
-            break;
-        }
-        
-        let e2 = 2 * err;
-        if e2 > -dy {
-            err -= dy;
-            x += sx;
-        }
-        if e2 < dx {
-            err += dx;
-            y += sy;
-        }
-    }
-}
-
 /// Tauri IPC 命令：将笔画数据渲染到画布并返回 base64 PNG
 ///
 /// 接收笔画数组（绘制/擦除/清空），在空白或给定底图上逐笔渲染，用于撤销缩略图生成
@@ -1138,18 +1098,7 @@ fn stroke_format_compact(request: CompactStrokesRequest) -> Result<String, Strin
                 );
             }
         } else if stroke.stroke_type == "erase" {
-            let eraser_size = stroke.eraser_size.unwrap_or(15);
-            
-            for point in points {
-                canvas_delete_line(
-                    &mut canvas,
-                    point.from_x as i32,
-                    point.from_y as i32,
-                    point.to_x as i32,
-                    point.to_y as i32,
-                    eraser_size,
-                );
-            }
+            // 擦除在前端 JS 中使用 Canvas API 预渲染，此处不再处理
         }
     }
     

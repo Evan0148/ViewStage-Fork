@@ -3305,6 +3305,46 @@ class DocumentReaderManager {
         this._palm_eraser_hint.style.transform = 'translate(-50%, -50%)';
     }
 
+    _init_palm_session() {
+        if (this._palmSession || !window.__palmEraser) return;
+        const self = this;
+        this._palmSession = new window.__palmEraser.PalmEraserSession({
+            getCanvasRect: () => self.draw_canvas_rect,
+            getScale: () => Math.max(0.001, self.dr_scale || 1),
+            batchDrawManager: self.batch_draw,
+            showHint: () => self._show_palm_eraser_hint(),
+            updateHint: (cx, cy, size) => self._update_palm_eraser_hint(cx, cy, size),
+            hideHint: () => self._hide_palm_eraser_hint(),
+            submitStroke: () => self._submit_stroke(),
+            onSessionStart(stroke, session) {
+                self.isPalmErasing = true;
+                self.savedDrawMode = self.draw_mode;
+                self.draw_mode = 'eraser';
+                self.palmEraserSize = session.palmEraserSize;
+                self.is_drawing = true;
+                self.current_stroke = stroke;
+                self.cached_draw_type = 'erase';
+                self.cached_draw_color = '#000000';
+                self.cached_draw_line_width = session.palmEraserSize / Math.max(0.001, self.dr_scale || 1);
+                const page_data = self.page_manager.pages_list[self.active_page_index];
+                if (page_data && !page_data.is_tiles_initialized) {
+                    self._on_page_visible(self.active_page_index);
+                }
+                if (self.batch_draw && page_data?.tile_renderer) {
+                    self.batch_draw._tileRenderer = page_data.tile_renderer;
+                }
+            },
+            onSessionEnd() {
+                self.isPalmErasing = false;
+                self.is_drawing = false;
+                self.draw_canvas_rect = null;
+                self.draw_mode = self.savedDrawMode || 'comment';
+                self.savedDrawMode = null;
+                self.current_stroke = null;
+            }
+        });
+    }
+
     _start_palm_erase(clientX, clientY, eraserWidth) {
         const target = document.elementFromPoint(clientX, clientY);
         if (!target) return;
@@ -3312,93 +3352,19 @@ class DocumentReaderManager {
         if (isNaN(page_index)) return;
         const page_data = this.page_manager.pages_list[page_index];
         if (!page_data?.page_element) return;
-        this.isPalmErasing = true;
-        this.savedDrawMode = this.draw_mode;
-        this.draw_mode = 'eraser';
-        this.palmEraserSize = eraserWidth || (window.DRAW_CONFIG?.palmEraserSize || 60);
         this.active_page_index = page_index;
-        const rect = page_data.page_element.getBoundingClientRect();
-        this.draw_canvas_rect = rect;
-        this.dr_cached_inv_scale = 1 / this.dr_scale;
+        this.draw_canvas_rect = page_data.page_element.getBoundingClientRect();
 
-        const inv = this.dr_cached_inv_scale;
-        this.last_x = (clientX - rect.left) * inv;
-        this.last_y = (clientY - rect.top) * inv;
-
-        this._show_palm_eraser_hint();
-        this._update_palm_eraser_hint(clientX, clientY, this.palmEraserSize);
-
-        this.is_drawing = true;
-        const baseEraserSize = this.palmEraserSize * inv;
-        this.current_stroke = {
-            type: 'erase',
-            points: [],
-            color: '#000000',
-            lineWidth: baseEraserSize,
-            eraserSize: baseEraserSize,
-            eraserSizeRaw: this.palmEraserSize,
-            eraserShape: 'square',
-            eraserSpeedEnabled: false,
-            scale: 1,
-            bounds: { minX: Infinity, minY: Infinity, maxX: -Infinity, maxY: -Infinity },
-            variableWidths: [],
-            _cache_uid: `${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
-        };
-
-        this.cached_draw_type = 'erase';
-        this.cached_draw_color = '#000000';
-        this.cached_draw_line_width = this.palmEraserSize / Math.max(0.001, this.dr_scale || 1);
-
-        const page_data2 = this.page_manager.pages_list[this.active_page_index];
-        if (page_data2 && !page_data2.is_tiles_initialized) {
-            this._on_page_visible(this.active_page_index);
-        }
-        if (this.batch_draw) {
-            this.batch_draw.batch_draw_init_start();
-            this.batch_draw.eraserShape = 'square';
-            if (page_data2?.tile_renderer) {
-                this.batch_draw._tileRenderer = page_data2.tile_renderer;
-            }
-        }
+        this._init_palm_session();
+        if (this._palmSession) this._palmSession.start(clientX, clientY, eraserWidth);
     }
 
     _update_palm_erase(clientX, clientY) {
-        if (!this.isPalmErasing || !this.draw_canvas_rect) return;
-        const inv = this.dr_cached_inv_scale;
-        const x = (clientX - this.draw_canvas_rect.left) * inv;
-        const y = (clientY - this.draw_canvas_rect.top) * inv;
-        const dx = x - this.last_x;
-        const dy = y - this.last_y;
-
-        this._update_palm_eraser_hint(clientX, clientY, this.palmEraserSize);
-
-        if (dx !== 0 || dy !== 0) {
-            this._save_stroke_point(this.last_x, this.last_y, x, y, 0.5);
-            if (this.batch_draw) {
-                const page_data = this.page_manager.pages_list[this.active_page_index];
-                if (page_data?.tile_renderer) {
-                    this.batch_draw.batch_draw_create_command(
-                        'erase', this.last_x, this.last_y, x, y,
-                        '#000000', this.palmEraserSize * inv
-                    );
-                }
-            }
-            this.last_x = x;
-            this.last_y = y;
-        }
+        if (this._palmSession) this._palmSession.update(clientX, clientY);
     }
 
     async _end_palm_erase() {
-        if (!this.isPalmErasing) return;
-        this.isPalmErasing = false;
-        this.is_drawing = false;
-        this.draw_canvas_rect = null;
-        this._hide_palm_eraser_hint();
-
-        await this._submit_stroke();
-        this.draw_mode = this.savedDrawMode || 'comment';
-        this.savedDrawMode = null;
-        this.current_stroke = null;
+        if (this._palmSession) await this._palmSession.end();
     }
 
     // ====== 页面侧边栏 ======

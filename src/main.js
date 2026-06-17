@@ -2684,83 +2684,53 @@ function main_update_palm_eraser_hint(clientX, clientY, size) {
     dom.palmEraserHint.style.transform = 'translate(-50%, -50%)';
 }
 
+let _palmSession = null;
+function main_get_palm_session() {
+    if (!_palmSession && window.__palmEraser) {
+        _palmSession = new window.__palmEraser.PalmEraserSession({
+            defaultEraserSize: DRAW_CONFIG.palmEraserSize,
+            getCanvasRect: () => dom.canvasWrapper.getBoundingClientRect(),
+            getScale: main_fetch_safe_scale,
+            batchDrawManager,
+            showHint: main_show_palm_eraser_hint,
+            updateHint: main_update_palm_eraser_hint,
+            hideHint: main_hide_palm_eraser_hint,
+            onSessionStart(stroke, session) {
+                state.isPalmErasing = true;
+                state.savedDrawMode = state.drawMode;
+                state.drawMode = 'eraser';
+                state.palmEraserSize = session.palmEraserSize;
+                state.currentStroke = stroke;
+                state.isDrawing = true;
+                main_start_drawing_mode();
+                state.cachedDrawType = 'erase';
+                state.cachedDrawColor = '#000000';
+                state.cachedDrawLineWidth = session.palmEraserSize / main_fetch_safe_scale();
+            },
+            onSessionEnd() {
+                state.isPalmErasing = false;
+                state.isDrawing = false;
+                main_hide_drawing_mode();
+                state.drawMode = state.savedDrawMode || 'move';
+                state.savedDrawMode = null;
+                state.currentStroke = null;
+            }
+        });
+    }
+    return _palmSession;
+}
+
 function main_start_palm_erase(clientX, clientY, eraserWidth) {
-    state.isPalmErasing = true;
-    state.savedDrawMode = state.drawMode;
-    state.drawMode = 'eraser';
-    state.palmEraserSize = eraserWidth || DRAW_CONFIG.palmEraserSize;
-
-    state.drawCanvasRect = dom.canvasWrapper.getBoundingClientRect();
-    state.cachedInvScale = 1 / main_fetch_safe_scale();
-    const inv = state.cachedInvScale;
-    state.lastX = (clientX - state.drawCanvasRect.left) * inv;
-    state.lastY = (clientY - state.drawCanvasRect.top) * inv;
-
-    main_show_palm_eraser_hint();
-    main_update_palm_eraser_hint(clientX, clientY, state.palmEraserSize);
-
-    state.currentStroke = null;
-    state.isDrawing = true;
-    main_start_drawing_mode();
-    state.cachedDrawType = 'erase';
-    state.cachedDrawColor = '#000000';
-    const invScale = state.cachedInvScale;
-    const baseEraserSize = state.palmEraserSize * invScale;
-    state.cachedDrawLineWidth = state.palmEraserSize / main_fetch_safe_scale();
-
-    state.currentStroke = {
-        type: 'erase',
-        points: [],
-        color: '#000000',
-        lineWidth: baseEraserSize,
-        eraserSize: baseEraserSize,
-        eraserSizeRaw: state.palmEraserSize,
-        eraserShape: 'square',
-        eraserSpeedEnabled: false,
-        scale: state.scale,
-        bounds: {
-            minX: Infinity, minY: Infinity,
-            maxX: -Infinity, maxY: -Infinity
-        },
-        variableWidths: []
-    };
-
-    batchDrawManager.batch_draw_init_start();
-    batchDrawManager.eraserShape = 'square';
+    const session = main_get_palm_session();
+    if (session) session.start(clientX, clientY, eraserWidth);
 }
 
 function main_update_palm_erase(clientX, clientY) {
-    if (!state.isPalmErasing || !state.drawCanvasRect) return;
-    const inv = state.cachedInvScale;
-    const x = (clientX - state.drawCanvasRect.left) * inv;
-    const y = (clientY - state.drawCanvasRect.top) * inv;
-    const dx = x - state.lastX;
-    const dy = y - state.lastY;
-
-    main_update_palm_eraser_hint(clientX, clientY, state.palmEraserSize);
-
-    if (dx !== 0 || dy !== 0) {
-        main_save_stroke_point(state.lastX, state.lastY, x, y, 0.5);
-        batchDrawManager.batch_draw_create_command(
-            'erase', state.lastX, state.lastY, x, y,
-            '#000000', state.palmEraserSize * inv
-        );
-        state.lastX = x;
-        state.lastY = y;
-    }
+    if (_palmSession) _palmSession.update(clientX, clientY);
 }
 
 async function main_end_palm_erase() {
-    if (!state.isPalmErasing) return;
-    state.isPalmErasing = false;
-    state.isDrawing = false;
-    main_hide_drawing_mode();
-    main_hide_palm_eraser_hint();
-
-    await main_submit_stroke();
-    state.drawMode = state.savedDrawMode || 'move';
-    state.savedDrawMode = null;
-    state.currentStroke = null;
+    if (_palmSession) await _palmSession.end();
 }
 
 // === 画布交互事件：鼠标/触控 绘制、拖拽、缩放 ===
@@ -3616,6 +3586,7 @@ let compactIdleId = null;
 // 重置上下文状态缓存（在 tile rendering 后调用，避免缓存失效）
 function main_reset_context_state() {
     currentContextState.strokeStyle = null;
+    currentContextState.fillStyle = null;
     currentContextState.lineWidth = null;
     currentContextState.lineCap = null;
     currentContextState.lineJoin = null;
@@ -3628,6 +3599,7 @@ window.main_reset_context_state = main_reset_context_state;
 
 let currentContextState = {
     strokeStyle: null,
+    fillStyle: null,
     lineWidth: null,
     lineCap: null,
     lineJoin: null,
@@ -3639,12 +3611,17 @@ let currentContextState = {
 /**
  * 设置上下文状态（只更新变化的属性，避免冗余调用）
  * @param {CanvasRenderingContext2D} ctx
- * @param {Object} state - 含 strokeStyle/lineWidth/lineCap/lineJoin/globalCompositeOperation
+ * @param {Object} state - 含 strokeStyle/fillStyle/lineWidth/lineCap/lineJoin/globalCompositeOperation
  */
 function main_update_context_state(ctx, state) {
     if (currentContextState.strokeStyle !== state.strokeStyle) {
         ctx.strokeStyle = state.strokeStyle;
         currentContextState.strokeStyle = state.strokeStyle;
+    }
+
+    if (currentContextState.fillStyle !== state.fillStyle) {
+        ctx.fillStyle = state.fillStyle;
+        currentContextState.fillStyle = state.fillStyle;
     }
     
     if (currentContextState.lineWidth !== state.lineWidth) {
@@ -3711,8 +3688,9 @@ async function main_render_strokes_to_context(ctx, strokes) {
         const renderScale = main_fetch_safe_scale();
         const strokeScale = stroke.scale || 1;
         let baseLineWidth;
-        if (stroke.type === 'erase' && stroke.eraserSizeRaw !== undefined) {
-            baseLineWidth = stroke.eraserSizeRaw / renderScale;
+        if (stroke.type === 'erase') {
+            // 用 stroke 自身的 canvas 坐标线宽，不做实时缩放
+            baseLineWidth = stroke.eraserSize || (stroke.eraserSizeRaw / (stroke.scale || 1));
         } else if (stroke.type === 'draw') {
             baseLineWidth = (stroke.lineWidth || DRAW_CONFIG.penWidth) * strokeScale / renderScale;
         } else {
@@ -3724,16 +3702,9 @@ async function main_render_strokes_to_context(ctx, strokes) {
             batch_flush();
             main_update_context_state(ctx, {
                 globalCompositeOperation: 'destination-out',
+                fillStyle: '#000000',
                 strokeStyle: '#000000'
             });
-            const shape = stroke.eraserShape || 'square';
-            if (shape !== currentEraserShape) {
-                currentEraserShape = shape;
-                main_update_context_state(ctx, {
-                    lineCap: shape === 'square' ? 'square' : 'round',
-                    lineJoin: shape === 'square' ? 'miter' : 'round'
-                });
-            }
         } else {
             /* 上一个是擦除 → 刷出，切回绘制 */
             if (batchIsErase) batch_flush();
@@ -3760,6 +3731,11 @@ async function main_render_strokes_to_context(ctx, strokes) {
 
         if (hasVariableWidths) {
             batch_flush();
+            if (stroke.type === 'erase') {
+                const eraser = window.__eraser;
+                if (eraser) eraser.renderEraseStroke(ctx, stroke, baseLineWidth, strokeScale, renderScale);
+                continue;
+            }
             let varBatchActive = false;
             let varBatchWidth = 0;
             let varPrevMidX = 0, varPrevMidY = 0;
@@ -3795,6 +3771,13 @@ async function main_render_strokes_to_context(ctx, strokes) {
             continue;
         }
 
+        if (stroke.type === 'erase') {
+            batch_flush();
+            const eraser = window.__eraser;
+            if (eraser) eraser.renderEraseStroke(ctx, stroke, baseLineWidth, strokeScale, renderScale);
+            continue;
+        }
+
         /* 固定宽度：尝试合并连续同色/同线宽笔画 */
         if (!batchActive ||
             batchIsErase !== (stroke.type === 'erase') ||
@@ -3808,17 +3791,12 @@ async function main_render_strokes_to_context(ctx, strokes) {
 
             const pts = stroke.points;
             const path = new Path2D();
-            let midX = (pts[0].fromX + pts[0].toX) / 2;
-            let midY = (pts[0].fromY + pts[0].toY) / 2;
             path.moveTo(pts[0].fromX, pts[0].fromY);
-            path.lineTo(midX, midY);
+            path.lineTo(pts[0].toX, pts[0].toY);
             for (let i = 1; i < pts.length; i++) {
-                const nmidX = (pts[i].fromX + pts[i].toX) / 2;
-                const nmidY = (pts[i].fromY + pts[i].toY) / 2;
-                path.moveTo(midX, midY);
-                path.quadraticCurveTo(pts[i].fromX, pts[i].fromY, nmidX, nmidY);
-                midX = nmidX;
-                midY = nmidY;
+                const p = pts[i];
+                path.lineTo(p.fromX, p.fromY);
+                path.lineTo(p.toX, p.toY);
             }
             ctx.stroke(path);
             batchPrevMidX = midX;
@@ -3903,74 +3881,6 @@ async function main_handle_compact_strokes() {
         }
     });
     const strokesToCompact = Array.from(strokesToCompactSet);
-    
-    if (window.__TAURI__) {
-        try {
-            const { invoke } = window.__TAURI__.core;
-            
-            const request = {
-                baseImage: frozenImageURL,
-                strokes: strokesToCompact,
-                canvasWidth: DRAW_CONFIG.canvasW,
-                canvasHeight: DRAW_CONFIG.canvasH
-            };
-            
-            const result = await invoke('stroke_format_compact', { request });
-            
-            if (loadId !== state.baseImageLoadId) return;
-            
-            if (compactSnapshotId !== state.compactSnapshotId) {
-                console.log('压缩快照已过期,取消操作');
-                return;
-            }
-            
-            if (!history_validate_compact()) {
-                console.log('压缩期间撤销栈已变化，取消压缩');
-                return;
-            }
-            
-            const afterImageURL = result;
-            
-            const remainingStrokes = state.strokeHistory.filter(s => {
-                return !strokesToCompactSet.has(s);
-            });
-            
-            state.strokeHistory.length = 0;
-            remainingStrokes.forEach(s => state.strokeHistory.push(s));
-            
-            const afterStrokes = [...state.strokeHistory];
-            
-            const snapshotCmd = new SnapshotCommand({
-                beforeImageURL: frozenImageURL,
-                afterImageURL,
-                beforeStrokes,
-                afterStrokes,
-                strokeHistoryRef: state.strokeHistory,
-                baseImageURLRef: { get value() { return state.baseImageURL; }, set value(v) { state.baseImageURL = v; } },
-                baseImageObjRef: { get value() { return state.baseImageObj; }, set value(v) { state.baseImageObj = v; } },
-                redrawFn: () => main_render_all_strokes(),
-                loadBaseImageFn: (url) => main_load_base_image(url)
-            });
-            
-            history_format_compact(snapshotCmd, compactTargetCount);
-            
-            state.baseImageURL = afterImageURL;
-            state.baseImageObj = null;
-            const img = new Image();
-            img.onload = () => {
-                if (loadId === state.baseImageLoadId) {
-                    state.baseImageObj = img;
-                    if (window.tileRenderer) window.tileRenderer.mark_all();
-                }
-            };
-            img.src = afterImageURL;
-            
-            console.log('Rust 笔画已压缩，保留最近', history_fetch_undo_stack().length, '步可撤销');
-            return;
-        } catch (error) {
-            console.error('Rust 笔画压缩失败，使用前端降级方案:', error);
-        }
-    }
     
     if (!history_validate_compact()) {
         console.log('压缩期间撤销栈已变化，取消压缩');

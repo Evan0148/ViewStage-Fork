@@ -285,6 +285,12 @@ async function settings_load_camera_config() {
                 window.__palmEraser = null;
             }
 
+            try {
+                window.__eraser = await import('./modules/eraser/eraser.js');
+            } catch (e) {
+                console.error('[init] eraser load error:', e);
+            }
+
             if (DRAW_CONFIG.eraserSpeedEnabled) {
                 try {
                     window.__eraserSpeed = await import('./modules/eraser/eraser_speed.js');
