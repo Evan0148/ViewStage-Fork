@@ -1413,6 +1413,17 @@ async function main_load_pdf_from_path(filePath, autoOpen = false) {
             
             main_hide_loading_overlay();
             console.log(`文件已导入: ${folder.name}，共${folder.pages.length}页`);
+
+            // PDF 加载后内存占用可能较高，自动清理
+            const invoke = window.__TAURI__?.core?.invoke;
+            if (invoke) {
+                invoke('memreduct_get_usage').then(usage => {
+                    if (usage > 80) {
+                        console.log(`[memclean] PDF加载后内存使用率 ${usage}%，自动清理`);
+                        invoke('memreduct_clean_now', { mask: null }).catch(() => {});
+                    }
+                }).catch(() => {});
+            }
             
             if (autoOpen && window.documentReaderManager) {
                 const fileIndex = state.fileList.length - 1;
@@ -4567,7 +4578,18 @@ function main_load_pdf() {
                 
                 main_hide_loading_overlay();
                 console.log(`文件已导入: ${folder.name}，共${folder.pages.length}页`);
-                
+
+                // PDF 加载后内存占用可能较高，自动清理
+                const invoke = window.__TAURI__?.core?.invoke;
+                if (invoke) {
+                    invoke('memreduct_get_usage').then(usage => {
+                        if (usage > 80) {
+                            console.log(`[memclean] PDF加载后内存使用率 ${usage}%，自动清理`);
+                            invoke('memreduct_clean_now', { mask: null }).catch(() => {});
+                        }
+                    }).catch(() => {});
+                }
+
                 if (wasCameraOpen) await main_update_camera_state(true);
                 
                 try {
@@ -4635,7 +4657,18 @@ function main_load_pdf() {
                 
                 main_hide_loading_overlay();
                 console.log(`文件已导入: ${folder.name}，共${folder.pages.length}页`);
-                
+
+                // PDF 加载后内存占用可能较高，自动清理
+                const invoke = window.__TAURI__?.core?.invoke;
+                if (invoke) {
+                    invoke('memreduct_get_usage').then(usage => {
+                        if (usage > 80) {
+                            console.log(`[memclean] PDF加载后内存使用率 ${usage}%，自动清理`);
+                            invoke('memreduct_clean_now', { mask: null }).catch(() => {});
+                        }
+                    }).catch(() => {});
+                }
+
                 if (wasCameraOpen) await main_update_camera_state(true);
             } catch (error) {
                 main_hide_loading_overlay();

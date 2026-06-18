@@ -3694,6 +3694,28 @@ async fn memreduct_check_skipuac() -> bool {
     }
 }
 
+/// IPC 命令：获取当前内存使用率（0-100）
+#[cfg(target_os = "windows")]
+#[tauri::command]
+fn memreduct_get_usage() -> u32 {
+    use windows::Win32::System::Memory::GlobalMemoryStatusEx;
+    use windows::Win32::System::Memory::MEMORYSTATUSEX;
+    unsafe {
+        let mut mem = MEMORYSTATUSEX {
+            dwLength: std::mem::size_of::<MEMORYSTATUSEX>() as u32,
+            ..Default::default()
+        };
+        if GlobalMemoryStatusEx(&mut mem).is_ok() {
+            return mem.dwMemoryLoad;
+        }
+    }
+    0
+}
+
+#[cfg(not(target_os = "windows"))]
+#[tauri::command]
+fn memreduct_get_usage() -> u32 { 0 }
+
 /// 运行 memreduct 子进程并获取退出码（不映射为 Result）
 #[cfg(target_os = "windows")]
 fn run_memreduct_raw(args: &[&str]) -> Result<i32, String> {
@@ -3904,7 +3926,8 @@ pub fn app_init_run() {
             memreduct_clean_now,
             memreduct_setup,
             memreduct_uninstall,
-            memreduct_check_skipuac
+            memreduct_check_skipuac,
+            memreduct_get_usage
         ])
         .run(tauri::generate_context!())
         .unwrap_or_else(|e| {

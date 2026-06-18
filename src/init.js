@@ -507,6 +507,19 @@ async function main_init_all() {
             window.__TAURI__?.core?.invoke('cache_validate_auto_clear').catch(() => {});
         }, 2000);
 
+        // 内存自动清理（延迟执行，不阻塞启动）
+        setTimeout(async () => {
+            const invoke = window.__TAURI__?.core?.invoke;
+            if (!invoke) return;
+            try {
+                const usage = await invoke('memreduct_get_usage');
+                if (usage > 80) {
+                    console.log(`[memclean] 启动时内存使用率 ${usage}%，自动清理`);
+                    await invoke('memreduct_clean_now', { mask: null });
+                }
+            } catch (_) {}
+        }, 3000);
+
         // 恢复上次打开的文档（延迟执行，确保主窗口已完全加载）
         if (window.documentReaderManager) {
             setTimeout(() => {

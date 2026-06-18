@@ -166,3 +166,24 @@ function memclean_init() {
 
   memclean_refresh();
 }
+
+/**
+ * 检查内存使用率，超过阈值时自动清理
+ * @param {number} [threshold=80] - 触发清理的内存使用率百分比
+ * @returns {Promise<boolean>} 是否执行了清理
+ */
+async function memclean_auto_if_needed(threshold = 80) {
+  const invoke = window.__TAURI__?.core?.invoke;
+  if (!invoke) return false;
+  try {
+    const usage = await invoke('memreduct_get_usage');
+    if (usage > threshold) {
+      console.log(`[memclean] 内存使用率 ${usage}% 超过 ${threshold}%，自动清理`);
+      await invoke('memreduct_clean_now', { mask: null });
+      return true;
+    }
+  } catch (e) {
+    console.warn('[memclean] 自动清理失败:', e);
+  }
+  return false;
+}
