@@ -90,22 +90,19 @@ export class PinchZoomSource {
         if (events.length < 2) return;
         this._pinchIds = [events[0].id, events[1].id];
 
-        const positions = this._input.getActivePositions();
-        if (positions.length < 2) return;
-
-        this._startPinch(positions);
+        this._startPinch(events[0].position, events[1].position);
     }
 
-    _startPinch(positions) {
-        const dx = positions[0].x - positions[1].x;
-        const dy = positions[0].y - positions[1].y;
+    _startPinch(pos0, pos1) {
+        const dx = pos0.x - pos1.x;
+        const dy = pos0.y - pos1.y;
         this._startDistance = Math.sqrt(dx * dx + dy * dy);
-        this._startMidX = (positions[0].x + positions[1].x) / 2;
-        this._startMidY = (positions[0].y + positions[1].y) / 2;
-        this._startFinger0.x = positions[0].x;
-        this._startFinger0.y = positions[0].y;
-        this._startFinger1.x = positions[1].x;
-        this._startFinger1.y = positions[1].y;
+        this._startMidX = (pos0.x + pos1.x) / 2;
+        this._startMidY = (pos0.y + pos1.y) / 2;
+        this._startFinger0.x = pos0.x;
+        this._startFinger0.y = pos0.y;
+        this._startFinger1.x = pos1.x;
+        this._startFinger1.y = pos1.y;
         this._currentScale = 1;
         this._beyondTolerance = false;
         this._movedThisBatch = [];
@@ -122,6 +119,8 @@ export class PinchZoomSource {
                 centerY: this._startMidY,
                 originScale: 1,
                 deltaScale: 0,
+                finger0: { x: pos0.x, y: pos0.y },
+                finger1: { x: pos1.x, y: pos1.y },
             });
         }
     }
@@ -133,14 +132,25 @@ export class PinchZoomSource {
             return;
         }
 
-        const positions = this._input.getActivePositions();
-        if (positions.length < 2) return;
+        // 通过 _pinchIds 查找两指的实际位置，而非取 positions[0]/[1]，
+        // 避免第三指介入时 Map 遍历顺序改变导致追踪错位
+        const events = this._input.activeEvents;
+        let f0Ev = null, f1Ev = null;
+        for (let i = 0; i < events.length; i++) {
+            const e = events[i];
+            if (e.id === this._pinchIds[0]) f0Ev = e;
+            if (e.id === this._pinchIds[1]) f1Ev = e;
+        }
+        if (!f0Ev || !f1Ev) {
+            this._finishPinch(VirtualDeviceType.Device);
+            return;
+        }
 
-        const dx = positions[0].x - positions[1].x;
-        const dy = positions[0].y - positions[1].y;
+        const dx = f0Ev.position.x - f1Ev.position.x;
+        const dy = f0Ev.position.y - f1Ev.position.y;
         const currentDist = Math.sqrt(dx * dx + dy * dy);
-        const midX = (positions[0].x + positions[1].x) / 2;
-        const midY = (positions[0].y + positions[1].y) / 2;
+        const midX = (f0Ev.position.x + f1Ev.position.x) / 2;
+        const midY = (f0Ev.position.y + f1Ev.position.y) / 2;
 
         if (this._startDistance === 0) return;
 
@@ -170,10 +180,10 @@ export class PinchZoomSource {
         this._movedThisBatch = [];
 
         if (this.onPinchDelta) {
-            this._finger0.x = positions[0].x;
-            this._finger0.y = positions[0].y;
-            this._finger1.x = positions[1].x;
-            this._finger1.y = positions[1].y;
+            this._finger0.x = f0Ev.position.x;
+            this._finger0.y = f0Ev.position.y;
+            this._finger1.x = f1Ev.position.x;
+            this._finger1.y = f1Ev.position.y;
             const p = this._deltaPayload;
             p.scale = targetScale;
             p.centerX = midX;
@@ -193,6 +203,16 @@ export class PinchZoomSource {
         if (this._pinchIds.indexOf(ev.id) !== -1) {
             this._finishPinch(VirtualDeviceType.Device);
         }
+    }
+
+    /**
+     * 重置缩放参考距离（当外部将缩放钳制到边界时调用，
+     * 使得后续 ev.scale 相对于新距离而非 pinch 起始距离，
+     * 防止边界处的缩放死区）
+     */
+    resetScaleReference(currentDistance) {
+        this._startDistance = currentDistance;
+        this._currentScale = 1;
     }
 
     _finishPinch(virtualType) {

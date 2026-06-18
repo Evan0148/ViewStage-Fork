@@ -3698,14 +3698,12 @@ async fn memreduct_check_skipuac() -> bool {
 #[cfg(target_os = "windows")]
 #[tauri::command]
 fn memreduct_get_usage() -> u32 {
-    use windows::Win32::System::Memory::GlobalMemoryStatusEx;
-    use windows::Win32::System::Memory::MEMORYSTATUSEX;
+    use windows_sys::Win32::System::SystemInformation::GlobalMemoryStatusEx;
+    use windows_sys::Win32::System::SystemInformation::MEMORYSTATUSEX;
     unsafe {
-        let mut mem = MEMORYSTATUSEX {
-            dwLength: std::mem::size_of::<MEMORYSTATUSEX>() as u32,
-            ..Default::default()
-        };
-        if GlobalMemoryStatusEx(&mut mem).is_ok() {
+        let mut mem = std::mem::zeroed::<MEMORYSTATUSEX>();
+        mem.dwLength = std::mem::size_of::<MEMORYSTATUSEX>() as u32;
+        if GlobalMemoryStatusEx(&mut mem) != 0 {
             return mem.dwMemoryLoad;
         }
     }

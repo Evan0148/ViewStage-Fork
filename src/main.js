@@ -620,6 +620,7 @@ let state = {
     startDragX: 0,
     startDragY: 0,
     _pinchResidualDrag: false,
+    _pinchResidualDragFingerId: null,
     startScale: 1,
     startDistanceSq: 0,
     startScaleX: 0,
@@ -1781,6 +1782,7 @@ function main_setup_gesture_system() {
 
     input.on('inputMove', (ev) => {
         if (state._pinchResidualDrag) {
+            if (state._pinchResidualDragFingerId !== null && state._pinchResidualDragFingerId !== ev.id) return;
             state.canvasX = ev.position.x - state.startDragX;
             state.canvasY = ev.position.y - state.startDragY;
             main_update_canvas_position();
@@ -1825,7 +1827,9 @@ function main_setup_gesture_system() {
 
     input.on('inputUp', async (ev) => {
         if (state._pinchResidualDrag) {
+            if (state._pinchResidualDragFingerId !== null && state._pinchResidualDragFingerId !== ev.id) return;
             state._pinchResidualDrag = false;
+            state._pinchResidualDragFingerId = null;
             dom.canvasWrapper.classList.remove('dragging');
             if (state.drawMode === 'move' && (Math.abs(state._gestureVx) > 2 || Math.abs(state._gestureVy) > 2)) {
                 main_update_move_bound();
@@ -1896,8 +1900,14 @@ function main_setup_gesture_system() {
     const pinch = new PinchZoomSource(input);
     window._gesturePinch = pinch;
 
-    pinch.onPinchStarted = () => {
+    pinch.onPinchStarted = (ev) => {
         main_cancel_smooth_transform();
+        main_cancel_pending_transform();
+
+        // 清除上一轮缩放/拖拽残留状态，防止与新 pinch 冲突
+        state._pinchResidualDrag = false;
+        state._pinchResidualDragFingerId = null;
+        state._isOverscrolling = false;
 
         if (state.isDrawing) {
             state.isDrawing = false;
@@ -1911,10 +1921,11 @@ function main_setup_gesture_system() {
         state.isScaling = true;
         state.startScale = state.scale;
 
-        const positions = input.getActivePositions();
-        if (positions.length >= 2) {
-            state.startFinger0CX = (positions[0].x - state.canvasX) / state.scale;
-            state.startFinger0CY = (positions[0].y - state.canvasY) / state.scale;
+        // 使用 PinchZoomSource 传入的 finger0，而非 getActivePositions()[0]，
+        // 确保锚点计算与追踪手指完全一致
+        if (ev.finger0) {
+            state.startFinger0CX = (ev.finger0.x - state.canvasX) / state.scale;
+            state.startFinger0CY = (ev.finger0.y - state.canvasY) / state.scale;
         }
         state.startCanvasX = state.canvasX;
         state.startCanvasY = state.canvasY;
@@ -1933,6 +1944,12 @@ function main_setup_gesture_system() {
         state.scale = Math.max(DRAW_CONFIG.minScale, Math.min(maxScale, unclampedScale));
 
         if (state.scale !== unclampedScale) {
+            // 缩放到达边界时同步重置 PinchZoomSource 内部参考距离，
+            // 使后续 ev.scale 相对于当前手指距离而非 pinch 起始距离，
+            // 消除边界处缩放死区（缩放回退时立即响应）
+            const fdx = ev.finger0.x - ev.finger1.x;
+            const fdy = ev.finger0.y - ev.finger1.y;
+            pinch.resetScaleReference(Math.sqrt(fdx * fdx + fdy * fdy));
             state.startFinger0CX = (ev.finger0.x - state.canvasX) / state.scale;
             state.startFinger0CY = (ev.finger0.y - state.canvasY) / state.scale;
             state.startScale = state.scale;
@@ -1993,11 +2010,13 @@ function main_setup_gesture_system() {
         dom.canvasWrapper.classList.remove('dragging');
         main_cancel_zoom_debounce();
 
-        // 缩放结束后：如果剩一指且在 move 模式，继续拖拽
-        if (input.activeCount === 1 && state.drawMode === 'move') {
+        // 缩放结束后：仍有手指在屏幕上的，进入残余拖拽模式，
+        // 记录当前手指 ID，后续只接受该手指的 inputMove/inputUp
+        if (input.activeCount >= 1 && state.drawMode === 'move') {
             const ev = input.activeEvents[0];
             if (ev) {
                 state._pinchResidualDrag = true;
+                state._pinchResidualDragFingerId = ev.id;
                 state.startDragX = ev.position.x - state.canvasX;
                 state.startDragY = ev.position.y - state.canvasY;
                 state._lastCanvasX = state.canvasX;
@@ -3124,12 +3143,10 @@ async function main_handle_touch_start(e) {
         }
     }
     
-    // 在支持 PointerEvent 的设备上，TouchEvent 只处理多指手势，单指完全由 PointerEvent 处理
+    // 在支持 PointerEvent 的设备上，TouchEvent 完全由 PointerEvent 路径处理，
+    // 避免 TouchEvent 与 PinchZoomSource 同时操作画布造成冲突
     if (window.PointerEvent) {
-        if (touches.length === 1) {
-            return;
-        }
-        // 2+ 指继续执行下面的缩放逻辑
+        return;
     } else {
         // 不支持 PointerEvent 的设备，通过 isDrawing 防重入
         if (touches.length === 1 && state.isDrawing) {
@@ -3204,8 +3221,8 @@ function main_handle_touch_move(e) {
         return;
     }
     
-    // 在支持 PointerEvent 的设备上，TouchEvent 只处理多指手势
-    if (window.PointerEvent && touches.length === 1) {
+    // 在支持 PointerEvent 的设备上，TouchEvent 完全由 PointerEvent 路径处理
+    if (window.PointerEvent) {
         return;
     }
     
@@ -3317,8 +3334,8 @@ async function main_handle_touch_end(e) {
         return;
     }
     
-    // 在支持 PointerEvent 的设备上，只处理多指缩放结束
-    if (window.PointerEvent && !state.isScaling) {
+    // 在支持 PointerEvent 的设备上，TouchEvent 完全由 PointerEvent 路径处理
+    if (window.PointerEvent) {
         return;
     }
     

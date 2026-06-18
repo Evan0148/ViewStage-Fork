@@ -831,9 +831,18 @@ class BlackboardManager {
         const pinch = new PinchZoomSource(input);
         this._pinch_source = pinch;
 
-        pinch.onPinchStarted = () => {
+        pinch.onPinchStarted = (ev) => {
             if (!this.is_open) return;
             this._cancel_momentum();
+            // 取消任何 pending 的 transform rAF，避免残留覆盖新位置
+            if (this._bb_transform_raf_id !== null) {
+                cancelAnimationFrame(this._bb_transform_raf_id);
+                this._bb_transform_raf_id = null;
+            }
+            this._pending_bb_transform = null;
+
+            // 清除上一轮缩放残留状态
+            this._is_overscrolling = false;
 
             const s = this.bb_state;
             s.cached_inv_scale = 1 / this._fetch_safe_scale();
@@ -853,10 +862,9 @@ class BlackboardManager {
             s.is_scaling = true;
             s.start_scale = s.scale;
 
-            const positions = input.getActivePositions();
-            if (positions.length >= 2) {
-                s.start_finger0_cx = (positions[0].x - s.canvas_x) / s.scale;
-                s.start_finger0_cy = (positions[0].y - s.canvas_y) / s.scale;
+            if (ev.finger0) {
+                s.start_finger0_cx = (ev.finger0.x - s.canvas_x) / s.scale;
+                s.start_finger0_cy = (ev.finger0.y - s.canvas_y) / s.scale;
             }
             s.start_canvas_x = s.canvas_x;
             s.start_canvas_y = s.canvas_y;
@@ -878,6 +886,9 @@ class BlackboardManager {
             s.scale = Math.max(min_scale, Math.min(max_scale, unclamped_s));
 
             if (s.scale !== unclamped_s) {
+                const fdx = ev.finger0.x - ev.finger1.x;
+                const fdy = ev.finger0.y - ev.finger1.y;
+                this._pinch_source.resetScaleReference(Math.sqrt(fdx * fdx + fdy * fdy));
                 s.start_finger0_cx = (ev.finger0.x - s.canvas_x) / s.scale;
                 s.start_finger0_cy = (ev.finger0.y - s.canvas_y) / s.scale;
                 s.start_scale = s.scale;
@@ -1229,8 +1240,9 @@ class BlackboardManager {
             }
         }
 
+        // PointerEvent 设备上 TouchEvent 完全由 PointerEvent 路径处理
         if (window.PointerEvent) {
-            if (touches.length === 1) return;
+            return;
         } else {
             if (touches.length === 1 && this.drawing_engine.is_drawing) return;
         }
@@ -1295,7 +1307,8 @@ class BlackboardManager {
 
         const s = this.bb_state;
 
-        if (window.PointerEvent && touches.length === 1) return;
+        // PointerEvent 设备上 TouchEvent 完全由 PointerEvent 路径处理
+        if (window.PointerEvent) return;
 
         // 缩放时额外手指触控，不做任何操作
         if (s.is_scaling && touches.length !== 2) return;
@@ -1365,41 +1378,8 @@ class BlackboardManager {
             return;
         }
 
+        // PointerEvent 设备上 TouchEvent 完全由 PointerEvent 路径处理
         if (window.PointerEvent) {
-            // PointerEvent 设备上 touch 只处理双指缩放，结束时需清理 rAF 和 GPU
-            const s = this.bb_state;
-            if (s.is_scaling && e.touches.length === 2) {
-                // 额外手指抬起后仍有 2 指 — 以当前画布位置为起始重新初始化双指缩放
-                s.is_scaling = false;
-                this._cleanup_touch_gesture();
-                this._update_move_bound();
-                this._update_canvas_position();
-                this._sync_bb_transform();
-                s.is_scaling = true;
-                s.is_dragging = false;
-                s.start_distance_sq = this._calc_touch_dist_sq(e.touches[0], e.touches[1]);
-                s.start_scale = s.scale;
-                s.start_scale_x = (e.touches[0].clientX + e.touches[1].clientX) / 2;
-                s.start_scale_y = (e.touches[0].clientY + e.touches[1].clientY) / 2;
-                s.start_canvas_x = s.canvas_x;
-                s.start_canvas_y = s.canvas_y;
-                this._last_canvas_x = s.canvas_x;
-                this._last_canvas_y = s.canvas_y;
-                this._gesture_vx = 0;
-                this._gesture_vy = 0;
-                this._touch_enable_gpu();
-                return;
-            }
-            if (s.is_scaling && e.touches.length < 2) {
-                s.is_scaling = false;
-                if (this.draw_mode === 'move' && (Math.abs(this._gesture_vx) > 2 || Math.abs(this._gesture_vy) > 2)) {
-                    this._update_move_bound();
-                    this._update_canvas_position();
-                    this._sync_bb_transform();
-                    this._start_momentum();
-                }
-            }
-            this._cleanup_touch_gesture();
             return;
         }
         const s = this.bb_state;
