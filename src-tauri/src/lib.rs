@@ -1729,9 +1729,12 @@ async fn filetype_validate_word_default() -> Result<bool, String> {
     Ok(false)
 }
 
-/// 重启当前应用
-fn app_restart(app: &tauri::AppHandle) {
-    app.restart();
+/// 延迟重启当前应用，确保 IPC 响应先返回前端
+fn schedule_app_restart(app: tauri::AppHandle) {
+    tokio::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+        app.restart();
+    });
 }
 
 /// Tauri IPC 命令：删除整个配置目录后重启应用
@@ -1747,7 +1750,7 @@ async fn settings_delete_all(app: tauri::AppHandle) -> Result<(), String> {
         }
     }
     
-    app_restart(&app);
+    schedule_app_restart(app);
     
     Ok(())
 }
@@ -1755,7 +1758,7 @@ async fn settings_delete_all(app: tauri::AppHandle) -> Result<(), String> {
 /// Tauri IPC 命令：重启应用进程
 #[tauri::command]
 async fn app_restart_process(app: tauri::AppHandle) -> Result<(), String> {
-    app_restart(&app);
+    schedule_app_restart(app);
     
     Ok(())
 }
@@ -1995,7 +1998,7 @@ async fn window_hide_splashscreen(app: tauri::AppHandle) -> Result<(), String> {
 async fn oobe_submit_complete(app: tauri::AppHandle) -> Result<(), String> {
     OOBE_ACTIVE.store(false, Ordering::SeqCst);
     
-    app_restart(&app);
+    schedule_app_restart(app);
     
     Ok(())
 }

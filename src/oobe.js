@@ -796,7 +796,24 @@ function oobe_show_page5() {
 
 function oobe_setup_page5_buttons() {
     document.getElementById('btnRestart').addEventListener('click', async () => {
-        await invoke('oobe_submit_complete');
+        try {
+            await invoke('oobe_submit_complete');
+        } catch (error) {
+            console.error('完成 OOBE 失败:', error);
+
+            const restartFailedMessage = (() => {
+                switch (window.i18n?.current_locale) {
+                    case 'en-US':
+                        return 'Setup is complete, but the app failed to restart. Please close and reopen ViewStage.';
+                    case 'zh-TW':
+                        return '設定已完成，但應用重啟失敗，請手動關閉並重新開啟 ViewStage。';
+                    default:
+                        return '设置已完成，但应用重启失败，请手动关闭并重新打开 ViewStage。';
+                }
+            })();
+
+            window.alert(`${window.i18n?.format_translate('common.error') || '错误'}\n\n${restartFailedMessage}`);
+        }
     });
 }
 
